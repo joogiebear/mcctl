@@ -1,5 +1,5 @@
 import net from 'node:net'
-import { UserError } from './util.mjs'
+import { UserError, sleep } from './util.mjs'
 
 const TYPE_AUTH = 3
 const TYPE_AUTH_RESPONSE = 2
@@ -146,20 +146,39 @@ export class Rcon {
   }
 }
 
-/** Connect, run one or more commands, disconnect. */
-export async function rconExec(inst, commands) {
+/** Errors that mean "the socket died", as opposed to "the server said no". */
+const TRANSIENT = /connection closed|ECONNRESET|EPIPE|ECONNABORTED|timed out/i
+
+/**
+ * Connect, run one or more commands, disconnect.
+ *
+ * Paper drops RCON sockets when connections churn quickly - firing a burst of
+ * one-shot commands reliably loses one partway through. A fresh connection
+ * succeeds immediately, so transient socket failures are retried. Auth
+ * failures and command errors are not retried; they would fail identically.
+ */
+export async function rconExec(inst, commands, { attempts = 3 } = {}) {
   if (!inst.rcon?.port) {
     throw new UserError(`instance "${inst.name}" has no RCON port configured`)
   }
-  const rcon = new Rcon({ port: inst.rcon.port, password: inst.rcon.password })
-  await rcon.connect()
-  try {
-    const out = []
-    for (const cmd of commands) out.push(await rcon.send(cmd))
-    return out
-  } finally {
-    rcon.close()
+
+  let lastErr
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const rcon = new Rcon({ port: inst.rcon.port, password: inst.rcon.password })
+    try {
+      await rcon.connect()
+      const out = []
+      for (const cmd of commands) out.push(await rcon.send(cmd))
+      return out
+    } catch (err) {
+      lastErr = err
+      if (attempt === attempts || !TRANSIENT.test(err.message)) throw err
+      await sleep(120 * attempt)
+    } finally {
+      rcon.close()
+    }
   }
+  throw lastErr
 }
 
 /**
