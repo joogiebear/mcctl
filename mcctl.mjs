@@ -1,0 +1,726 @@
+#!/usr/bin/env node
+/**
+ * mcctl - local Minecraft server control plane.
+ *
+ * Manages multiple server instances on this machine: detached launch with
+ * captured console, RCON command/response, stdin injection, and snapshots.
+ */
+import fs from 'node:fs'
+import path from 'node:path'
+import readline from 'node:readline'
+import { spawnSync } from 'node:child_process'
+
+import { ensureDirs, ROOT, runDir } from './src/paths.mjs'
+import { listInstances, getInstance, removeInstance, updateInstance, serverJarPath } from './src/registry.mjs'
+import { readState, clearState } from './src/control.mjs'
+import * as sup from './src/supervisor.mjs'
+import { rconExec, stripColors } from './src/rcon.mjs'
+import * as backup from './src/backup.mjs'
+import * as create from './src/create.mjs'
+import { readProps, writeProps } from './src/props.mjs'
+import { UserError, fail, table, humanBytes, humanDuration, dirSize, isPortFree } from './src/util.mjs'
+
+// ---------------------------------------------------------------- arg parsing
+
+function parseArgs(argv) {
+  const flags = {}
+  const positional = []
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    if (arg === '--') {
+      positional.push(...argv.slice(i + 1))
+      break
+    }
+    if (arg.startsWith('--')) {
+      const [rawKey, inlineValue] = arg.slice(2).split(/=(.*)/s)
+      const key = rawKey.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
+      if (inlineValue !== undefined) {
+        flags[key] = inlineValue
+      } else if (rawKey.startsWith('no-')) {
+        flags[rawKey.slice(3).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = false
+      } else if (argv[i + 1] && !argv[i + 1].startsWith('-')) {
+        flags[key] = argv[++i]
+      } else {
+        flags[key] = true
+      }
+    } else if (/^-[a-zA-Z]$/.test(arg)) {
+      const key = arg.slice(1)
+      if (argv[i + 1] && !argv[i + 1].startsWith('-')) flags[key] = argv[++i]
+      else flags[key] = true
+    } else {
+      positional.push(arg)
+    }
+  }
+  return { flags, positional }
+}
+
+const out = (msg = '') => process.stdout.write(`${msg}\n`)
+
+function requireName(positional, command) {
+  const name = positional[0]
+  if (!name) fail(`${command} requires an instance name. See: mcctl list`)
+  return name
+}
+
+// -------------------------------------------------------------------- display
+
+const STATUS_LABEL = {
+  running: 'running',
+  stopped: 'stopped',
+  stopping: 'stopping',
+  orphaned: 'ORPHANED',
+  stale: 'stale',
+}
+
+function cmdList() {
+  const instances = listInstances()
+  if (!instances.length) {
+    out('No instances registered.')
+    out('')
+    out('  Adopt an existing server:  mcctl adopt <name> <path-to-server-dir>')
+    out('  Create a fresh one:        mcctl new <name> --jar <jar> --accept-eula')
+    return
+  }
+  const rows = [['NAME', 'STATUS', 'PORT', 'RCON', 'MEM', 'UPTIME', 'DIR']]
+  for (const inst of instances) {
+    const { status, state } = readState(inst.name)
+    rows.push([
+      inst.name,
+      STATUS_LABEL[status] ?? status,
+      inst.port,
+      inst.rcon?.port ?? '-',
+      inst.memory,
+      status === 'running' && state?.startedAt ? humanDuration(Date.now() - state.startedAt) : '-',
+      inst.dir,
+    ])
+  }
+  out(table(rows))
+}
+
+function cmdStatus(positional) {
+  if (!positional[0]) return cmdList()
+  const name = positional[0]
+  const st = sup.statusOf(name)
+  const props = readProps(path.join(st.dir, 'server.properties'))
+  const rows = [
+    ['instance', st.name],
+    ['status', STATUS_LABEL[st.status] ?? st.status],
+    ['directory', st.dir],
+    ['jar', st.jar],
+    ['memory', st.memory],
+    ['java', st.java || 'java'],
+    ['port', String(st.port)],
+    ['rcon port', String(st.rcon?.port ?? '-')],
+    ['level-name', props.get('level-name') ?? '(unset)'],
+    ['motd', props.get('motd') ?? '(unset)'],
+    ['online-mode', props.get('online-mode') ?? '(unset)'],
+  ]
+  if (st.status === 'running' || st.status === 'stopping') {
+    rows.push(['java pid', String(st.javaPid)], ['daemon pid', String(st.daemonPid)], ['uptime', humanDuration(st.uptimeMs)])
+  } else if (st.exitCode !== null && st.exitCode !== undefined) {
+    rows.push(['last exit code', String(st.exitCode)])
+  }
+  rows.push(['console log', st.consoleLog])
+  out(table(rows.map(([k, v]) => [`${k}:`, v])))
+}
+
+// --------------------------------------------------------------- lifecycle
+
+async function cmdStart(positional, flags) {
+  const name = requireName(positional, 'start')
+  const wait = flags.wait !== false && !flags.detach
+  const timeout = Number(flags.timeout ?? 180) * 1000
+  out(`Starting "${name}"...`)
+  const res = await sup.start(name, { wait, timeout, sync: flags.sync !== false })
+
+  if (!wait) {
+    out(`Launched (java pid ${res.javaPid}). Not waiting for ready.`)
+    out(`Follow with: mcctl logs ${name} -f`)
+    return
+  }
+  if (res.ready) {
+    const inst = getInstance(name)
+    out(`Ready - ${res.readyLine}`)
+    out(`  java pid ${res.javaPid}   port ${inst.port}   rcon ${inst.rcon.port}`)
+    return
+  }
+  if (res.failed) {
+    out(`Server did not reach ready state: ${res.reason}`)
+    out('')
+    out('Last 25 console lines:')
+    for (const line of sup.tailLog(name, 25)) out(`  ${line}`)
+    process.exitCode = 1
+    return
+  }
+  out(`Timed out after ${timeout / 1000}s waiting for ready. The server may still be loading.`)
+  out(`Follow with: mcctl logs ${name} -f`)
+  process.exitCode = 1
+}
+
+async function cmdStop(positional, flags) {
+  const name = requireName(positional, 'stop')
+  const timeout = Number(flags.timeout ?? 90) * 1000
+  out(`Stopping "${name}"...`)
+  const res = await sup.stop(name, { timeout })
+  if (res.alreadyStopped) out(`"${name}" was not running.`)
+  else if (res.forced) out(`"${name}" did not shut down gracefully and was killed.`)
+  else out(`"${name}" stopped (exit code ${res.code ?? 0}).`)
+}
+
+async function cmdRestart(positional, flags) {
+  const name = requireName(positional, 'restart')
+  const { status } = readState(name)
+  if (status === 'running' || status === 'stopping') {
+    out(`Stopping "${name}"...`)
+    await sup.stop(name, { timeout: Number(flags.timeout ?? 90) * 1000 })
+  }
+  await cmdStart(positional, flags)
+}
+
+async function cmdKill(positional) {
+  const name = requireName(positional, 'kill')
+  const res = await sup.kill(name)
+  if (res.alreadyStopped) out(`"${name}" was not running.`)
+  else out(`"${name}" force-killed.`)
+}
+
+// ------------------------------------------------------------------- console
+
+function cmdLogs(positional, flags) {
+  const name = requireName(positional, 'logs')
+  getInstance(name)
+  const count = Number(flags.n ?? flags.lines ?? 60)
+  const grep = flags.grep ? new RegExp(flags.grep, 'i') : null
+
+  const lines = sup.tailLog(name, grep ? Math.max(count, 5000) : count)
+  const shown = grep ? lines.filter((l) => grep.test(l)).slice(-count) : lines
+  for (const line of shown) out(line)
+
+  if (flags.f || flags.follow) {
+    out('--- following (ctrl-c to stop) ---')
+    sup.followLog(name, (line) => {
+      if (!grep || grep.test(line)) out(line)
+    })
+    return new Promise(() => {}) // follow until interrupted
+  }
+  return undefined
+}
+
+async function cmdCmd(positional, flags) {
+  const name = requireName(positional, 'cmd')
+  const command = positional.slice(1).join(' ').trim()
+  if (!command) fail('cmd requires a command, e.g. mcctl cmd survival "tps"')
+  const inst = getInstance(name)
+  if (!sup.isRunning(name)) fail(`instance "${name}" is not running`)
+
+  const [response] = await rconExec(inst, [command])
+  const text = flags.raw ? response : stripColors(response)
+  if (text.trim()) out(text.trimEnd())
+  else out('(no output)')
+}
+
+async function cmdSend(positional) {
+  const name = requireName(positional, 'send')
+  const line = positional.slice(1).join(' ')
+  if (!line.trim()) fail('send requires a line to write to the server console')
+  await sup.sendConsole(name, line)
+  out(`> ${line}`)
+}
+
+async function cmdPlayers(positional) {
+  const name = requireName(positional, 'players')
+  const inst = getInstance(name)
+  if (!sup.isRunning(name)) fail(`instance "${name}" is not running`)
+  const [res] = await rconExec(inst, ['list'])
+  out(stripColors(res).trim())
+}
+
+async function cmdConsole(positional) {
+  const name = requireName(positional, 'console')
+  getInstance(name)
+  if (!sup.isRunning(name)) fail(`instance "${name}" is not running`)
+
+  out(`--- attached to "${name}" (ctrl-c or "/detach" to leave; the server keeps running) ---`)
+  for (const line of sup.tailLog(name, 20)) out(line)
+
+  const stop = sup.followLog(name, (line) => out(line))
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: '' })
+
+  await new Promise((resolve) => {
+    rl.on('line', async (line) => {
+      const trimmed = line.trim()
+      if (trimmed === '/detach' || trimmed === '/exit') {
+        rl.close()
+        return
+      }
+      if (!trimmed) return
+      try {
+        await sup.sendConsole(name, trimmed)
+      } catch (err) {
+        out(`[mcctl] ${err.message}`)
+      }
+    })
+    rl.on('close', resolve)
+    rl.on('SIGINT', () => rl.close())
+  })
+  stop()
+  out(`--- detached from "${name}" (still running) ---`)
+}
+
+// --------------------------------------------------------------- provisioning
+
+async function cmdNew(positional, flags) {
+  const name = requireName(positional, 'new')
+  const inst = await create.newInstance(name, {
+    template: flags.template ?? null,
+    from: flags.from ?? null,
+    withWorlds: Boolean(flags.withWorlds),
+    jar: flags.jar ?? null,
+    memory: flags.memory ?? '4G',
+    port: flags.port ? Number(flags.port) : null,
+    rconPort: flags.rconPort ? Number(flags.rconPort) : null,
+    acceptEula: Boolean(flags.acceptEula),
+    motd: flags.motd ?? null,
+    java: flags.java ?? 'java',
+  })
+  out(`Created instance "${inst.name}"`)
+  out(table([
+    ['directory:', inst.dir],
+    ['jar:', inst.jar],
+    ['memory:', inst.memory],
+    ['port:', String(inst.port)],
+    ['rcon port:', String(inst.rcon.port)],
+  ]))
+  if (!inst.eulaAccepted) {
+    out('')
+    out('EULA is NOT accepted. The server will refuse to start until you either')
+    out(`  set eula=true in ${path.join(inst.dir, 'eula.txt')}`)
+    out('  (see https://aka.ms/MinecraftEULA)')
+  } else {
+    out('')
+    out(`Start it with: mcctl start ${inst.name}`)
+  }
+}
+
+async function cmdClone(positional, flags) {
+  const src = positional[0]
+  const dst = positional[1]
+  if (!src || !dst) fail('clone requires a source and a destination: mcctl clone <src> <new-name>')
+  const inst = await create.newInstance(dst, {
+    from: src,
+    withWorlds: Boolean(flags.withWorlds),
+    memory: flags.memory ?? getInstance(src).memory,
+    port: flags.port ? Number(flags.port) : null,
+    acceptEula: flags.acceptEula !== false, // the source already accepted it
+    motd: flags.motd ?? `${dst} (clone of ${src})`,
+  })
+  out(`Cloned "${src}" -> "${dst}"${flags.withWorlds ? ' (with worlds)' : ' (fresh worlds)'}`)
+  out(table([
+    ['directory:', inst.dir],
+    ['port:', String(inst.port)],
+    ['rcon port:', String(inst.rcon.port)],
+  ]))
+  out('')
+  out(`Start it with: mcctl start ${dst}`)
+}
+
+async function cmdAdopt(positional, flags) {
+  const name = positional[0]
+  const dir = positional[1]
+  if (!name || !dir) fail('adopt requires a name and a directory: mcctl adopt <name> <server-dir>')
+  const inst = await create.adoptInstance(name, dir, {
+    jar: flags.jar ?? null,
+    memory: flags.memory ?? '4G',
+    java: flags.java ?? 'java',
+  })
+  out(`Adopted "${inst.name}"`)
+  out(table([
+    ['directory:', inst.dir],
+    ['jar:', inst.jar],
+    ['memory:', inst.memory],
+    ['port:', String(inst.port)],
+    ['rcon port:', String(inst.rcon.port)],
+  ]))
+}
+
+function cmdRemove(positional, flags) {
+  const name = requireName(positional, 'rm')
+  const inst = getInstance(name)
+  if (sup.isRunning(name)) fail(`instance "${name}" is running - stop it first`)
+  if (flags.purge && !flags.yes) {
+    fail(`--purge deletes ${inst.dir} permanently. Re-run with --yes to confirm.`)
+  }
+  removeInstance(name)
+  if (flags.purge) {
+    fs.rmSync(inst.dir, { recursive: true, force: true })
+    out(`Removed "${name}" and deleted ${inst.dir}`)
+  } else {
+    out(`Unregistered "${name}". Files kept at ${inst.dir}`)
+  }
+  fs.rmSync(runDir(name), { recursive: true, force: true })
+}
+
+function cmdSet(positional) {
+  const name = requireName(positional, 'set')
+  const assignments = positional.slice(1)
+  if (!assignments.length) fail('set requires key=value pairs, e.g. mcctl set survival memory=8G')
+  const patch = {}
+  const inst = getInstance(name)
+  for (const pair of assignments) {
+    const [key, ...rest] = pair.split('=')
+    const value = rest.join('=')
+    if (!value) fail(`malformed assignment "${pair}" - expected key=value`)
+    switch (key) {
+      case 'memory':
+        patch.memory = value
+        break
+      case 'java':
+        patch.java = value
+        break
+      case 'jar':
+        patch.jar = value
+        break
+      case 'port':
+        patch.port = Number(value)
+        break
+      case 'rcon.port':
+        patch.rcon = { ...(patch.rcon ?? inst.rcon), port: Number(value) }
+        break
+      case 'rcon.password':
+        patch.rcon = { ...(patch.rcon ?? inst.rcon), password: value }
+        break
+      default:
+        fail(`unknown setting "${key}" - one of: memory, java, jar, port, rcon.port, rcon.password`)
+    }
+  }
+  updateInstance(name, patch)
+  out(`Updated "${name}":`)
+  for (const [k, v] of Object.entries(patch)) out(`  ${k} = ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+  if (sup.isRunning(name)) out('Restart the instance for changes to take effect.')
+}
+
+function cmdProps(positional) {
+  const name = requireName(positional, 'props')
+  const inst = getInstance(name)
+  const file = path.join(inst.dir, 'server.properties')
+  const assignments = positional.slice(1)
+
+  if (!assignments.length) {
+    const props = readProps(file)
+    out(table([...props.entries()].sort().map(([k, v]) => [`${k}:`, v])))
+    return
+  }
+  const updates = {}
+  for (const pair of assignments) {
+    const [key, ...rest] = pair.split('=')
+    if (!rest.length) fail(`malformed assignment "${pair}" - expected key=value`)
+    updates[key] = rest.join('=')
+  }
+  writeProps(file, updates)
+  out(`Updated ${file}:`)
+  for (const [k, v] of Object.entries(updates)) out(`  ${k}=${v}`)
+  if (sup.isRunning(name)) out('Restart the instance for changes to take effect.')
+}
+
+// ------------------------------------------------------------------- backups
+
+async function cmdBackup(positional, flags) {
+  const name = requireName(positional, 'backup')
+  const inst = getInstance(name)
+  const scope = flags.scope ?? 'standard'
+  const running = sup.isRunning(name)
+
+  // Flushing to disk first makes a hot snapshot of a live world coherent.
+  if (running && flags.flush !== false) {
+    out('Flushing world to disk (save-all)...')
+    try {
+      await rconExec(inst, ['save-off', 'save-all flush'])
+    } catch (err) {
+      out(`  warning: could not flush via RCON (${err.message})`)
+    }
+  }
+  try {
+    out(`Snapshotting "${name}" (scope: ${scope})...`)
+    const res = await backup.createSnapshot(inst, { scope, label: flags.label ?? null, running })
+    out(`Wrote ${res.file} (${humanBytes(res.size)})`)
+    out(`  included: ${res.members.join(', ')}`)
+    if (res.manifest.warnings.length) {
+      out('  tar warnings (normal for a live server):')
+      for (const w of res.manifest.warnings) out(`    ${w}`)
+    }
+  } finally {
+    if (running && flags.flush !== false) {
+      try {
+        await rconExec(inst, ['save-on'])
+      } catch {
+        /* server may have stopped mid-backup */
+      }
+    }
+  }
+  if (flags.keep) {
+    const removed = backup.pruneSnapshots(name, Number(flags.keep))
+    if (removed.length) out(`Pruned ${removed.length} old snapshot(s), keeping ${flags.keep}.`)
+  }
+}
+
+function cmdSnapshots(positional) {
+  const name = requireName(positional, 'snapshots')
+  getInstance(name)
+  const snaps = backup.listSnapshots(name)
+  if (!snaps.length) {
+    out(`No snapshots for "${name}". Create one with: mcctl backup ${name}`)
+    return
+  }
+  const rows = [['NAME', 'SCOPE', 'SIZE', 'CREATED']]
+  for (const s of snaps) rows.push([s.name, s.scope, s.sizeHuman, s.mtime.toISOString().replace('T', ' ').slice(0, 19)])
+  out(table(rows))
+}
+
+async function cmdRestore(positional, flags) {
+  const name = requireName(positional, 'restore')
+  const inst = getInstance(name)
+  if (sup.isRunning(name)) fail(`instance "${name}" is running - stop it before restoring`)
+  const snap = backup.resolveSnapshot(name, positional[1] ?? 'latest')
+
+  if (!flags.yes) {
+    out(`About to restore into ${inst.dir}:`)
+    out(`  snapshot: ${snap.name} (${snap.sizeHuman}, scope ${snap.scope})`)
+    out(`  overwrites: ${snap.members.join(', ') || '(see manifest)'}`)
+    out('')
+    out('This overwrites existing files in place. Re-run with --yes to proceed.')
+    process.exitCode = 1
+    return
+  }
+  const res = await backup.restoreSnapshot(inst, snap)
+  out(`Restored ${res.restored} into ${res.into}`)
+}
+
+function cmdPrune(positional, flags) {
+  const name = requireName(positional, 'prune')
+  getInstance(name)
+  const keep = Number(flags.keep ?? 10)
+  const removed = backup.pruneSnapshots(name, keep)
+  out(removed.length ? `Removed ${removed.length} snapshot(s), keeping the newest ${keep}.` : 'Nothing to prune.')
+}
+
+// ------------------------------------------------------- templates and jars
+
+function cmdTemplates(positional, flags) {
+  const sub = positional[0]
+  if (sub === 'save') {
+    const instName = positional[1]
+    const tplName = positional[2]
+    if (!instName || !tplName) fail('usage: mcctl templates save <instance> <template-name>')
+    const res = create.saveTemplate(getInstance(instName), tplName, { includeWorlds: Boolean(flags.withWorlds) })
+    out(`Saved template "${res.name}" -> ${res.dir}`)
+    return
+  }
+  const tpls = create.listTemplates()
+  if (!tpls.length) {
+    out('No templates. Create one from an existing instance:')
+    out('  mcctl templates save <instance> <template-name>')
+    return
+  }
+  const rows = [['NAME', 'JAR', 'WORLDS', 'FROM']]
+  for (const t of tpls) rows.push([t.name, t.jar ?? '-', t.includesWorlds ? 'yes' : 'no', t.sourceInstance ?? '-'])
+  out(table(rows))
+}
+
+function cmdJars(positional, flags) {
+  const sub = positional[0]
+  if (sub === 'import') {
+    const src = positional[1]
+    if (!src) fail('usage: mcctl jars import <path-to-jar> [--as <name>]')
+    const dest = create.importJar(src, { as: flags.as ?? null })
+    out(`Imported ${dest}`)
+    return
+  }
+  const jars = create.listJars()
+  if (!jars.length) {
+    out('No jars stored. Import one with: mcctl jars import <path-to-jar>')
+    return
+  }
+  const rows = [['NAME', 'SIZE', 'ADDED']]
+  for (const j of jars) rows.push([j.name, j.sizeHuman, j.mtime.toISOString().slice(0, 10)])
+  out(table(rows))
+}
+
+// -------------------------------------------------------------------- doctor
+
+async function cmdDoctor() {
+  const problems = []
+  const notes = []
+
+  const javaCheck = spawnSync('java', ['-version'], { encoding: 'utf8', windowsHide: true })
+  if (javaCheck.error) problems.push('java is not on PATH')
+  else notes.push(`java: ${(javaCheck.stderr || javaCheck.stdout).split('\n')[0].trim()}`)
+
+  const tarCheck = spawnSync('tar', ['--version'], { encoding: 'utf8', windowsHide: true })
+  if (tarCheck.error) problems.push('tar is not on PATH (needed for snapshots)')
+  else notes.push(`tar: ${(tarCheck.stdout || '').split('\n')[0].trim()}`)
+
+  notes.push(`node: ${process.version}`)
+  notes.push(`root: ${ROOT}`)
+
+  const seenPorts = new Map()
+  for (const inst of listInstances()) {
+    if (!fs.existsSync(inst.dir)) {
+      problems.push(`${inst.name}: directory missing (${inst.dir})`)
+      continue
+    }
+    if (!fs.existsSync(serverJarPath(inst))) {
+      problems.push(`${inst.name}: jar missing (${serverJarPath(inst)})`)
+    }
+    const eula = path.join(inst.dir, 'eula.txt')
+    const eulaText = fs.existsSync(eula) ? fs.readFileSync(eula, 'utf8') : ''
+    if (!/^\s*eula\s*=\s*true\s*$/im.test(eulaText)) {
+      problems.push(`${inst.name}: EULA not accepted (${eula})`)
+    }
+    for (const [label, port] of [['port', inst.port], ['rcon', inst.rcon?.port]]) {
+      if (!port) continue
+      if (seenPorts.has(port)) problems.push(`${inst.name}: ${label} ${port} collides with ${seenPorts.get(port)}`)
+      else seenPorts.set(port, `${inst.name} ${label}`)
+    }
+    const { status } = readState(inst.name)
+    if (status === 'orphaned') problems.push(`${inst.name}: orphaned java process - run "mcctl kill ${inst.name}"`)
+    if (status === 'stale') {
+      clearState(inst.name)
+      notes.push(`${inst.name}: cleared stale state file`)
+    }
+    if (status === 'stopped') {
+      const free = await isPortFree(inst.port)
+      if (!free) problems.push(`${inst.name}: port ${inst.port} is in use by something else while the instance is stopped`)
+    }
+    notes.push(`${inst.name}: ${humanBytes(dirSize(inst.dir))} on disk at ${inst.dir}`)
+  }
+
+  out('Environment')
+  for (const n of notes) out(`  ${n}`)
+  out('')
+  if (!problems.length) {
+    out('No problems found.')
+    return
+  }
+  out(`${problems.length} problem(s):`)
+  for (const p of problems) out(`  - ${p}`)
+  process.exitCode = 1
+}
+
+// ---------------------------------------------------------------------- help
+
+function cmdHelp() {
+  out(`mcctl - local Minecraft server control plane
+
+LIFECYCLE
+  mcctl list                         Show every instance and its state
+  mcctl status <name>                Detailed state for one instance
+  mcctl start <name>                 Start and wait until the server reports ready
+      --detach                       Return as soon as the process launches
+      --timeout <sec>                Ready timeout (default 180)
+      --no-sync                      Do not push registry ports into server.properties
+  mcctl stop <name> [--timeout sec]  Graceful shutdown via the console "stop" command
+  mcctl restart <name>               Stop then start
+  mcctl kill <name>                  Force-kill the process tree
+
+CONSOLE
+  mcctl logs <name> [-n 60] [-f]     Read the captured console; -f follows
+      --grep <regex>                 Filter lines
+  mcctl cmd <name> "<command>"       Run a command over RCON and print the reply
+  mcctl send <name> "<line>"         Write a raw line to the server's stdin
+  mcctl console <name>               Interactive attach (server survives detach)
+  mcctl players <name>               Who is online
+
+INSTANCES
+  mcctl adopt <name> <dir>           Register an existing server directory in place
+      --jar <file> --memory <4G>
+  mcctl new <name> [options]         Create a fresh instance
+      --jar <file>                   Server jar from the jars/ store
+      --template <name>              Start from a saved template
+      --memory <4G> --port <n>
+      --accept-eula                  Write eula=true (you accept Mojang's EULA)
+  mcctl clone <src> <new>            Copy plugins+config into a new instance
+      --with-worlds                  Also copy world data (default: fresh worlds)
+  mcctl set <name> key=value...      memory, java, jar, port, rcon.port, rcon.password
+  mcctl props <name> [key=value...]  Read or edit server.properties
+  mcctl rm <name> [--purge --yes]    Unregister (and optionally delete files)
+
+SNAPSHOTS
+  mcctl backup <name>                Snapshot to backups/<name>/
+      --scope <${backup.SCOPES.join('|')}>
+      --label <text> --keep <n>
+  mcctl snapshots <name>             List snapshots
+  mcctl restore <name> [ref] --yes   Restore (default ref: latest); server must be stopped
+  mcctl prune <name> --keep <n>      Delete all but the newest n
+
+OTHER
+  mcctl templates                    List templates
+  mcctl templates save <inst> <tpl>  Save an instance's plugins+config as a template
+  mcctl jars                         List stored server jars
+  mcctl jars import <path> [--as x]  Add a server jar to the store
+  mcctl doctor                       Check environment, ports, EULA, disk, stale state
+`)
+}
+
+// ---------------------------------------------------------------------- main
+
+const COMMANDS = {
+  list: cmdList,
+  ls: cmdList,
+  status: cmdStatus,
+  start: cmdStart,
+  stop: cmdStop,
+  restart: cmdRestart,
+  kill: cmdKill,
+  logs: cmdLogs,
+  log: cmdLogs,
+  cmd: cmdCmd,
+  rcon: cmdCmd,
+  send: cmdSend,
+  console: cmdConsole,
+  attach: cmdConsole,
+  players: cmdPlayers,
+  new: cmdNew,
+  clone: cmdClone,
+  adopt: cmdAdopt,
+  rm: cmdRemove,
+  remove: cmdRemove,
+  set: cmdSet,
+  props: cmdProps,
+  backup: cmdBackup,
+  snapshot: cmdBackup,
+  snapshots: cmdSnapshots,
+  restore: cmdRestore,
+  prune: cmdPrune,
+  templates: cmdTemplates,
+  template: cmdTemplates,
+  jars: cmdJars,
+  doctor: cmdDoctor,
+  help: cmdHelp,
+}
+
+async function main() {
+  ensureDirs()
+  const [, , command, ...rest] = process.argv
+  if (!command || command === '--help' || command === '-h') {
+    cmdHelp()
+    return
+  }
+  const handler = COMMANDS[command]
+  if (!handler) {
+    process.stderr.write(`Unknown command "${command}". Run "mcctl help" for usage.\n`)
+    process.exitCode = 2
+    return
+  }
+  const { flags, positional } = parseArgs(rest)
+  await handler(positional, flags)
+}
+
+main().catch((err) => {
+  if (err instanceof UserError) {
+    process.stderr.write(`error: ${err.message}\n`)
+    process.exitCode = 1
+  } else {
+    process.stderr.write(`${err.stack || err}\n`)
+    process.exitCode = 1
+  }
+})

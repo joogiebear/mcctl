@@ -1,0 +1,253 @@
+import { spawn } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { getInstance, assertInstanceDir } from './registry.mjs'
+import { readState, clearState, controlRequest } from './control.mjs'
+import { consoleLog, runDir, stateFile } from './paths.mjs'
+import { readProps, writeProps } from './props.mjs'
+import { fail, sleep, pidAlive, UserError } from './util.mjs'
+
+const DAEMON = path.join(path.dirname(fileURLToPath(import.meta.url)), 'daemon.mjs')
+
+/** Marks the point where Paper has finished loading and is accepting joins. */
+const READY_RE = /Done \([\d.,]+s\)!/
+const FAILED_RE = /(Failed to start the minecraft server|A fatal error has occurred|Could not (?:reserve|create).*heap|Unable to access jarfile)/i
+
+/**
+ * The registry is the source of truth for ports and RCON. Push it into
+ * server.properties before every launch so editing the file by hand can't
+ * silently desync an instance from what mcctl thinks it is.
+ */
+export function syncProps(inst) {
+  const file = path.join(inst.dir, 'server.properties')
+  const updates = {
+    'server-port': String(inst.port),
+    'enable-rcon': 'true',
+    'rcon.port': String(inst.rcon.port),
+    'rcon.password': inst.rcon.password,
+    // LAN-only by design: RCON must never listen on a routable interface.
+    'broadcast-rcon-to-ops': 'true',
+  }
+  if (inst.bind) updates['server-ip'] = inst.bind
+  writeProps(file, updates)
+}
+
+export function assertEula(inst) {
+  const eula = path.join(inst.dir, 'eula.txt')
+  const text = fs.existsSync(eula) ? fs.readFileSync(eula, 'utf8') : ''
+  if (!/^\s*eula\s*=\s*true\s*$/im.test(text)) {
+    fail(
+      `EULA not accepted for "${inst.name}".\n` +
+        `  Read https://aka.ms/MinecraftEULA then set eula=true in ${eula}\n` +
+        `  or re-create the instance with --accept-eula.`,
+    )
+  }
+}
+
+export async function start(name, { wait = true, timeout = 180000, sync = true } = {}) {
+  const inst = getInstance(name)
+  assertInstanceDir(inst)
+  assertEula(inst)
+
+  const { status, state } = readState(name)
+  if (status === 'running') fail(`instance "${name}" is already running (java pid ${state.javaPid})`)
+  if (status === 'stopping') fail(`instance "${name}" is still shutting down - wait for it to finish`)
+  if (status === 'orphaned') {
+    fail(
+      `instance "${name}" has an orphaned java process (pid ${state.javaPid}) with no daemon.\n` +
+        `  Reattach is not possible; stop it with: mcctl kill ${name}`,
+    )
+  }
+  if (status === 'stale') clearState(name)
+
+  if (sync) syncProps(inst)
+  fs.mkdirSync(runDir(name), { recursive: true })
+
+  const child = spawn(process.execPath, [DAEMON, name], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    cwd: path.dirname(DAEMON),
+  })
+  child.unref()
+
+  // Wait for the daemon to publish its state file before reporting success.
+  const deadline = Date.now() + 15000
+  let live = null
+  while (Date.now() < deadline) {
+    await sleep(150)
+    const cur = readState(name)
+    if (cur.state && cur.state.daemonPid && cur.state.startedAt) {
+      live = cur
+      break
+    }
+  }
+  if (!live) fail(`daemon for "${name}" did not come up - check ${path.join(runDir(name), 'daemon.log')}`)
+  if (live.state.error) fail(`failed to launch "${name}": ${live.state.error}`)
+
+  if (!wait) return { started: true, javaPid: live.state.javaPid, ready: false }
+
+  const ready = await waitForReady(name, timeout)
+  return { started: true, javaPid: live.state.javaPid, ...ready }
+}
+
+/** Tail the captured console until the server reports ready, dies, or we time out. */
+export async function waitForReady(name, timeout = 180000) {
+  const file = consoleLog(name)
+  const deadline = Date.now() + timeout
+  let offset = 0
+
+  while (Date.now() < deadline) {
+    let text = ''
+    try {
+      const fd = fs.openSync(file, 'r')
+      const size = fs.fstatSync(fd).size
+      if (size > offset) {
+        const buf = Buffer.alloc(size - offset)
+        fs.readSync(fd, buf, 0, buf.length, offset)
+        offset = size
+        text = buf.toString('utf8')
+      }
+      fs.closeSync(fd)
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err
+    }
+
+    if (text) {
+      if (READY_RE.test(text)) {
+        const m = READY_RE.exec(text)
+        return { ready: true, readyLine: m[0] }
+      }
+      if (FAILED_RE.test(text)) {
+        return { ready: false, failed: true, reason: FAILED_RE.exec(text)[0] }
+      }
+    }
+
+    const cur = readState(name)
+    if (cur.status !== 'running' && cur.status !== 'stopping') {
+      return { ready: false, failed: true, reason: `process exited (code ${cur.state?.exitCode ?? '?'})` }
+    }
+    await sleep(400)
+  }
+  return { ready: false, timedOut: true }
+}
+
+export async function stop(name, { timeout = 90000 } = {}) {
+  const { status, state } = readState(name)
+  if (status === 'stopped' || status === 'stale') {
+    clearState(name)
+    return { alreadyStopped: true }
+  }
+  if (status === 'orphaned') {
+    fail(`instance "${name}" is orphaned (java pid ${state.javaPid}, no daemon). Use: mcctl kill ${name}`)
+  }
+  const res = await controlRequest(name, { op: 'stop', timeout }, { timeout: timeout + 30000 })
+  if (!res.ok) fail(res.error || 'stop failed')
+  return res
+}
+
+export async function kill(name) {
+  const { status, state } = readState(name)
+  if (status === 'stopped' || status === 'stale') {
+    clearState(name)
+    return { alreadyStopped: true }
+  }
+  if (status === 'orphaned') {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/PID', String(state.javaPid), '/T', '/F'], { windowsHide: true })
+    } else {
+      try {
+        process.kill(state.javaPid, 'SIGKILL')
+      } catch {
+        /* already gone */
+      }
+    }
+    await sleep(1500)
+    clearState(name)
+    return { forced: true, orphan: true }
+  }
+  const res = await controlRequest(name, { op: 'kill' }, { timeout: 30000 })
+  if (!res.ok) fail(res.error || 'kill failed')
+  return res
+}
+
+export async function sendConsole(name, line) {
+  const res = await controlRequest(name, { op: 'send', line })
+  if (!res.ok) throw new UserError(res.error || 'send failed')
+  return res
+}
+
+export function isRunning(name) {
+  return readState(name).status === 'running'
+}
+
+/** Read the last `count` lines of an instance's captured console. */
+export function tailLog(name, count = 60) {
+  const file = consoleLog(name)
+  if (!fs.existsSync(file)) return []
+  const size = fs.statSync(file).size
+  const readBytes = Math.min(size, Math.max(64 * 1024, count * 512))
+  const fd = fs.openSync(file, 'r')
+  const buf = Buffer.alloc(readBytes)
+  fs.readSync(fd, buf, 0, readBytes, size - readBytes)
+  fs.closeSync(fd)
+  const lines = buf.toString('utf8').split(/\r?\n/)
+  if (size > readBytes && lines.length) lines.shift() // drop a partial first line
+  while (lines.length && lines[lines.length - 1] === '') lines.pop()
+  return lines.slice(-count)
+}
+
+/** Follow the captured console, invoking onLine for each new line. */
+export function followLog(name, onLine, { from = null } = {}) {
+  const file = consoleLog(name)
+  let offset = from ?? (fs.existsSync(file) ? fs.statSync(file).size : 0)
+  let carry = ''
+  let stopped = false
+
+  const poll = () => {
+    if (stopped) return
+    try {
+      const size = fs.existsSync(file) ? fs.statSync(file).size : 0
+      if (size < offset) {
+        offset = 0 // log was truncated by a restart
+        carry = ''
+      }
+      if (size > offset) {
+        const fd = fs.openSync(file, 'r')
+        const buf = Buffer.alloc(size - offset)
+        fs.readSync(fd, buf, 0, buf.length, offset)
+        fs.closeSync(fd)
+        offset = size
+        carry += buf.toString('utf8')
+        const parts = carry.split(/\r?\n/)
+        carry = parts.pop() ?? ''
+        for (const line of parts) onLine(line)
+      }
+    } catch {
+      /* transient read race; retry next tick */
+    }
+    setTimeout(poll, 250)
+  }
+  poll()
+  return () => {
+    stopped = true
+  }
+}
+
+export function statusOf(name) {
+  const inst = getInstance(name)
+  const { status, state } = readState(name)
+  return {
+    ...inst,
+    status,
+    javaPid: state?.javaPid ?? null,
+    daemonPid: state?.daemonPid ?? null,
+    startedAt: state?.startedAt ?? null,
+    exitCode: state?.exitCode ?? null,
+    uptimeMs: status === 'running' && state?.startedAt ? Date.now() - state.startedAt : null,
+    stateFile: stateFile(name),
+    consoleLog: consoleLog(name),
+    javaAlive: state ? pidAlive(state.javaPid) : false,
+  }
+}

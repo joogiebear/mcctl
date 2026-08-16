@@ -1,0 +1,172 @@
+import net from 'node:net'
+import { UserError } from './util.mjs'
+
+const TYPE_AUTH = 3
+const TYPE_AUTH_RESPONSE = 2
+const TYPE_COMMAND = 2
+const TYPE_RESPONSE = 0
+
+function encodePacket(id, type, body) {
+  const payload = Buffer.from(body, 'utf8')
+  const buf = Buffer.alloc(14 + payload.length)
+  buf.writeInt32LE(10 + payload.length, 0) // length excludes the length field
+  buf.writeInt32LE(id, 4)
+  buf.writeInt32LE(type, 8)
+  payload.copy(buf, 12)
+  buf.writeInt16LE(0, 12 + payload.length) // body terminator + packet terminator
+  return buf
+}
+
+/**
+ * Minimal RCON client. Speaks the Source protocol Minecraft uses.
+ *
+ * Responses larger than 4096 bytes arrive split across packets with no length
+ * hint, so after each command we send a sentinel packet with a distinct id and
+ * treat its echo as end-of-response.
+ */
+export class Rcon {
+  constructor({ host = '127.0.0.1', port, password, timeout = 8000 }) {
+    this.host = host
+    this.port = port
+    this.password = password
+    this.timeout = timeout
+    this.socket = null
+    this.buffer = Buffer.alloc(0)
+    this.nextId = 1
+    this.pending = new Map()
+  }
+
+  connect() {
+    return new Promise((resolve, reject) => {
+      const socket = net.createConnection({ host: this.host, port: this.port })
+      this.socket = socket
+      socket.setTimeout(this.timeout)
+
+      const onError = (err) => {
+        socket.destroy()
+        if (err.code === 'ECONNREFUSED') {
+          reject(new UserError(`RCON refused on ${this.host}:${this.port} - is the server running with enable-rcon=true?`))
+        } else {
+          reject(new UserError(`RCON connection failed: ${err.message}`))
+        }
+      }
+      socket.once('error', onError)
+      socket.once('timeout', () => onError(new Error('connection timed out')))
+
+      socket.once('connect', () => {
+        socket.removeListener('error', onError)
+        socket.on('error', (err) => this.#failAll(err))
+        socket.on('timeout', () => this.#failAll(new Error('RCON timed out')))
+        socket.on('data', (chunk) => this.#onData(chunk))
+        socket.on('close', () => this.#failAll(new Error('RCON connection closed')))
+        this.#auth().then(resolve, reject)
+      })
+    })
+  }
+
+  #failAll(err) {
+    const wrapped = err instanceof UserError ? err : new UserError(`RCON error: ${err.message}`)
+    for (const { reject } of this.pending.values()) reject(wrapped)
+    this.pending.clear()
+  }
+
+  #onData(chunk) {
+    this.buffer = Buffer.concat([this.buffer, chunk])
+    while (this.buffer.length >= 4) {
+      const size = this.buffer.readInt32LE(0)
+      if (this.buffer.length < size + 4) break
+      const id = this.buffer.readInt32LE(4)
+      const type = this.buffer.readInt32LE(8)
+      const body = this.buffer.subarray(12, 4 + size - 2).toString('utf8')
+      this.buffer = this.buffer.subarray(4 + size)
+      this.#dispatch(id, type, body)
+    }
+  }
+
+  #dispatch(id, type, body) {
+    if (this.authPending) {
+      const { resolve, reject } = this.authPending
+      if (type === TYPE_AUTH_RESPONSE || id === -1) {
+        this.authPending = null
+        if (id === -1) reject(new UserError('RCON authentication failed - wrong rcon.password'))
+        else resolve()
+        return
+      }
+    }
+
+    // Sentinel echo closes whichever command is waiting on it.
+    for (const [cmdId, entry] of this.pending) {
+      if (id === entry.sentinelId) {
+        this.pending.delete(cmdId)
+        entry.resolve(entry.chunks.join(''))
+        return
+      }
+      if (id === cmdId) {
+        entry.chunks.push(body)
+        return
+      }
+    }
+  }
+
+  #auth() {
+    return new Promise((resolve, reject) => {
+      this.authPending = { resolve, reject }
+      this.socket.write(encodePacket(0, TYPE_AUTH, this.password))
+      setTimeout(() => {
+        if (this.authPending) {
+          this.authPending = null
+          reject(new UserError('RCON authentication timed out'))
+        }
+      }, this.timeout).unref?.()
+    })
+  }
+
+  send(command) {
+    return new Promise((resolve, reject) => {
+      const id = this.nextId++
+      const sentinelId = this.nextId++
+      this.pending.set(id, { resolve, reject, chunks: [], sentinelId })
+      this.socket.write(encodePacket(id, TYPE_COMMAND, command))
+      this.socket.write(encodePacket(sentinelId, TYPE_RESPONSE, ''))
+      setTimeout(() => {
+        const entry = this.pending.get(id)
+        if (entry) {
+          this.pending.delete(id)
+          // A response may have partially arrived; return what we have.
+          if (entry.chunks.length) entry.resolve(entry.chunks.join(''))
+          else reject(new UserError(`RCON command timed out: ${command}`))
+        }
+      }, this.timeout).unref?.()
+    })
+  }
+
+  close() {
+    this.socket?.end()
+    this.socket?.unref?.()
+  }
+}
+
+/** Connect, run one or more commands, disconnect. */
+export async function rconExec(inst, commands) {
+  if (!inst.rcon?.port) {
+    throw new UserError(`instance "${inst.name}" has no RCON port configured`)
+  }
+  const rcon = new Rcon({ port: inst.rcon.port, password: inst.rcon.password })
+  await rcon.connect()
+  try {
+    const out = []
+    for (const cmd of commands) out.push(await rcon.send(cmd))
+    return out
+  } finally {
+    rcon.close()
+  }
+}
+
+/**
+ * Strip section-sign formatting for terminal display. Covers legacy codes
+ * (§a, §l, §r) and Paper's hex form, which is §x followed by six §<hexdigit>
+ * pairs - every part of that sequence matches the same character class.
+ */
+export function stripColors(text) {
+  return text.replace(/§[0-9a-fk-orxA-FK-ORX]/g, '')
+}

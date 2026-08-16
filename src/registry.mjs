@@ -1,0 +1,124 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { REGISTRY_FILE, INSTANCES_DIR } from './paths.mjs'
+import { readJson, writeJson, fail, validateName } from './util.mjs'
+
+const EMPTY = { version: 1, instances: {} }
+
+export function loadRegistry() {
+  const data = readJson(REGISTRY_FILE, EMPTY)
+  if (!data.instances) data.instances = {}
+  return data
+}
+
+export function saveRegistry(data) {
+  writeJson(REGISTRY_FILE, data)
+}
+
+export function listInstances() {
+  const reg = loadRegistry()
+  return Object.entries(reg.instances)
+    .map(([name, cfg]) => ({ name, ...cfg }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export function getInstance(name) {
+  validateName(name)
+  const reg = loadRegistry()
+  const cfg = reg.instances[name]
+  if (!cfg) {
+    const known = Object.keys(reg.instances)
+    fail(
+      `no instance named "${name}"` +
+        (known.length ? `. Known instances: ${known.join(', ')}` : '. Create one with: mcctl new <name>'),
+    )
+  }
+  return { name, ...cfg }
+}
+
+export function hasInstance(name) {
+  return Boolean(loadRegistry().instances[name])
+}
+
+export function putInstance(name, cfg) {
+  validateName(name)
+  const reg = loadRegistry()
+  reg.instances[name] = cfg
+  saveRegistry(reg)
+}
+
+export function updateInstance(name, patch) {
+  const reg = loadRegistry()
+  if (!reg.instances[name]) fail(`no instance named "${name}"`)
+  reg.instances[name] = { ...reg.instances[name], ...patch }
+  saveRegistry(reg)
+  return { name, ...reg.instances[name] }
+}
+
+export function removeInstance(name) {
+  const reg = loadRegistry()
+  delete reg.instances[name]
+  saveRegistry(reg)
+}
+
+/** Ports already claimed in the registry, so allocation never double-books. */
+export function usedPorts() {
+  const taken = new Set()
+  for (const inst of listInstances()) {
+    if (inst.port) taken.add(inst.port)
+    if (inst.rcon?.port) taken.add(inst.rcon.port)
+  }
+  return taken
+}
+
+export function defaultDir(name) {
+  return path.join(INSTANCES_DIR, name)
+}
+
+export function serverJarPath(inst) {
+  return path.join(inst.dir, inst.jar)
+}
+
+export function assertInstanceDir(inst) {
+  if (!fs.existsSync(inst.dir)) fail(`instance "${inst.name}" directory is missing: ${inst.dir}`)
+  const jar = serverJarPath(inst)
+  if (!fs.existsSync(jar)) fail(`server jar not found for "${inst.name}": ${jar}`)
+}
+
+/**
+ * Aikar's G1 flags. The large-heap variant kicks in above 12G because the
+ * young-gen sizing that works for 4G starves a big heap.
+ */
+export function jvmFlagsFor(memory) {
+  const gb = parseMemoryGb(memory)
+  const large = gb >= 12
+  return [
+    '-XX:+UseG1GC',
+    '-XX:+ParallelRefProcEnabled',
+    '-XX:MaxGCPauseMillis=200',
+    '-XX:+UnlockExperimentalVMOptions',
+    '-XX:+DisableExplicitGC',
+    '-XX:+AlwaysPreTouch',
+    `-XX:G1NewSizePercent=${large ? 40 : 30}`,
+    `-XX:G1MaxNewSizePercent=${large ? 50 : 40}`,
+    `-XX:G1HeapRegionSize=${large ? 16 : 8}M`,
+    `-XX:G1ReservePercent=${large ? 15 : 20}`,
+    '-XX:G1HeapWastePercent=5',
+    '-XX:G1MixedGCCountTarget=4',
+    `-XX:InitiatingHeapOccupancyPercent=${large ? 20 : 15}`,
+    '-XX:G1MixedGCLiveThresholdPercent=90',
+    '-XX:G1RSetUpdatingPauseTimePercent=5',
+    '-XX:SurvivorRatio=32',
+    '-XX:+PerfDisableSharedMem',
+    '-XX:MaxTenuringThreshold=1',
+    '-Dusing.aikars.flags=https://mcflags.emc.gs',
+    '-Daikars.new.flags=true',
+  ]
+}
+
+export function parseMemoryGb(memory) {
+  const m = /^(\d+(?:\.\d+)?)\s*([GgMm])$/.exec(String(memory).trim())
+  if (!m) fail(`invalid memory value "${memory}" - use e.g. 4G or 6144M`)
+  const n = Number(m[1])
+  return m[2].toUpperCase() === 'G' ? n : n / 1024
+}
