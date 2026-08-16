@@ -160,7 +160,7 @@ cannot silently desync an instance from what mcctl believes about it. Pass
 ### Layout
 
 ```
-minecraft-hosting/
+mcctl/
 ├── mcctl.mjs           CLI
 ├── mcctl.cmd           Windows shim
 ├── instances.json      Registry: ports, memory, RCON credentials  (gitignored)
