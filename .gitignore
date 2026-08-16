@@ -15,3 +15,6 @@ instances.json
 node_modules/
 *.log
 .DS_Store
+
+# Jars pulled out of an instance's plugins folder (e.g. conflicting duplicates)
+_disabled/
