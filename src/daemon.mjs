@@ -204,8 +204,37 @@ async function handle(req) {
   }
 }
 
-server.on('error', (err) => log(`control socket error: ${err.message}`))
-server.listen(controlAddr, () => log(`control socket listening on ${controlAddr}`))
+/**
+ * Bind the control channel, retrying while a previous daemon for this instance
+ * still holds the pipe. A restart can spawn us milliseconds after the outgoing
+ * daemon's java child exited but before that daemon has released the name.
+ *
+ * If the channel can never be bound, the server would run unmanageable - no
+ * stdin, no graceful stop. That is worse than not running, so we refuse to
+ * stay up rather than silently logging the failure.
+ */
+const LISTEN_RETRY_MS = 250
+const LISTEN_TIMEOUT_MS = 15000
+
+function listenWithRetry(deadline = Date.now() + LISTEN_TIMEOUT_MS) {
+  server.once('error', (err) => {
+    if (err.code === 'EADDRINUSE' && Date.now() < deadline) {
+      log(`control socket busy at ${controlAddr}, retrying`)
+      setTimeout(() => listenWithRetry(deadline), LISTEN_RETRY_MS)
+      return
+    }
+    log(`control socket fatal: ${err.message}`)
+    out.write(`\n[mcctl] control channel unavailable (${err.message}); stopping the server\n`)
+    state.running = false
+    state.error = `control channel unavailable: ${err.message}`
+    writeJson(stateFile(name), state)
+    forceKill()
+    setTimeout(() => process.exit(1), 1000)
+  })
+  server.listen(controlAddr, () => log(`control socket listening on ${controlAddr}`))
+}
+
+listenWithRetry()
 
 // Keep the daemon alive even if the terminal that spawned it goes away.
 process.on('SIGINT', () => {})

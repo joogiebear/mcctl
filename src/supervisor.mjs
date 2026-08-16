@@ -133,6 +133,29 @@ export async function waitForReady(name, timeout = 180000) {
   return { ready: false, timedOut: true }
 }
 
+function killTree(pid) {
+  if (!pid || !pidAlive(pid)) return
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true })
+  } else {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+async function waitForPidExit(pid, timeout = 15000) {
+  if (!pid) return true
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    if (!pidAlive(pid)) return true
+    await sleep(100)
+  }
+  return !pidAlive(pid)
+}
+
 export async function stop(name, { timeout = 90000 } = {}) {
   const { status, state } = readState(name)
   if (status === 'stopped' || status === 'stale') {
@@ -144,6 +167,11 @@ export async function stop(name, { timeout = 90000 } = {}) {
   }
   const res = await controlRequest(name, { op: 'stop', timeout }, { timeout: timeout + 30000 })
   if (!res.ok) fail(res.error || 'stop failed')
+
+  // The daemon outlives its java child by a moment while it flushes logs and
+  // releases the control pipe. Wait for it, or a following start races it for
+  // the pipe name and comes up with no control channel.
+  await waitForPidExit(state.daemonPid)
   return res
 }
 
@@ -154,22 +182,31 @@ export async function kill(name) {
     return { alreadyStopped: true }
   }
   if (status === 'orphaned') {
-    if (process.platform === 'win32') {
-      spawn('taskkill', ['/PID', String(state.javaPid), '/T', '/F'], { windowsHide: true })
-    } else {
-      try {
-        process.kill(state.javaPid, 'SIGKILL')
-      } catch {
-        /* already gone */
-      }
-    }
-    await sleep(1500)
+    killTree(state.javaPid)
+    await waitForPidExit(state.javaPid)
     clearState(name)
     return { forced: true, orphan: true }
   }
-  const res = await controlRequest(name, { op: 'kill' }, { timeout: 30000 })
-  if (!res.ok) fail(res.error || 'kill failed')
-  return res
+
+  // Ask the daemon first so it can clean up after itself, but fall back to the
+  // pids when the control channel is unreachable - kill is the last resort and
+  // must never be the thing that cannot recover an instance.
+  try {
+    const res = await controlRequest(name, { op: 'kill' }, { timeout: 30000 })
+    if (res.ok) {
+      await waitForPidExit(state.daemonPid)
+      return res
+    }
+  } catch {
+    /* control channel is gone; fall through to killing the pids */
+  }
+
+  killTree(state.javaPid)
+  killTree(state.daemonPid)
+  await waitForPidExit(state.javaPid)
+  await waitForPidExit(state.daemonPid)
+  clearState(name)
+  return { forced: true, viaPid: true }
 }
 
 export async function sendConsole(name, line) {
