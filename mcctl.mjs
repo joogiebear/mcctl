@@ -839,7 +839,14 @@ async function runTask(id) {
 
     if (action.type === 'backup') {
       const res = await backup.createSnapshot(inst, { scope: 'standard', label: 'scheduled', running })
-      record(true, `${res.file} (${humanBytes(res.size)})`)
+      let pruned = ''
+      // Pruned AFTER the new one exists, never before: trimming first would mean a failed backup
+      // leaves you with fewer than you had, which is the opposite of what a retention limit is for.
+      if (Number.isInteger(action.keep) && action.keep > 0) {
+        const gone = backup.pruneSnapshots(instance, action.keep)
+        if (gone.length) pruned = `, pruned ${gone.length} over the limit of ${action.keep}`
+      }
+      record(true, `${res.file} (${humanBytes(res.size)})${pruned}`)
     } else if (action.type === 'command') {
       if (!running) return record(false, 'server is not running')
       await sup.sendConsole(instance, action.line)
