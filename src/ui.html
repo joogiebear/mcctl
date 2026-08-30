@@ -2336,7 +2336,7 @@ async function renderBackups(opts) {
   autoState.className = 'hint';
   autoState.textContent = data.auto
     ? 'Held by Windows Task Scheduler. Last run: ' + (data.auto.lastResult || 'unknown')
-      + '. Next: ' + (data.auto.nextRun || 'unknown') + '.'
+      + '. Next: ' + (whenNext(data.auto.nextRun) || 'unknown') + '.'
     : 'Runs through Windows Task Scheduler, so it happens whether or not this window is open - while '
       + 'you are signed in, screen locked included, but not after you sign out.';
   auto.append(autoTitle, autoRow, autoState);
