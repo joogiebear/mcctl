@@ -1796,8 +1796,15 @@ function taskForm({ actions, kinds, days, task, onCancel, onSubmit }) {
     everyField.hidden = k !== 'minutes' && k !== 'hourly';
     dayField.hidden = k !== 'weekly';
     atField.hidden = k !== 'daily' && k !== 'weekly';
+    // The limits are Windows', enforced for real in normaliseSchedule. Applying them here too
+    // means switching from "every 90 minutes" to hours corrects the 90 rather than letting it be
+    // sent and bounced - a number input's max is advisory, not enforced on submit.
+    const most = k === 'minutes' ? 1439 : 23;
     every.min = '1';
-    every.max = k === 'minutes' ? '1439' : '23';
+    every.max = String(most);
+    const n = Number(every.value);
+    if (!Number.isInteger(n) || n < 1) every.value = '1';
+    else if (n > most) every.value = String(most);
     const meta = actions.find((x) => x.type === a);
     // The example name follows the action, so a command task is not prompted with "Nightly backup".
     title.placeholder = meta ? meta.label : 'Scheduled task';
