@@ -9,7 +9,7 @@
     "dev": "electron . --core ..",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "release": "electron-builder --publish always",
+    "release": "node ensure-draft.mjs && electron-builder --publish always",
     "verify": "node verify-build.mjs",
     "test": "node window-state.test.js",
     "release:publish": "node finish-release.mjs"

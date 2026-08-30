@@ -44,7 +44,22 @@ function fail(message) {
   process.exit(1)
 }
 
-const release = JSON.parse(gh(['release', 'view', TAG, '--repo', REPO, '--json', 'isDraft,assets,name']))
+// A tag can resolve to the wrong object when more than one release claims it - which is what a
+// raced draft creation leaves behind - so look at every release rather than trusting the lookup.
+const all = JSON.parse(gh(['api', `repos/${REPO}/releases`, '--paginate']))
+const matching = all.filter((r) => r.tag_name === TAG || r.name === TAG)
+if (matching.length > 1) {
+  fail(`${matching.length} releases claim ${TAG}: ids ${matching.map((r) => r.id).join(', ')}. ` +
+    'The assets are split across them. Delete all but one, or delete them all and rebuild.')
+}
+if (matching.length === 0) fail(`no release found for ${TAG}. Build it first.`)
+
+const found = matching[0]
+const release = {
+  isDraft: found.draft,
+  name: found.name,
+  assets: found.assets.map((a) => ({ name: a.name, size: a.size, state: a.state })),
+}
 
 if (!release.isDraft) {
   process.stdout.write(`  ok   ${TAG} is already published.\n`)
