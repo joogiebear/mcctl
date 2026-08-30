@@ -1,293 +1,1936 @@
 <!doctype html>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <title>mcctl</title>
+
 <style>
+  /* ==========================================================================
+     Design tokens.
+
+     Kept identical to the block at the top of desktop/setup.html. The two pages are loaded by
+     different things - one over http from src/ui.mjs, one from disk by Electron before that server
+     exists - so they cannot share a stylesheet without a build step, and there is no build step.
+     Duplicated deliberately; change both or neither.
+
+     Colour: the accent is lapis, taken from the block rather than from a palette of generic
+     product blues, and it is the ONLY interactive colour. Green, amber and red are reserved for
+     server state, because the console already speaks that language - Paper writes INFO, WARN and
+     ERROR, and a panel that used red for a button would be arguing with its own log.
+     ========================================================================== */
   :root {
-    --bg: #10131a; --panel: #171b24; --line: #262c39; --ink: #e6e9ef; --dim: #8b94a7;
-    --accent: #5aa9e6; --ok: #57c07d; --warn: #e0a75e; --bad: #e06c75;
-    --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+    --void:     #0c0e14;
+    --surface:  #141823;
+    --raised:   #1c2130;
+    --sunken:   #0a0c12;
+    --line:     #252b3b;
+    --edge:     #354056;
+
+    --ink:      #e9ecf4;
+    --ink-2:    #9aa4ba;
+    --ink-3:    #6b7488;
+
+    --lapis:     #5b84ff;
+    --lapis-dim: #2c3f8f;
+    --lapis-wash: rgba(91, 132, 255, .12);
+
+    --live:  #4ade80;
+    --warn:  #f0b64d;
+    --fault: #f2645c;
+    --idle:  #6b7488;
+
+    --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+
+    --r: 8px;
+    --r-sm: 6px;
   }
+
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, sans-serif; }
-  header { display: flex; align-items: baseline; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 16px; margin: 0; letter-spacing: .3px; }
-  header span { color: var(--dim); font-size: 12px; }
-  main { display: grid; grid-template-columns: 340px 1fr; gap: 16px; padding: 16px 20px; align-items: start; }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
-  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--dim);
-              margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line); }
-  .inst { padding: 12px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
-  .inst:last-child { border-bottom: 0; }
-  .inst.sel { background: #1e2431; box-shadow: inset 3px 0 0 var(--accent); }
-  .inst .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  .meta { color: var(--dim); font-size: 12px; font-family: var(--mono); }
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-  .running .dot { background: var(--ok); } .stopped .dot { background: var(--dim); }
-  .stale .dot, .orphaned .dot { background: var(--warn); } .unknown .dot { background: var(--bad); }
-  .bar { display: flex; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; align-items: center; }
-  button { background: #222836; color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
-           padding: 6px 12px; font: inherit; cursor: pointer; }
-  button:hover:not(:disabled) { border-color: var(--accent); }
-  button:disabled { opacity: .4; cursor: default; }
-  button.go { background: #1d3b2a; border-color: #2c5b40; }
-  button.stop { background: #3b1f22; border-color: #5b2c31; }
-  #log { margin: 0; padding: 12px 14px; height: calc(100vh - 230px); overflow-y: auto; white-space: pre-wrap;
-         word-break: break-word; font-family: var(--mono); font-size: 12.5px; color: #cdd3de; }
-  #log .err { color: var(--bad); }
-  #log .warn { color: var(--warn); }
-  .cmd { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
-  .cmd input { flex: 1; background: #0d1017; color: var(--ink); border: 1px solid var(--line);
-               border-radius: 6px; padding: 8px 10px; font-family: var(--mono); }
-  form.new { padding: 12px 14px; display: grid; gap: 8px; }
-  form.new input, form.new select { background: #0d1017; color: var(--ink); border: 1px solid var(--line);
-                                    border-radius: 6px; padding: 7px 9px; font: inherit; width: 100%; }
-  form.new label { color: var(--dim); font-size: 12px; }
-  .mini { width: 116px; background: #0d1017; color: var(--ink); border: 1px solid var(--line);
-          border-radius: 6px; padding: 5px 8px; font: inherit; }
-  .note { color: var(--dim); font-size: 12px; padding: 0 14px 12px; }
+
+  /* The [hidden] attribute only wins from the browser's own stylesheet, and any author rule that
+     sets `display` beats it - so `button { display: inline-flex }` was quietly un-hiding every
+     hidden button on the page. This rule puts [hidden] back in charge. */
+  [hidden] { display: none !important; }
+
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--void);
+    color: var(--ink);
+    font: 14px/1.5 var(--ui);
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  /* A missing prerequisite belongs above everything, not in a toast that scrolls away. */
+  .banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    font-size: 13px;
+    background: rgba(242, 100, 92, .12);
+    border-bottom: 1px solid rgba(242, 100, 92, .32);
+    color: #f7a49f;
+  }
+  .banner.warn { background: rgba(240, 182, 77, .11); border-bottom-color: rgba(240, 182, 77, .3); color: #f4cd86; }
+  .banner b { font-weight: 600; }
+  .banner .grow { flex: 1; }
+
+  /* Focus is visible on everything, not just buttons. A control panel is operated in a hurry, and
+     losing the caret is losing your place. */
+  :focus-visible { outline: 2px solid var(--lapis); outline-offset: 2px; border-radius: 3px; }
+
+  /* ---- header rail ------------------------------------------------------ */
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px;
+    height: 48px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 9px; }
+  .brand svg { display: block; }
+  .brand b { font: 600 15px/1 var(--mono); letter-spacing: -.02em; }
+  .rootchip {
+    font: 11.5px/1 var(--mono);
+    color: var(--ink-3);
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 5px 10px;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .grow { flex: 1; }
+  .ver { font: 11.5px/1 var(--mono); color: var(--ink-3); }
+
+  /* ---- layout ----------------------------------------------------------- */
+
+  main {
+    display: grid;
+    grid-template-columns: 296px minmax(0, 1fr);
+    gap: 14px;
+    padding: 14px 16px;
+    min-height: 0;
+  }
+  .sidebar { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 10px; min-height: 0; }
+
+  /* With nothing registered there is no list, so there is no list to show. The first screen a
+     stranger sees is one thing asking one question rather than a panel of empty furniture. */
+  body.bare main { grid-template-columns: minmax(0, 1fr); }
+  body.bare .sidebar { display: none; }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    min-height: 0;
+  }
+  .panel > h2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--line);
+    font: 600 11px/1 var(--ui);
+    text-transform: uppercase;
+    letter-spacing: .09em;
+    color: var(--ink-2);
+  }
+  .panel > h2 .n { font: 11px/1 var(--mono); letter-spacing: 0; color: var(--ink-3); }
+  .sidebar .panel { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+
+  /* ---- server cards ----------------------------------------------------- */
+
+  #list { overflow-y: auto; min-height: 0; padding: 6px; }
+
+  .card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 2px 10px;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--r-sm);
+    padding: 9px 10px;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  .card:hover { background: var(--raised); }
+  .card[aria-current="true"] { background: var(--lapis-wash); border-color: var(--lapis-dim); }
+  .card .lamp { grid-row: 1 / 3; align-self: center; }
+  .card .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .vitals {
+    font: 11.5px/1.45 var(--mono);
+    color: var(--ink-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card .vitals .on { color: var(--ink-2); }
+
+  /*
+    The lamp.
+
+    A dot says there is a status. A lamp says what the status IS - it has a colour, a halo, and
+    when the server is actually running it breathes. This is the one place the panel spends any
+    motion, because "is it alive" is the question it exists to answer, and a still image cannot
+    tell a live panel from a frozen one.
+  */
+  .lamp {
+    --lamp: var(--idle);
+    position: relative;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--lamp);
+    flex: none;
+  }
+  .lamp::after {
+    content: "";
+    position: absolute;
+    inset: -5px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--lamp) 0%, transparent 68%);
+    opacity: .38;
+  }
+  .lamp.lg { width: 11px; height: 11px; }
+
+  [data-status="running"]  .lamp { --lamp: var(--live); }
+  [data-status="stopping"] .lamp,
+  [data-status="stale"]    .lamp { --lamp: var(--warn); }
+  [data-status="orphaned"] .lamp,
+  [data-status="unknown"]  .lamp { --lamp: var(--fault); }
+
+  [data-status="running"]  .lamp::after { animation: breathe 2.6s ease-in-out infinite; }
+  [data-status="stopping"] .lamp::after { animation: breathe 1s ease-in-out infinite; }
+  @keyframes breathe { 0%, 100% { opacity: .22; } 50% { opacity: .7; } }
+
+  .newbtn { width: 100%; justify-content: center; padding: 10px; font-weight: 600; }
+  .side-empty { padding: 18px 14px; color: var(--ink-3); font-size: 13px; }
+
+  /* ---- stage ------------------------------------------------------------ */
+
+  .stage { min-height: 0; display: grid; }
+  .view { display: none; min-height: 0; }
+  .view[data-active] { display: grid; }
+
+  /* ---- controls --------------------------------------------------------- */
+
+  button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--raised);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    padding: 6px 12px;
+    font: 13px/1.4 var(--ui);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover:not(:disabled) { border-color: var(--edge); background: #222839; }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { opacity: .38; cursor: default; }
+
+  button.primary { background: var(--lapis-dim); border-color: #3d55b8; color: #eaf0ff; font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: #35499f; border-color: var(--lapis); }
+  button.danger { color: #ffc9c5; border-color: #4a2529; background: #2b1719; }
+  button.danger:hover:not(:disabled) { border-color: var(--fault); background: #3a1c1f; }
+  button.ghost { background: transparent; }
+
+  input, select {
+    background: var(--sunken);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    padding: 7px 10px;
+    font: 13px/1.4 var(--ui);
+    width: 100%;
+  }
+  input:hover, select:hover { border-color: var(--edge); }
+  input:focus, select:focus { outline: none; border-color: var(--lapis); box-shadow: 0 0 0 3px var(--lapis-wash); }
+  input:disabled { opacity: .5; }
+  input.mono { font-family: var(--mono); font-size: 12.5px; }
+  input::placeholder { color: var(--ink-3); }
+  input[aria-invalid="true"] { border-color: var(--fault); }
+
+  .field { display: grid; gap: 5px; }
+  .field > label { font: 600 11px/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); }
+  .hint { font-size: 12px; color: var(--ink-3); line-height: 1.45; }
+  .bad { font-size: 12px; color: var(--fault); }
+  .row { display: flex; gap: 8px; align-items: center; }
+
+  /* Segmented control: one visual group for one decision. */
+  .seg {
+    display: inline-flex;
+    background: var(--sunken);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    padding: 2px;
+    gap: 2px;
+  }
+  .seg button { background: transparent; border: 0; padding: 4px 10px; font-size: 12.5px; color: var(--ink-2); border-radius: 4px; }
+  .seg button[aria-pressed="true"] { background: var(--raised); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+  .seg button:hover:not([aria-pressed="true"]) { color: var(--ink); background: transparent; }
+
+  /* ---- empty state ------------------------------------------------------ */
+
+  .empty {
+    place-content: center;
+    justify-items: center;
+    text-align: center;
+    padding: 32px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    overflow: auto;
+  }
+  .empty .mark { opacity: .92; margin-bottom: 22px; }
+  .empty h1 { font: 600 26px/1.2 var(--ui); margin: 0 0 10px; letter-spacing: -.015em; }
+  .empty p.lede { color: var(--ink-2); margin: 0 0 30px; max-width: 48ch; font-size: 14.5px; }
+
+  .doors { display: grid; grid-template-columns: repeat(auto-fit, minmax(238px, 1fr)); gap: 12px; max-width: 620px; width: 100%; }
+  .door {
+    display: grid;
+    gap: 6px;
+    justify-items: start;
+    text-align: left;
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 16px;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+    white-space: normal;
+  }
+  .door:hover { border-color: var(--lapis-dim); background: #212739; }
+  .door b { font-size: 14px; }
+  .door span { font-size: 12.5px; color: var(--ink-3); line-height: 1.45; }
+
+  /* ---- server view ------------------------------------------------------ */
+
+  .server {
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+  }
+  .srv-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .srv-head h1 { margin: 0; font: 600 17px/1.2 var(--ui); letter-spacing: -.01em; }
+  .srv-state { font: 12.5px/1 var(--ui); color: var(--ink-2); }
+  .srv-actions { display: flex; gap: 7px; }
+
+  .vitals-bar { display: flex; flex-wrap: wrap; gap: 4px 22px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: #11151f; }
+  .vital { display: grid; gap: 1px; }
+  .vital dt { font: 600 10px/1.4 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
+  .vital dd { margin: 0; font: 12.5px/1.4 var(--mono); color: var(--ink); }
+
+  .notice { padding: 9px 14px; font-size: 12.5px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: baseline; line-height: 1.5; }
+  .notice.warn { background: rgba(240, 182, 77, .09); color: #f4cd86; }
+  .notice.fault { background: rgba(242, 100, 92, .1); color: #f7a49f; }
+  .notice b { font-weight: 600; white-space: nowrap; }
+
+  /* ---- console ---------------------------------------------------------- */
+
+  .con-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .con-search { position: relative; flex: 1 1 150px; min-width: 120px; max-width: 300px; }
+  .con-search input { padding-left: 28px; font-size: 12.5px; }
+  .con-search svg { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--ink-3); }
+  .con-count { font: 11.5px/1 var(--mono); color: var(--ink-3); white-space: nowrap; }
+
+  /* A grid, not a block with a percentage height inside it. The toolbar and the log share this
+     box, so `height: 100%` on the log meant "as tall as the toolbar AND the log", and the console
+     grew straight through the command bar below it. Only visible once the window was small enough
+     for the toolbar to wrap - which is the app's own 900x600 minimum. */
+  .log-wrap { position: relative; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+  #log {
+    margin: 0;
+    padding: 8px 0 12px;
+    min-height: 0;
+    overflow: auto;
+    background: var(--sunken);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: #cfd6e4;
+  }
+  /*
+    Level as a rail in the gutter, not as the colour of the whole line.
+
+    Colouring an entire ERROR line makes it loud and makes it HARDER to read - the text loses
+    contrast exactly when you most need it. A rail down the left edge gives the same at-a-glance
+    scanning (you see the stripe pattern before you read a word) while every line keeps full
+    contrast.
+  */
+  .ln { padding: 0 12px 0 14px; border-left: 3px solid transparent; white-space: pre-wrap; word-break: break-word; }
+  #log.nowrap .ln { white-space: pre; word-break: normal; }
+  .ln .pre { color: var(--ink-3); }
+  .ln mark { background: rgba(240, 182, 77, .3); color: #ffe9be; border-radius: 2px; }
+  .ln.warn  { border-left-color: var(--warn); background: rgba(240, 182, 77, .045); }
+  .ln.error { border-left-color: var(--fault); background: rgba(242, 100, 92, .055); }
+  .ln.sys   { border-left-color: var(--lapis); color: var(--ink-2); }
+  .ln.sys .pre { color: var(--lapis); }
+
+  .log-empty { padding: 22px 16px; color: var(--ink-3); font: 13px/1.6 var(--ui); }
+
+  .jump { position: absolute; right: 16px; bottom: 14px; box-shadow: 0 4px 14px rgba(0, 0, 0, .5); font-size: 12.5px; }
+
+  .cmd { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); align-items: center; }
+  .cmd .prompt { font: 13px/1 var(--mono); color: var(--lapis); }
+  .cmd input { font-family: var(--mono); font-size: 12.5px; }
+
+  /* ---- sheets: add a server, settings ----------------------------------- */
+
+  .sheet { align-content: start; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); overflow: auto; }
+  .sheet-head { display: flex; align-items: center; gap: 12px; padding: 13px 18px; border-bottom: 1px solid var(--line); }
+  .sheet-head h1 { margin: 0; font: 600 17px/1.2 var(--ui); }
+  .sheet-body { padding: 18px; display: grid; gap: 16px; max-width: 580px; }
+  .sheet-body.wide { max-width: 780px; }
+  .sheet-body h2 { margin: 0 0 4px; font: 600 13px/1.4 var(--ui); }
+
+  .tabs { display: flex; gap: 4px; padding: 0 14px; border-bottom: 1px solid var(--line); }
+  .tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 10px 12px; color: var(--ink-2); font-size: 13px; }
+  .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--lapis); font-weight: 600; }
+  .tabs button:hover { background: transparent; color: var(--ink); }
+
+  .prog { display: grid; gap: 8px; }
+  .prog .track { height: 6px; border-radius: 3px; background: var(--sunken); border: 1px solid var(--line); overflow: hidden; }
+  .prog .bar { height: 100%; width: 0; background: var(--lapis); transition: width .25s ease; }
+  .prog .bar.indet { width: 34%; animation: slide 1.1s ease-in-out infinite; }
+  @keyframes slide { 0% { margin-left: -34%; } 100% { margin-left: 100%; } }
+  .prog .msg { font-size: 13px; color: var(--ink-2); }
+
+  .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; align-items: baseline; margin: 0; }
+  .kv dt { font: 600 11px/1.6 var(--ui); text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3); }
+  .kv dd { margin: 0; font: 12.5px/1.6 var(--mono); color: var(--ink); word-break: break-all; }
+
+  /* ---- dialog ------------------------------------------------------------ */
+
+  dialog {
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--ink);
+    padding: 0;
+    width: min(470px, calc(100vw - 32px));
+    box-shadow: 0 18px 60px rgba(0, 0, 0, .6);
+  }
+  dialog::backdrop { background: rgba(6, 8, 12, .68); }
+  dialog h2 { margin: 0; padding: 16px 20px 0; font: 600 16px/1.3 var(--ui); }
+  dialog .dlg-body { padding: 10px 20px 4px; display: grid; gap: 14px; }
+  dialog p { margin: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.55; }
+  dialog footer { display: flex; justify-content: flex-end; gap: 8px; padding: 16px 20px 18px; }
+
+  .choice { display: grid; gap: 8px; }
+  .choice label {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 3px 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--raised);
+    cursor: pointer;
+  }
+  .choice label:has(input:checked) { border-color: var(--lapis); background: var(--lapis-wash); }
+  .choice input { width: auto; grid-row: 1 / 3; align-self: center; accent-color: var(--lapis); }
+  .choice b { font-size: 13.5px; font-weight: 600; }
+  .choice span { font-size: 12.5px; color: var(--ink-3); line-height: 1.45; }
+
+  /* ---- toasts ------------------------------------------------------------ */
+
+  #toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 40; justify-items: end; }
+  .toast {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    max-width: 400px;
+    background: var(--raised);
+    border: 1px solid var(--edge);
+    border-left: 3px solid var(--lapis);
+    border-radius: var(--r-sm);
+    padding: 11px 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    box-shadow: 0 8px 26px rgba(0, 0, 0, .5);
+    animation: toast-in .18s ease-out;
+  }
+  .toast.bad { border-left-color: var(--fault); }
+  .toast.good { border-left-color: var(--live); }
+  .toast .x { background: none; border: 0; padding: 0 2px; color: var(--ink-3); font-size: 15px; line-height: 1; }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
+
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+
+  /* One column once two stop fitting. The Electron window has a 900px minimum, so this is for a
+     browser tab that has been dragged narrow. */
+  @media (max-width: 840px) {
+    main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(110px, 26vh) minmax(0, 1fr); }
+    .rootchip { display: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .001ms !important;
+    }
+    .lamp::after { opacity: .45; }
+  }
 </style>
 
+<div id="banner"></div>
+
 <header>
-  <h1>mcctl</h1>
-  <span>local control panel &mdash; bound to 127.0.0.1 only</span>
-  <span style="flex:1"></span>
-  <span class="meta" id="appver"></span>
-  <button id="bUpdate" hidden>Check for updates</button>
+  <span class="brand">
+    <svg viewBox="0 0 64 64" width="21" height="21" aria-hidden="true">
+      <polygon points="8,20 32,8 56,20 32,32" fill="#5f85ef"/>
+      <polygon points="8,20 32,32 32,54 8,42" fill="#3a55b4"/>
+      <polygon points="56,20 32,32 32,54 56,42" fill="#24357a"/>
+      <polygon points="51.2,29.0 35.4,36.9 35.4,42.6 51.2,34.7" fill="#cfe0ff"/>
+    </svg>
+    <b>mcctl</b>
+  </span>
+  <span class="rootchip" id="rootChip" hidden></span>
+  <span class="grow"></span>
+  <span class="ver" id="appver"></span>
+  <button id="bUpdate" class="ghost" hidden>Check for updates</button>
+  <button id="bSettings" class="ghost">Settings</button>
 </header>
 
 <main>
-  <div>
-    <div class="panel" style="margin-bottom:16px">
-      <h2>Servers</h2>
-      <div id="list"></div>
-    </div>
+  <aside class="sidebar">
     <div class="panel">
-      <h2>New server</h2>
-      <form class="new" id="newForm">
-        <div><label>Name</label><input name="name" required pattern="[A-Za-z0-9_-]+" placeholder="testbed"></div>
-        <div><label>Paper version</label><select name="paperVersion" id="versions"><option>loading...</option></select></div>
-        <div><label>Memory</label><input name="memory" value="4G"></div>
-        <div><label>Port</label><input name="port" type="number" placeholder="auto"></div>
-        <button type="submit">Create</button>
-      </form>
-      <div class="note" id="newNote">Downloads the newest stable build of the chosen version.</div>
+      <h2>Servers <span class="n" id="count"></span></h2>
+      <div id="list" role="list"></div>
     </div>
-  </div>
+    <button class="newbtn primary" id="bNew">Add a server</button>
+  </aside>
 
-  <div class="panel">
-    <div class="bar">
-      <b id="curName">&mdash;</b>
-      <span class="meta" id="curMeta"></span>
-      <span style="flex:1"></span>
-      <button class="go" id="bStart">Start</button>
-      <button class="stop" id="bStop">Stop</button>
-      <button id="bRestart">Restart</button>
+  <section class="stage">
+
+    <!-- ============ nothing selected ===================================== -->
+    <div class="view empty" id="vEmpty">
+      <svg class="mark" viewBox="0 0 64 64" width="66" height="66" aria-hidden="true">
+        <polygon points="8,20 32,8 56,20 32,32" fill="#5f85ef"/>
+        <polygon points="8,20 32,32 32,54 8,42" fill="#3a55b4"/>
+        <polygon points="56,20 32,32 32,54 56,42" fill="#24357a"/>
+        <polygon points="51.2,29.0 35.4,36.9 35.4,42.6 51.2,34.7" fill="#cfe0ff"/>
+      </svg>
+      <h1 id="emptyTitle">No servers yet</h1>
+      <p class="lede" id="emptyLede">
+        mcctl runs Minecraft servers on this machine — start them, watch the console, send
+        commands, and reset a world without going near a terminal.
+      </p>
+      <div class="doors" id="emptyDoors">
+        <button class="door" id="dNew">
+          <b>Create a server</b>
+          <span>Downloads Paper and sets up a fresh world on a free port. Takes about a minute.</span>
+        </button>
+        <button class="door" id="dAdopt">
+          <b>Add one you already have</b>
+          <span>Points mcctl at a server folder on this machine. Nothing is moved or rewritten.</span>
+        </button>
+      </div>
     </div>
-    <div class="bar" id="manageBar">
-      <button id="bFolder" title="Open this instance's folder">Open folder</button>
-      <span style="flex:1"></span>
-      <input id="edName" class="mini" placeholder="rename to..." autocomplete="off">
-      <button id="bRename">Rename</button>
-      <input id="edMem" class="mini" placeholder="RAM e.g. 4G" autocomplete="off">
-      <input id="edPort" class="mini" type="number" placeholder="port">
-      <button id="bSave">Save</button>
-      <button id="bRebuild" title="Reset worlds; snapshots first">Rebuild</button>
-      <button class="stop" id="bDelete">Delete</button>
+
+    <!-- ============ a server is selected ================================= -->
+    <div class="view server" id="vServer">
+      <div class="srv-head">
+        <span class="lamp lg"></span>
+        <h1 id="srvName">—</h1>
+        <span class="srv-state" id="srvState"></span>
+        <span class="grow"></span>
+        <span class="srv-actions">
+          <button class="primary" id="bStart">Start</button>
+          <button id="bStop">Stop</button>
+          <button id="bRestart">Restart</button>
+          <button id="bManage">Manage…</button>
+        </span>
+      </div>
+
+      <dl class="vitals-bar" id="srvVitals"></dl>
+      <div id="srvNotice"></div>
+
+      <div class="log-wrap">
+        <div class="con-bar">
+          <span class="con-search">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+              <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 L14 14"/>
+            </svg>
+            <input id="conSearch" placeholder="Search the console" autocomplete="off" aria-label="Search the console">
+          </span>
+          <span class="seg" role="group" aria-label="Filter by level">
+            <button data-lvl="all" aria-pressed="true">All</button>
+            <button data-lvl="warn">Warnings</button>
+            <button data-lvl="error">Errors</button>
+          </span>
+          <button id="bPause" aria-pressed="false">Pause</button>
+          <button id="bWrap" aria-pressed="true">Wrap</button>
+          <button id="bCopy">Copy</button>
+          <button id="bClear">Clear</button>
+          <span class="grow"></span>
+          <span class="con-count" id="conCount"></span>
+        </div>
+        <pre id="log" tabindex="0" role="log" aria-label="Server console"></pre>
+        <button class="jump" id="bJump" hidden>Jump to newest</button>
+      </div>
+
+      <div class="cmd">
+        <span class="prompt" aria-hidden="true">&gt;</span>
+        <input id="cmd" placeholder="Send a server command — try list" autocomplete="off" aria-label="Server command">
+        <button id="bSend">Send</button>
+      </div>
     </div>
-    <pre id="log"></pre>
-    <div class="cmd">
-      <input id="cmd" placeholder="Type a server command and press Enter - e.g. list" autocomplete="off">
-      <button id="bSend">Send</button>
+
+    <!-- ============ add a server ========================================= -->
+    <div class="view sheet" id="vAdd">
+      <div class="sheet-head">
+        <h1>Add a server</h1>
+        <span class="grow"></span>
+        <button class="ghost" id="bAddClose">Close</button>
+      </div>
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="new" aria-selected="true">Create a new one</button>
+        <button role="tab" data-tab="adopt" aria-selected="false">Add one I already have</button>
+      </div>
+
+      <form class="sheet-body" id="formNew">
+        <div class="field">
+          <label for="nName">Name</label>
+          <input id="nName" name="name" required autocomplete="off" placeholder="testbed" spellcheck="false">
+          <div class="hint">Letters, numbers, dash and underscore. Names the folder and the console.</div>
+          <div class="bad" id="nNameBad"></div>
+        </div>
+        <div class="row" style="align-items:flex-start">
+          <div class="field" style="flex:2">
+            <label for="nVersion">Minecraft version</label>
+            <select id="nVersion" name="paperVersion"><option value="">Loading versions…</option></select>
+            <div class="hint">Downloads the newest stable Paper build.</div>
+          </div>
+          <div class="field" style="flex:1">
+            <label for="nMem">Memory</label>
+            <input id="nMem" name="memory" value="4G" class="mono" autocomplete="off">
+            <div class="hint">e.g. 4G</div>
+          </div>
+          <div class="field" style="flex:1">
+            <label for="nPort">Port</label>
+            <input id="nPort" name="port" type="number" placeholder="auto" class="mono" autocomplete="off">
+            <div class="hint">Blank picks a free one</div>
+          </div>
+        </div>
+        <div class="prog" id="newProg" hidden>
+          <div class="track"><div class="bar" id="newBar"></div></div>
+          <div class="msg" id="newMsg"></div>
+        </div>
+        <div class="row">
+          <button type="submit" class="primary" id="bCreate">Create server</button>
+          <span class="hint" id="newHint">Accepts the Minecraft EULA on your behalf, as the operator of this machine.</span>
+        </div>
+      </form>
+
+      <form class="sheet-body" id="formAdopt" hidden>
+        <div class="field">
+          <label for="aDir">Server folder</label>
+          <div class="row">
+            <input id="aDir" class="mono" spellcheck="false" placeholder="C:\Minecraft\survival" autocomplete="off">
+            <button type="button" id="bBrowse" hidden>Browse…</button>
+          </div>
+          <div class="hint">The folder holding the server jar and server.properties.</div>
+        </div>
+        <div class="row" style="align-items:flex-start">
+          <div class="field" style="flex:2">
+            <label for="aName">Name in mcctl</label>
+            <input id="aName" autocomplete="off" placeholder="survival" spellcheck="false">
+            <div class="bad" id="aNameBad"></div>
+          </div>
+          <div class="field" style="flex:1">
+            <label for="aMem">Memory</label>
+            <input id="aMem" value="4G" class="mono" autocomplete="off">
+          </div>
+        </div>
+        <div class="row">
+          <button type="submit" class="primary" id="bAdopt">Add server</button>
+          <span class="hint">Nothing is moved. Its port and RCON password are read from its own server.properties.</span>
+        </div>
+      </form>
     </div>
-  </div>
+
+    <!-- ============ settings ============================================= -->
+    <div class="view sheet" id="vSettings">
+      <div class="sheet-head">
+        <h1>Settings</h1>
+        <span class="grow"></span>
+        <button class="ghost" id="bSetClose">Close</button>
+      </div>
+      <div class="sheet-body wide">
+        <div>
+          <h2>Where mcctl keeps things</h2>
+          <p class="hint" style="margin:0 0 12px">
+            Servers that already exist keep their own folders — the registry stores absolute paths,
+            so changing this only affects servers created from now on.
+          </p>
+          <dl class="kv" id="setPaths"></dl>
+        </div>
+        <div class="row" id="setActions"></div>
+        <div>
+          <h2>About</h2>
+          <dl class="kv" id="setAbout"></dl>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>
 
-<script>
-const $ = (s) => document.querySelector(s);
-let current = null, stream = null;
+<dialog id="dlg">
+  <h2 id="dlgTitle"></h2>
+  <div class="dlg-body" id="dlgBody">
+    <p id="dlgText"></p>
+    <div class="choice" id="dlgChoice" hidden></div>
+    <div class="field" id="dlgTypeWrap" hidden>
+      <label for="dlgType" id="dlgTypeLabel"></label>
+      <input id="dlgType" class="mono" autocomplete="off" spellcheck="false">
+    </div>
+  </div>
+  <footer>
+    <button id="dlgCancel">Cancel</button>
+    <button id="dlgOk" class="primary">Confirm</button>
+  </footer>
+</dialog>
 
-const api = async (p, opt) => {
-  const r = await fetch('/api' + p, opt);
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
-  return r.json();
+<div id="toasts" aria-live="polite"></div>
+<span class="sr-only" id="live" aria-live="polite"></span>
+
+<script>
+'use strict';
+
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => Array.from(document.querySelectorAll(s));
+
+const MAX_LINES = 5000;
+const desktop = window.mcctlDesktop;
+
+const state = {
+  rows: [],
+  current: null,
+  view: 'empty',
+  stream: null,
+  streamName: null,
+  lines: [],
+  paused: false,
+  pausedAt: 0,
+  filter: 'all',
+  search: '',
+  wrap: true,
+  atBottom: true,
+  history: [],
+  histAt: -1,
+  layout: null,
+  appInfo: null,
+  busy: false,
 };
 
-async function refresh() {
-  const rows = await api('/instances');
-  $('#list').innerHTML = rows.map((i) =>
-    '<div class="inst ' + i.status + (i.name === current ? ' sel' : '') + '" data-n="' + i.name + '">' +
-      '<div class="row"><b><span class="dot"></span>' + i.name + '</b>' +
-      '<span class="meta">' + i.status + '</span></div>' +
-      '<div class="meta">:' + (i.port || '?') + ' &middot; ' + (i.memory || '') + ' &middot; ' + (i.jar || '') + '</div>' +
-    '</div>').join('') || '<div class="note">No servers yet.</div>';
+// ------------------------------------------------------------------ api ----
 
-  for (const el of document.querySelectorAll('.inst')) {
-    el.onclick = () => select(el.dataset.n);
+async function api(path, opt) {
+  const res = await fetch('/api' + path, opt);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || (res.status + ' ' + res.statusText));
   }
-  const cur = rows.find((r) => r.name === current);
-  $('#curMeta').textContent = cur ? cur.status + ' · :' + cur.port + ' · ' + (cur.jar || '') : '';
-  $('#bStart').disabled = !cur || cur.status === 'running';
-  $('#bStop').disabled = !cur || cur.status !== 'running';
-  $('#bRestart').disabled = !cur;
-  // Rename, rebuild and delete all require a stopped server; the core refuses otherwise, and a
-  // button that is going to be refused should look refused.
-  const live = !cur || cur.status === 'running';
-  for (const b of ['#bRename', '#bRebuild', '#bDelete']) $(b).disabled = live;
-  $('#bFolder').disabled = !cur;
-  $('#bSave').disabled = live;
+  return res.json();
+}
+
+const post = (path, body) => api(path, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body || {}),
+});
+
+// --------------------------------------------------------------- chrome ----
+
+function toast(message, kind) {
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind ? ' ' + kind : '');
+  const text = document.createElement('div');
+  text.style.flex = '1';
+  text.textContent = message;
+  const close = document.createElement('button');
+  close.className = 'x';
+  close.type = 'button';
+  close.setAttribute('aria-label', 'Dismiss');
+  close.textContent = '\u00d7';
+  close.onclick = () => el.remove();
+  el.append(text, close);
+  $('#toasts').append(el);
+  $('#live').textContent = message;
+  // Errors stay until dismissed. Everything else is an acknowledgement, and an acknowledgement
+  // that has to be dismissed is just more work.
+  if (kind !== 'bad') setTimeout(() => el.remove(), 5200);
+  return el;
+}
+
+/**
+ * One dialog for every decision that matters.
+ *
+ * Replaces prompt() and confirm(), which were doing two jobs badly: prompt() is not implemented in
+ * Electron at all, and confirm() was carrying a semantic choice through OK/Cancel ("OK = keep
+ * plugins, Cancel = wipe them"), which nobody reads correctly under pressure. The typing friction
+ * is kept on purpose - it is the moment you actually read which server this is - but it is now one
+ * dialog with named options instead of two guesses in a row.
+ */
+// One <dialog> serves every prompt, so a dialog that opens another one has to be careful about
+// whose events it is hearing. See the note on `cancel` below.
+let askSeq = 0;
+
+function ask(opts) {
+  const dlg = $('#dlg');
+  $('#dlgTitle').textContent = opts.title;
+  $('#dlgText').textContent = opts.text || '';
+  $('#dlgText').hidden = !opts.text;
+
+  const choiceBox = $('#dlgChoice');
+  choiceBox.textContent = '';
+  choiceBox.hidden = !opts.choices;
+  if (opts.choices) {
+    opts.choices.forEach((c, i) => {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'dlgchoice';
+      input.value = c.value;
+      if (i === 0) input.checked = true;
+      const b = document.createElement('b');
+      b.textContent = c.label;
+      const s = document.createElement('span');
+      s.textContent = c.hint;
+      label.append(input, b, s);
+      choiceBox.append(label);
+    });
+  }
+
+  const typeWrap = $('#dlgTypeWrap');
+  const typeBox = $('#dlgType');
+  typeWrap.hidden = !opts.typeToConfirm;
+  typeBox.value = '';
+  if (opts.typeToConfirm) $('#dlgTypeLabel').textContent = 'Type ' + opts.typeToConfirm + ' to confirm';
+
+  const ok = $('#dlgOk');
+  ok.textContent = opts.confirmLabel || 'Confirm';
+  ok.className = opts.danger ? 'danger' : 'primary';
+
+  const check = () => { ok.disabled = Boolean(opts.typeToConfirm) && typeBox.value !== opts.typeToConfirm; };
+  check();
+  typeBox.oninput = check;
+
+  const mine = ++askSeq;
+
+  return new Promise((resolve) => {
+    const done = (result) => {
+      dlg.removeEventListener('cancel', onCancel);
+      ok.onclick = null;
+      $('#dlgCancel').onclick = null;
+      typeBox.oninput = null;
+      typeBox.onkeydown = null;
+      if (dlg.open) dlg.close();
+      resolve(result);
+    };
+    /*
+      'cancel', not 'close'.
+
+      close() queues its 'close' event rather than firing it inline, so a dialog that answers by
+      opening a second dialog - Manage, then Delete - had the first one's queued event arrive after
+      the second had already opened, and shut it again immediately. 'cancel' fires only when the
+      person actually dismisses the dialog, which is the thing being listened for. The sequence
+      guard covers the case of a stale one arriving anyway.
+    */
+    const onCancel = () => { if (mine === askSeq) done(null); };
+    dlg.addEventListener('cancel', onCancel);
+    ok.onclick = () => {
+      const picked = choiceBox.querySelector('input:checked');
+      done({ choice: picked ? picked.value : null });
+    };
+    $('#dlgCancel').onclick = () => done(null);
+    typeBox.onkeydown = (e) => {
+      if (e.key === 'Enter' && !ok.disabled) { e.preventDefault(); ok.click(); }
+    };
+    dlg.showModal();
+    (opts.typeToConfirm ? typeBox : ok).focus();
+  });
+}
+
+const VIEW_EL = { empty: '#vEmpty', server: '#vServer', add: '#vAdd', settings: '#vSettings' };
+
+function show(view) {
+  state.view = view;
+  for (const key of Object.keys(VIEW_EL)) $(VIEW_EL[key]).toggleAttribute('data-active', key === view);
+}
+
+/** Back out of a sheet to wherever the person was. */
+function back() {
+  if (!state.current) { show('empty'); renderEmptyFor(state.rows); return; }
+  if (state.streamName === state.current) {
+    show('server');
+    renderServer(state.rows.find((r) => r.name === state.current));
+  } else {
+    select(state.current);
+  }
+}
+
+// -------------------------------------------------------------- servers ----
+
+const STATE_TEXT = {
+  running: 'Running',
+  stopped: 'Stopped',
+  stopping: 'Stopping…',
+  orphaned: 'Orphaned',
+  stale: 'Stale state',
+  unknown: 'Unavailable',
+};
+
+// The states nobody can be expected to know the meaning of. Saying it here beats a support
+// question, and each one names its way out.
+const STATE_NOTE = {
+  orphaned: ['Orphaned', 'The Java process is still running but the supervisor that owned it is gone, so mcctl can no longer talk to it. Stop it with "mcctl kill" in a terminal, then start it again here.'],
+  stale: ['Stale state', 'A leftover state file from a session that did not shut down cleanly. Starting the server clears it.'],
+  unknown: ['Unavailable', 'mcctl could not read this server\u2019s state. Its folder may have been moved or deleted.'],
+};
+
+function duration(ms) {
+  if (ms == null || ms < 0) return '—';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ' + (s % 60) + 's';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ' + (m % 60) + 'm';
+  return Math.floor(h / 24) + 'd ' + (h % 24) + 'h';
+}
+
+function buildCard(row) {
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = 'card';
+  el.dataset.name = row.name;
+  el.setAttribute('role', 'listitem');
+  const lamp = document.createElement('span');
+  lamp.className = 'lamp';
+  const nm = document.createElement('span');
+  nm.className = 'nm';
+  const vitals = document.createElement('span');
+  vitals.className = 'vitals';
+  el.append(lamp, nm, vitals);
+  el.onclick = () => select(el.dataset.name);
+  return el;
+}
+
+function updateCard(el, row) {
+  el.dataset.status = row.status;
+  el.setAttribute('aria-current', String(row.name === state.current));
+  el.querySelector('.nm').textContent = row.name;
+
+  const vitals = el.querySelector('.vitals');
+  vitals.textContent = '';
+  const tail = ' \u00b7 :' + (row.port || '?') + ' \u00b7 ' + (row.memory || '?');
+  if (row.status === 'running' && row.startedAt) {
+    const up = document.createElement('span');
+    up.className = 'on';
+    up.dataset.since = String(row.startedAt);
+    up.textContent = duration(Date.now() - row.startedAt);
+    vitals.append(up, document.createTextNode(tail));
+  } else {
+    vitals.append(document.createTextNode(STATE_TEXT[row.status] + tail));
+  }
+  el.title = row.name + ' — ' + STATE_TEXT[row.status] + (row.jar ? ' — ' + row.jar : '');
+}
+
+/**
+ * Reconcile the list against the DOM rather than rewriting it.
+ *
+ * The old panel rebuilt innerHTML every four seconds, which threw away focus, text selection and
+ * scroll position on a timer. Keyed updates leave whatever is being touched alone.
+ */
+function renderList(rows) {
+  const list = $('#list');
+  $('#count').textContent = rows.length ? String(rows.length) : '';
+  document.body.classList.toggle('bare', rows.length === 0);
+
+  if (!rows.length) {
+    if (!list.querySelector('.side-empty')) {
+      list.textContent = '';
+      const p = document.createElement('div');
+      p.className = 'side-empty';
+      p.textContent = 'Nothing registered yet.';
+      list.append(p);
+    }
+    return;
+  }
+  const placeholder = list.querySelector('.side-empty');
+  if (placeholder) placeholder.remove();
+
+  const seen = new Set();
+  rows.forEach((row, i) => {
+    seen.add(row.name);
+    let el = list.querySelector('[data-name="' + CSS.escape(row.name) + '"]');
+    if (!el) el = buildCard(row);
+    updateCard(el, row);
+    if (list.children[i] !== el) list.insertBefore(el, list.children[i] || null);
+  });
+  for (const el of Array.from(list.children)) {
+    if (el.dataset.name && !seen.has(el.dataset.name)) el.remove();
+  }
+}
+
+function renderServer(row) {
+  if (!row) return;
+  $('#vServer').dataset.status = row.status;
+  $('#srvName').textContent = row.name;
+
+  const st = $('#srvState');
+  if (row.status === 'running' && row.startedAt) {
+    st.dataset.since = String(row.startedAt);
+    st.textContent = 'Running \u00b7 up ' + duration(Date.now() - row.startedAt);
+  } else {
+    delete st.dataset.since;
+    st.textContent = STATE_TEXT[row.status];
+  }
+
+  const vitals = $('#srvVitals');
+  vitals.textContent = '';
+  const pairs = [
+    ['Port', ':' + (row.port || '?')],
+    ['Memory', row.memory || '?'],
+    ['Server jar', row.jar || '—'],
+    ['RCON', row.rconPort ? ':' + row.rconPort : '—'],
+  ];
+  if (row.status === 'running' && row.javaPid) pairs.push(['Java PID', String(row.javaPid)]);
+  if (row.status === 'stopped' && row.exitCode != null) pairs.push(['Last exit', 'code ' + row.exitCode]);
+  for (const pair of pairs) {
+    const wrap = document.createElement('div');
+    wrap.className = 'vital';
+    const dt = document.createElement('dt');
+    dt.textContent = pair[0];
+    const dd = document.createElement('dd');
+    dd.textContent = pair[1];
+    wrap.append(dt, dd);
+    vitals.append(wrap);
+  }
+
+  const notice = $('#srvNotice');
+  notice.textContent = '';
+  const note = STATE_NOTE[row.status];
+  if (note) {
+    const box = document.createElement('div');
+    box.className = 'notice ' + (row.status === 'stale' ? 'warn' : 'fault');
+    const b = document.createElement('b');
+    b.textContent = note[0];
+    const s = document.createElement('span');
+    s.textContent = note[1];
+    box.append(b, s);
+    notice.append(box);
+  }
+
+  // A control that is going to be refused should look refused. The core rejects these on a live
+  // server, so the panel says so before the round trip rather than after it.
+  const live = row.status === 'running';
+  $('#bStart').disabled = state.busy || live || row.status === 'stopping';
+  $('#bStop').disabled = state.busy || !live;
+  $('#bRestart').disabled = state.busy || row.status === 'stopping';
+  $('#bManage').disabled = state.busy;
+  $('#cmd').disabled = !live;
+  $('#bSend').disabled = !live;
+  $('#cmd').placeholder = live ? 'Send a server command — try list' : 'Start the server to send commands';
+}
+
+// With servers registered but none selected, the hero would be lying if it still said "no servers
+// yet". Same view, honest copy.
+function renderEmptyFor(rows) {
+  if (rows.length) {
+    $('#emptyTitle').textContent = 'Pick a server';
+    $('#emptyLede').textContent = 'Choose one on the left to see its console.';
+    // The two doors are the whole point of the screen when there is nothing; once servers exist
+    // they are competing with the list, and "add another" already has a button in the sidebar.
+    $('#emptyDoors').hidden = true;
+  } else {
+    $('#emptyTitle').textContent = 'No servers yet';
+    $('#emptyLede').textContent = 'mcctl runs Minecraft servers on this machine — start them, watch the console, send commands, and reset a world without going near a terminal.';
+    $('#emptyDoors').hidden = false;
+  }
+}
+
+async function refresh() {
+  let rows;
+  try {
+    rows = await api('/instances');
+  } catch {
+    return; // a poll that cannot reach the server is not news; the next one will say so if it matters
+  }
+  state.rows = rows;
+
+  if (state.current && !rows.some((r) => r.name === state.current)) {
+    // Removed underneath us, by this panel or another one.
+    stopStream();
+    state.current = null;
+    if (state.view === 'server') show('empty');
+  }
+  renderList(rows);
+
+  if (!state.current) {
+    if (state.view === 'empty') renderEmptyFor(rows);
+    return;
+  }
+  if (state.view === 'server') renderServer(rows.find((r) => r.name === state.current));
+}
+
+// Uptime ticks on its own second rather than waiting for the four-second poll, so a running server
+// visibly runs.
+setInterval(() => {
+  for (const el of $$('[data-since]')) {
+    const since = Number(el.dataset.since);
+    if (!since) continue;
+    const text = duration(Date.now() - since);
+    el.textContent = el.id === 'srvState' ? 'Running \u00b7 up ' + text : text;
+  }
+}, 1000);
+
+// -------------------------------------------------------------- console ----
+
+/**
+ * What level a console line is.
+ *
+ * Paper does not have one log format, it has four, and all of them turn up in a single session:
+ *
+ *   Starting org.bukkit.craftbukkit.Main                          (before logging is configured)
+ *   2026-08-31T05:42:27.5Z ServerMain WARN Advanced terminal...   (log4j, pre-init, no brackets)
+ *   [00:42:27 INFO]: [bootstrap] Running Java 25 ...              (normal Paper)
+ *   [12:34:56] [Server thread/INFO]: ...                          (vanilla-style, some forks)
+ *
+ * Plus stack traces, which are the whole reason anyone opens a console and which carry no level of
+ * their own. A trace inherits the level of the line that introduced it - otherwise "filter to
+ * errors" shows the one-line summary and hides the twenty lines saying what actually broke.
+ */
+const LEVEL_RE = /\[(?:[^\]]*[\/ ])?(INFO|WARN|WARNING|ERROR|SEVERE|FATAL|DEBUG|TRACE)\]/i;
+const BARE_LEVEL_RE = /^\S+\s+\S+\s+(INFO|WARN|WARNING|ERROR|SEVERE|FATAL)\s/;
+const CONT_RE = /^(?:\s+|at\s|Caused by:|Suppressed:|\.\.\.\s*\d+\s+more)/;
+const EXC_RE = /^[a-z][\w.$]*(?:\.[A-Z][\w$]*)+(?::|\s*$)/;
+const MCCTL_RE = /^\[mcctl\]/;
+
+function levelOf(text, previous) {
+  if (MCCTL_RE.test(text)) return 'sys';
+  const m = LEVEL_RE.exec(text) || BARE_LEVEL_RE.exec(text);
+  if (m) {
+    const lvl = m[1].toUpperCase();
+    if (lvl === 'ERROR' || lvl === 'SEVERE' || lvl === 'FATAL') return 'error';
+    if (lvl === 'WARN' || lvl === 'WARNING') return 'warn';
+    return 'info';
+  }
+  if (CONT_RE.test(text) || EXC_RE.test(text)) return previous === 'sys' ? 'info' : (previous || 'info');
+  return 'info';
+}
+
+// The repeated scaffolding - timestamp, level, thread - is dimmed so the message leads. It is
+// still there; it just stops competing with what you are reading.
+const PREFIX_RE = /^(\[[^\]]*\](?:\s*\[[^\]]*\])?:?\s*)/;
+
+function makeLine(entry) {
+  const div = document.createElement('div');
+  div.className = 'ln' + (entry.level === 'info' ? '' : ' ' + entry.level);
+  const pm = PREFIX_RE.exec(entry.text);
+  const prefix = pm ? pm[1] : '';
+  if (prefix) {
+    const s = document.createElement('span');
+    s.className = 'pre';
+    s.textContent = prefix;
+    div.append(s);
+  }
+  appendSearched(div, pm ? entry.text.slice(prefix.length) : entry.text);
+  return div;
+}
+
+// Highlighting is built from text nodes and <mark>, never from innerHTML. A server name, a plugin
+// message or a jar filename is not markup and must never get the chance to become it.
+function appendSearched(parent, text) {
+  const needle = state.search.toLowerCase();
+  if (!needle) { parent.append(document.createTextNode(text)); return; }
+  const hay = text.toLowerCase();
+  let at = 0;
+  for (;;) {
+    const hit = hay.indexOf(needle, at);
+    if (hit === -1) break;
+    if (hit > at) parent.append(document.createTextNode(text.slice(at, hit)));
+    const mark = document.createElement('mark');
+    mark.textContent = text.slice(hit, hit + needle.length);
+    parent.append(mark);
+    at = hit + needle.length;
+  }
+  if (at < text.length) parent.append(document.createTextNode(text.slice(at)));
+}
+
+function visible(entry) {
+  if (state.filter === 'error' && entry.level !== 'error') return false;
+  if (state.filter === 'warn' && entry.level !== 'warn' && entry.level !== 'error') return false;
+  if (state.search && !entry.text.toLowerCase().includes(state.search.toLowerCase())) return false;
+  return true;
+}
+
+function updateCount(shown) {
+  const total = state.lines.length;
+  const count = shown == null ? state.lines.filter(visible).length : shown;
+  const filtered = state.filter !== 'all' || Boolean(state.search);
+  const held = state.paused ? total - state.pausedAt : 0;
+  let text = filtered ? count + ' of ' + total + ' lines' : total + (total === 1 ? ' line' : ' lines');
+  if (held > 0) text = held + ' held \u00b7 ' + text;
+  $('#conCount').textContent = text;
+}
+
+function renderLog() {
+  const log = $('#log');
+  log.textContent = '';
+  const frag = document.createDocumentFragment();
+  let shown = 0;
+  for (const entry of state.lines) {
+    if (!visible(entry)) continue;
+    frag.append(makeLine(entry));
+    shown++;
+  }
+  log.append(frag);
+  if (!shown) {
+    const p = document.createElement('div');
+    p.className = 'log-empty';
+    p.textContent = state.lines.length
+      ? 'Nothing matches. Clear the search or the level filter to see the rest.'
+      : 'No console output yet. Start the server and it appears here as it runs.';
+    log.append(p);
+  }
+  updateCount(shown);
+  if (state.atBottom) log.scrollTop = log.scrollHeight;
+}
+
+function pushLine(text) {
+  const prev = state.lines.length ? state.lines[state.lines.length - 1].level : null;
+  const entry = { text: text, level: levelOf(text, prev) };
+  state.lines.push(entry);
+
+  // A busy server writes thousands of lines a minute. Without a ceiling the panel keeps a DOM node
+  // per line until the window stops responding - a bug that only appears after someone has left it
+  // open for an afternoon, which is exactly the session this tool is for.
+  const log = $('#log');
+  while (state.lines.length > MAX_LINES) {
+    const gone = state.lines.shift();
+    if (state.pausedAt > 0) state.pausedAt--;
+    // Only drop a node if that line had one. With a filter on, most lines never reached the DOM.
+    if (visible(gone)) {
+      const first = log.firstElementChild;
+      if (first && !first.classList.contains('log-empty')) first.remove();
+    }
+  }
+
+  if (state.paused || !visible(entry)) { updateCount(); return; }
+
+  const placeholder = log.querySelector('.log-empty');
+  if (placeholder) placeholder.remove();
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  log.append(makeLine(entry));
+  if (atBottom) log.scrollTop = log.scrollHeight;
+  updateCount();
+}
+
+function stopStream() {
+  if (state.stream) state.stream.close();
+  state.stream = null;
+  state.streamName = null;
 }
 
 function select(name) {
-  current = name;
-  $('#curName').textContent = name;
-  $('#log').textContent = '';
-  if (stream) stream.close();
+  if (state.current === name && state.view === 'server' && state.streamName === name) return;
+  state.current = name;
+  state.lines = [];
+  state.paused = false;
+  state.pausedAt = 0;
+  state.atBottom = true;
+  state.history = [];
+  state.histAt = -1;
+  state.search = '';
+  $('#bPause').setAttribute('aria-pressed', 'false');
+  $('#bPause').textContent = 'Pause';
+  $('#conSearch').value = '';
+  $('#bJump').hidden = true;
+  setFilter('all');
+
+  stopStream();
+  show('server');
+  renderServer(state.rows.find((r) => r.name === name));
+  renderLog();
+  renderList(state.rows);
+
   // Server-Sent Events rather than polling: the console is a stream by nature, and the browser
   // reconnects on its own if the panel is left open while a server restarts.
-  stream = new EventSource('/api/instances/' + name + '/stream');
+  const stream = new EventSource('/api/instances/' + encodeURIComponent(name) + '/stream');
+  state.stream = stream;
+  state.streamName = name;
   stream.onmessage = (e) => {
-    const line = JSON.parse(e.data);
-    const div = document.createElement('div');
-    if (/ ERROR\]/.test(line)) div.className = 'err';
-    else if (/ WARN\]/.test(line)) div.className = 'warn';
-    div.textContent = line;
-    const log = $('#log');
-    // Only auto-scroll when already at the bottom, so reading back through history is not yanked
-    // away every time a new line arrives.
-    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-    log.appendChild(div);
-    if (atBottom) log.scrollTop = log.scrollHeight;
+    if (state.streamName !== name) return;
+    let line;
+    try { line = JSON.parse(e.data); } catch { return; }
+    pushLine(line);
+  };
+  // The server replays the last 200 lines on every connection, so a dropped stream would otherwise
+  // paste them in a second time and make it look like the server repeated itself. Clearing on
+  // reconnect keeps the console honest about what actually happened.
+  stream.onerror = () => {
+    if (state.streamName !== name || stream.readyState !== EventSource.CONNECTING) return;
+    state.lines = [];
+    state.pausedAt = 0;
+    renderLog();
   };
   refresh();
 }
 
-const act = (what) => async () => {
-  if (!current) return;
-  for (const b of ['#bStart', '#bStop', '#bRestart']) $(b).disabled = true;
-  try { await api('/instances/' + current + '/' + what, { method: 'POST' }); }
-  catch (e) { alert(e.message); }
-  refresh();
+// ------------------------------------------------------ console controls ----
+
+function setFilter(level) {
+  state.filter = level;
+  for (const b of $$('.seg [data-lvl]')) b.setAttribute('aria-pressed', String(b.dataset.lvl === level));
+  renderLog();
+}
+
+for (const b of $$('.seg [data-lvl]')) b.onclick = () => setFilter(b.dataset.lvl);
+
+let searchTimer = null;
+$('#conSearch').oninput = (e) => {
+  const value = e.target.value;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { state.search = value.trim(); renderLog(); }, 120);
 };
+
+$('#bPause').onclick = () => {
+  state.paused = !state.paused;
+  const b = $('#bPause');
+  b.setAttribute('aria-pressed', String(state.paused));
+  b.textContent = state.paused ? 'Resume' : 'Pause';
+  if (state.paused) {
+    state.pausedAt = state.lines.length;
+  } else {
+    state.pausedAt = 0;
+    state.atBottom = true;
+    renderLog();
+  }
+  updateCount();
+};
+
+$('#bWrap').onclick = () => {
+  state.wrap = !state.wrap;
+  $('#log').classList.toggle('nowrap', !state.wrap);
+  $('#bWrap').setAttribute('aria-pressed', String(state.wrap));
+};
+
+$('#bCopy').onclick = async () => {
+  const shown = state.lines.filter(visible);
+  if (!shown.length) { toast('Nothing to copy.', 'bad'); return; }
+  const text = shown.map((l) => l.text).join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Copied ' + shown.length + (shown.length === 1 ? ' line.' : ' lines.'), 'good');
+  } catch {
+    // Clipboard access can be refused; a hidden selection still gets the text out.
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.append(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    ta.remove();
+    toast(ok ? 'Copied.' : 'Could not reach the clipboard.', ok ? 'good' : 'bad');
+  }
+};
+
+// Clears the VIEW, not the log on disk. Said out loud, because a Clear button next to a server
+// console could reasonably be read as destructive.
+$('#bClear').onclick = () => {
+  state.lines = [];
+  state.pausedAt = 0;
+  state.atBottom = true;
+  renderLog();
+  toast('Console view cleared. The log file on disk is untouched.');
+};
+
+$('#log').addEventListener('scroll', () => {
+  const log = $('#log');
+  state.atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  $('#bJump').hidden = state.atBottom;
+});
+
+$('#bJump').onclick = () => {
+  const log = $('#log');
+  state.atBottom = true;
+  log.scrollTop = log.scrollHeight;
+  $('#bJump').hidden = true;
+};
+
+// ------------------------------------------------------------ lifecycle ----
+
+const ACTION_ING = { start: 'Starting', stop: 'Stopping', restart: 'Restarting' };
+const ACTION_DONE = { start: 'started', stop: 'stopped', restart: 'restarted' };
+
+const act = (what) => async () => {
+  const name = state.current;
+  if (!name || state.busy) return;
+  state.busy = true;
+  renderServer(state.rows.find((r) => r.name === name));
+  const note = toast(ACTION_ING[what] + ' ' + name + '…');
+  try {
+    await post('/instances/' + encodeURIComponent(name) + '/' + what);
+    note.remove();
+    toast(name + ' ' + ACTION_DONE[what] + '.', 'good');
+  } catch (e) {
+    note.remove();
+    toast(e.message, 'bad');
+  } finally {
+    state.busy = false;
+    await refresh();
+  }
+};
+
 $('#bStart').onclick = act('start');
 $('#bStop').onclick = act('stop');
 $('#bRestart').onclick = act('restart');
 
-// Destructive actions confirm by name. A dialog that only says "are you sure" is answered
-// reflexively; typing the name is a moment of actually reading which server this is.
-function confirmNamed(action, name) {
-  const typed = prompt(action + ' "' + name + '"?\n\nType the server name to confirm:');
-  return typed === name;
+// --------------------------------------------------------------- manage ----
+
+$('#bManage').onclick = async () => {
+  const row = state.rows.find((r) => r.name === state.current);
+  if (!row) return;
+  const live = row.status === 'running';
+  const res = await ask({
+    title: 'Manage ' + row.name,
+    text: live
+      ? 'This server is running. Stop it first to rename it, change its settings, reset it or delete it.'
+      : 'Choose what to do with this server.',
+    confirmLabel: 'Continue',
+    choices: live
+      ? [{ value: 'folder', label: 'Open its folder', hint: 'Shows the server directory in Explorer.' }]
+      : [
+          { value: 'folder', label: 'Open its folder', hint: 'Shows the server directory in Explorer.' },
+          { value: 'edit', label: 'Rename, or change memory and port', hint: 'Takes effect the next time it starts.' },
+          { value: 'rebuild', label: 'Reset the world', hint: 'Deletes worlds and generated state. A snapshot is taken first.' },
+          { value: 'delete', label: 'Delete this server', hint: 'Removes it from mcctl, and optionally its files.' },
+        ],
+  });
+  if (!res) return;
+  if (res.choice === 'folder') return openFolder(row.name);
+  if (res.choice === 'edit') return editServer(row);
+  if (res.choice === 'rebuild') return rebuildServer(row);
+  if (res.choice === 'delete') return deleteServer(row);
+};
+
+async function openFolder(name) {
+  try {
+    await post('/instances/' + encodeURIComponent(name) + '/reveal');
+  } catch (e) {
+    toast(e.message, 'bad');
+  }
 }
 
-$('#bFolder').onclick = async () => {
-  if (!current) return;
-  try { await api('/instances/' + current + '/reveal', { method: 'POST' }); }
-  catch (e) { alert(e.message); }
-};
+async function editServer(row) {
+  const dlg = $('#dlg');
+  $('#dlgTitle').textContent = 'Edit ' + row.name;
+  $('#dlgText').hidden = false;
+  $('#dlgText').textContent = 'Changes apply the next time this server starts.';
+  $('#dlgChoice').hidden = true;
+  $('#dlgTypeWrap').hidden = true;
 
-$('#bRename').onclick = async () => {
-  const to = $('#edName').value.trim();
-  if (!current || !to) return;
+  const form = document.createElement('div');
+  form.style.display = 'grid';
+  form.style.gap = '12px';
+  const fields = [
+    ['Name', 'edName', row.name, 'text'],
+    ['Memory', 'edMem', row.memory || '4G', 'text'],
+    ['Port', 'edPort', String(row.port || ''), 'number'],
+  ];
+  for (const f of fields) {
+    const wrap = document.createElement('div');
+    wrap.className = 'field';
+    const l = document.createElement('label');
+    l.setAttribute('for', f[1]);
+    l.textContent = f[0];
+    const i = document.createElement('input');
+    i.id = f[1];
+    i.type = f[3];
+    i.className = 'mono';
+    i.value = f[2];
+    i.autocomplete = 'off';
+    wrap.append(l, i);
+    form.append(wrap);
+  }
+  $('#dlgBody').append(form);
+
+  const ok = $('#dlgOk');
+  ok.textContent = 'Save changes';
+  ok.className = 'primary';
+  ok.disabled = false;
+
+  const mine = ++askSeq;
+  const result = await new Promise((resolve) => {
+    const done = (v) => {
+      dlg.removeEventListener('cancel', onCancel);
+      ok.onclick = null;
+      $('#dlgCancel').onclick = null;
+      if (dlg.open) dlg.close();
+      form.remove();
+      resolve(v);
+    };
+    // 'cancel' rather than 'close', for the reason spelled out in ask().
+    const onCancel = () => { if (mine === askSeq) done(null); };
+    dlg.addEventListener('cancel', onCancel);
+    ok.onclick = () => done({
+      name: $('#edName').value.trim(),
+      memory: $('#edMem').value.trim(),
+      port: $('#edPort').value.trim(),
+    });
+    $('#dlgCancel').onclick = () => done(null);
+    dlg.showModal();
+    $('#edName').focus();
+  });
+  if (!result) return;
+
   try {
-    await api('/instances/' + current + '/rename', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ to }) });
-    $('#edName').value = '';
+    const patch = {};
+    if (result.memory && result.memory !== row.memory) patch.memory = result.memory;
+    if (result.port && Number(result.port) !== row.port) patch.port = result.port;
+    if (Object.keys(patch).length) {
+      await post('/instances/' + encodeURIComponent(row.name) + '/settings', patch);
+    }
+    if (result.name && result.name !== row.name) {
+      await post('/instances/' + encodeURIComponent(row.name) + '/rename', { to: result.name });
+      state.current = null;
+      await refresh();
+      select(result.name);
+      toast('Renamed to ' + result.name + '.', 'good');
+      return;
+    }
     await refresh();
-    select(to);
-  } catch (e) { alert(e.message); }
-};
+    if (Object.keys(patch).length) toast('Saved. Takes effect on the next start.', 'good');
+  } catch (e) {
+    toast(e.message, 'bad');
+  }
+}
 
-$('#bSave').onclick = async () => {
-  if (!current) return;
-  const body = {};
-  if ($('#edMem').value.trim()) body.memory = $('#edMem').value.trim();
-  if ($('#edPort').value.trim()) body.port = $('#edPort').value.trim();
-  if (!Object.keys(body).length) return;
+async function rebuildServer(row) {
+  const res = await ask({
+    title: 'Reset the world of ' + row.name + '?',
+    text: 'Worlds, logs and cached state are deleted. A snapshot is taken first, so this can be undone.',
+    confirmLabel: 'Reset world',
+    danger: true,
+    typeToConfirm: row.name,
+    choices: [
+      { value: 'keep', label: 'Keep plugins', hint: 'Plugin jars and their config survive. Usually what you want.' },
+      { value: 'wipe', label: 'Remove plugins too', hint: 'Starts over completely, as if the server were new.' },
+    ],
+  });
+  if (!res) return;
+  const note = toast('Resetting ' + row.name + '… taking a snapshot first.');
   try {
-    await api('/instances/' + current + '/settings', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body) });
-    $('#edMem').value = ''; $('#edPort').value = '';
-    refresh();
-  } catch (e) { alert(e.message); }
-};
+    const out = await post('/instances/' + encodeURIComponent(row.name) + '/rebuild', {
+      keepPlugins: res.choice === 'keep',
+    });
+    note.remove();
+    toast('Reset. Snapshot saved to ' + (out.snapshot || 'the backups folder') + '.', 'good');
+    state.lines = [];
+    renderLog();
+    await refresh();
+  } catch (e) {
+    note.remove();
+    toast(e.message, 'bad');
+  }
+}
 
-$('#bRebuild').onclick = async () => {
-  if (!current || !confirmNamed('Reset the worlds of', current)) return;
-  const keepPlugins = confirm('Keep plugins?\n\nOK = keep plugins (reset world only)\nCancel = wipe plugins too');
+async function deleteServer(row) {
+  const res = await ask({
+    title: 'Delete ' + row.name + '?',
+    confirmLabel: 'Delete server',
+    danger: true,
+    typeToConfirm: row.name,
+    choices: [
+      { value: 'keep', label: 'Remove from mcctl, keep the files', hint: 'The folder stays where it is. You can add it again later.' },
+      { value: 'purge', label: 'Delete the files as well', hint: 'The whole server folder goes. A snapshot is taken first.' },
+    ],
+  });
+  if (!res) return;
+  const note = toast('Deleting ' + row.name + '…');
   try {
-    const r = await api('/instances/' + current + '/rebuild', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ keepPlugins }) });
-    alert('Rebuilt. Snapshot taken first:\n' + (r.snapshot || '(none)'));
-    refresh();
-  } catch (e) { alert(e.message); }
-};
+    const out = await post('/instances/' + encodeURIComponent(row.name) + '/delete', {
+      purge: res.choice === 'purge',
+    });
+    note.remove();
+    stopStream();
+    state.current = null;
+    state.lines = [];
+    show('empty');
+    await refresh();
+    toast(out.purged
+      ? 'Deleted. Snapshot saved to ' + (out.snapshot || 'the backups folder') + '.'
+      : 'Removed from mcctl. The files are still in their folder.', 'good');
+  } catch (e) {
+    note.remove();
+    toast(e.message, 'bad');
+  }
+}
 
-$('#bDelete').onclick = async () => {
-  if (!current || !confirmNamed('Delete', current)) return;
-  const purge = confirm('Delete the files too?\n\nOK = delete files (snapshot taken first)\nCancel = keep files, remove from mcctl');
-  try {
-    await api('/instances/' + current + '/delete', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ purge }) });
-    current = null;
-    $('#curName').textContent = '—';
-    $('#log').textContent = '';
-    if (stream) stream.close();
-    refresh();
-  } catch (e) { alert(e.message); }
-};
+// -------------------------------------------------------------- command ----
 
 async function send() {
   const box = $('#cmd');
-  if (!current || !box.value.trim()) return;
-  try {
-    await api('/instances/' + current + '/command', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ line: box.value }),
-    });
-  } catch (e) { alert(e.message); }
+  const line = box.value.trim();
+  if (!state.current || !line) return;
   box.value = '';
-}
-$('#bSend').onclick = send;
-$('#cmd').onkeydown = (e) => { if (e.key === 'Enter') send(); };
-
-$('#newForm').onsubmit = async (e) => {
-  e.preventDefault();
-  const body = Object.fromEntries(new FormData(e.target).entries());
-  $('#newNote').textContent = 'Creating - downloading the server jar if needed...';
+  state.history.push(line);
+  state.histAt = state.history.length;
   try {
-    const inst = await api('/instances', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    $('#newNote').textContent = 'Created ' + inst.name + '.';
-    e.target.reset();
-    await refresh();
-    select(inst.name);
-  } catch (err) {
-    $('#newNote').textContent = 'Failed: ' + err.message;
+    await post('/instances/' + encodeURIComponent(state.current) + '/command', { line: line });
+  } catch (e) {
+    toast(e.message, 'bad');
+    box.value = line;
+  }
+}
+
+$('#bSend').onclick = send;
+$('#cmd').onkeydown = (e) => {
+  if (e.key === 'Enter') { send(); return; }
+  // Shell muscle memory: a console you type into should remember what you typed.
+  if (e.key === 'ArrowUp' && state.histAt > 0) {
+    state.histAt--;
+    e.target.value = state.history[state.histAt];
+    e.preventDefault();
+  } else if (e.key === 'ArrowDown') {
+    if (state.histAt < state.history.length - 1) {
+      state.histAt++;
+      e.target.value = state.history[state.histAt];
+    } else {
+      state.histAt = state.history.length;
+      e.target.value = '';
+    }
+    e.preventDefault();
   }
 };
 
+// ------------------------------------------------------------ add server ---
+
+const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
+
+function selectTab(tab) {
+  for (const b of $$('.tabs [data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+  $('#formNew').hidden = tab !== 'new';
+  $('#formAdopt').hidden = tab !== 'adopt';
+}
+
+function openAdd(tab) {
+  show('add');
+  selectTab(tab);
+  setTimeout(() => $(tab === 'adopt' ? '#aDir' : '#nName').focus(), 0);
+}
+
+for (const b of $$('.tabs [data-tab]')) b.onclick = () => selectTab(b.dataset.tab);
+$('#bNew').onclick = () => openAdd('new');
+$('#dNew').onclick = () => openAdd('new');
+$('#dAdopt').onclick = () => openAdd('adopt');
+$('#bAddClose').onclick = back;
+
+function checkName(input, out) {
+  const value = input.value.trim();
+  let msg = '';
+  if (value && !NAME_RE.test(value)) msg = 'Letters, numbers, dash and underscore only, up to 32 characters.';
+  else if (state.rows.some((r) => r.name.toLowerCase() === value.toLowerCase())) {
+    msg = 'There is already a server called ' + value + '.';
+  }
+  out.textContent = msg;
+  input.setAttribute('aria-invalid', String(Boolean(msg)));
+  return !msg && Boolean(value);
+}
+
+$('#nName').oninput = () => checkName($('#nName'), $('#nNameBad'));
+$('#aName').oninput = () => checkName($('#aName'), $('#aNameBad'));
+
+$('#formNew').onsubmit = async (e) => {
+  e.preventDefault();
+  if (!checkName($('#nName'), $('#nNameBad'))) { $('#nName').focus(); return; }
+
+  const jobId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'job-' + Date.now();
+  const bar = $('#newBar');
+  const msg = $('#newMsg');
+  $('#newProg').hidden = false;
+  bar.style.width = '0';
+  bar.classList.add('indet');
+  msg.textContent = 'Starting…';
+  $('#bCreate').disabled = true;
+  $('#newHint').textContent = 'This can take a minute on a slow connection.';
+
+  // Watching the job rather than guessing at it: the jar is tens of megabytes, and a spinner that
+  // means nothing is worse than no spinner at all.
+  const jobs = new EventSource('/api/jobs/' + jobId + '/stream');
+  jobs.onmessage = (ev) => {
+    let job;
+    try { job = JSON.parse(ev.data); } catch { return; }
+    if (job.message) msg.textContent = job.message;
+    if (typeof job.percent === 'number') {
+      bar.classList.remove('indet');
+      bar.style.width = job.percent + '%';
+    } else {
+      bar.classList.add('indet');
+    }
+  };
+
+  try {
+    const form = new FormData(e.target);
+    const inst = await post('/instances', {
+      name: form.get('name'),
+      paperVersion: form.get('paperVersion') || null,
+      memory: form.get('memory') || '4G',
+      port: form.get('port') || null,
+      jobId: jobId,
+    });
+    jobs.close();
+    $('#newProg').hidden = true;
+    $('#bCreate').disabled = false;
+    e.target.reset();
+    $('#nMem').value = '4G';
+    await refresh();
+    select(inst.name);
+    toast('Created ' + inst.name + ' on port ' + inst.port + '.', 'good');
+  } catch (err) {
+    jobs.close();
+    bar.classList.remove('indet');
+    bar.style.width = '0';
+    msg.textContent = err.message;
+    $('#bCreate').disabled = false;
+    $('#newHint').textContent = '';
+    toast(err.message, 'bad');
+  }
+};
+
+$('#formAdopt').onsubmit = async (e) => {
+  e.preventDefault();
+  const dir = $('#aDir').value.trim();
+  if (!dir) { $('#aDir').focus(); return; }
+  if (!checkName($('#aName'), $('#aNameBad'))) { $('#aName').focus(); return; }
+  $('#bAdopt').disabled = true;
+  try {
+    const inst = await post('/instances/adopt', {
+      name: $('#aName').value.trim(),
+      dir: dir,
+      memory: $('#aMem').value.trim() || '4G',
+    });
+    e.target.reset();
+    $('#aMem').value = '4G';
+    await refresh();
+    select(inst.name);
+    toast('Added ' + inst.name + ' on port ' + inst.port + '.', 'good');
+  } catch (err) {
+    toast(err.message, 'bad');
+  } finally {
+    $('#bAdopt').disabled = false;
+  }
+};
+
+// A folder is something you point at, not a path you type. Only the app can offer that, so only
+// the app shows the button - the browser keeps the text field it always had.
+if (desktop) {
+  $('#bBrowse').hidden = false;
+  $('#bBrowse').onclick = async () => {
+    const dir = await desktop.pickFolder('Choose the server folder');
+    if (!dir) return;
+    $('#aDir').value = dir;
+    if (!$('#aName').value.trim()) {
+      const guess = dir.split(/[\\/]/).filter(Boolean).pop() || '';
+      $('#aName').value = guess.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 32);
+      checkName($('#aName'), $('#aNameBad'));
+    }
+  };
+}
+
+// ----------------------------------------------------------------- paths ---
+
+function shorten(p, max) {
+  if (!p || p.length <= max) return p;
+  return p.slice(0, 12) + '…' + p.slice(-(max - 13));
+}
+
+async function loadSettings() {
+  try {
+    state.layout = await api('/settings');
+  } catch {
+    return;
+  }
+  const chip = $('#rootChip');
+  chip.hidden = false;
+  chip.textContent = shorten(state.layout.dataRoot, 44);
+  chip.title = 'Data folder: ' + state.layout.dataRoot;
+}
+
+function renderSettings() {
+  const l = state.layout;
+  const paths = $('#setPaths');
+  paths.textContent = '';
+  const rows = l ? [
+    ['Servers', l.instancesDir + (l.separateInstances ? '   (separate drive)' : '')],
+    ['Server jars', l.jarsDir],
+    ['Backups', l.backupsDir],
+    ['Templates', l.templatesDir],
+    ['Settings file', l.settingsFile],
+  ] : [['Locations', 'Could not read them from the core.']];
+  for (const r of rows) {
+    const dt = document.createElement('dt');
+    dt.textContent = r[0];
+    const dd = document.createElement('dd');
+    dd.textContent = r[1];
+    paths.append(dt, dd);
+  }
+
+  const actions = $('#setActions');
+  actions.textContent = '';
+  if (desktop) {
+    const b = document.createElement('button');
+    b.textContent = 'Change the data folder…';
+    b.onclick = async () => {
+      const go = await ask({
+        title: 'Change the data folder?',
+        text: 'mcctl restarts to pick up the new location. Servers that already exist stay exactly where they are — only new ones land in the new folder, and anything running keeps running.',
+        confirmLabel: 'Choose a folder',
+      });
+      if (!go) return;
+      const dir = await desktop.pickFolder('Choose where mcctl keeps its files');
+      if (!dir) return;
+      const out = await desktop.saveSetup({ dataRoot: dir, instancesDir: null, separate: false });
+      if (out && !out.ok) toast(out.error, 'bad');
+    };
+    actions.append(b);
+  } else {
+    const hint = document.createElement('span');
+    hint.className = 'hint';
+    hint.textContent = 'To move these, run: mcctl config set-root <path>';
+    actions.append(hint);
+  }
+
+  const about = $('#setAbout');
+  about.textContent = '';
+  const info = [['Panel', 'Local only — bound to 127.0.0.1']];
+  if (state.appInfo) {
+    info.unshift(['Version', 'v' + state.appInfo.version + (state.appInfo.packaged ? '' : ' (' + state.appInfo.coreMode + ')')]);
+  }
+  for (const r of info) {
+    const dt = document.createElement('dt');
+    dt.textContent = r[0];
+    const dd = document.createElement('dd');
+    dd.textContent = r[1];
+    about.append(dt, dd);
+  }
+}
+
+$('#bSettings').onclick = () => { renderSettings(); show('settings'); };
+$('#bSetClose').onclick = back;
+
+// -------------------------------------------------------------- versions ---
+
+// Nothing can be created until the version list arrives or fails, so the button says so instead of
+// submitting an empty version and failing on the server.
+$('#bCreate').disabled = true;
+
 api('/paper/versions').then((vs) => {
-  $('#versions').innerHTML = vs.map((v, i) =>
-    '<option value="' + v + '"' + (i === 0 ? ' selected' : '') + '>' + v + (i === 0 ? ' (newest)' : '') + '</option>'
-  ).join('');
+  const sel = $('#nVersion');
+  sel.textContent = '';
+  vs.forEach((v, i) => {
+    const o = document.createElement('option');
+    o.value = v;
+    o.textContent = v + (i === 0 ? ' (newest)' : '');
+    if (i === 0) o.selected = true;
+    sel.append(o);
+  });
+  $('#bCreate').disabled = false;
 }).catch(() => {
-  $('#versions').innerHTML = '<option value="">(offline - Paper API unreachable)</option>';
+  const sel = $('#nVersion');
+  sel.textContent = '';
+  const o = document.createElement('option');
+  o.value = '';
+  o.textContent = 'Could not reach PaperMC';
+  sel.append(o);
+  sel.disabled = true;
+  // A dead end is not an empty dropdown. Creating needs the download; adding a server you already
+  // have does not, and that is a real way forward rather than an instruction to come back later.
+  $('#newHint').textContent = 'Creating a server needs a connection, to download the Paper jar. A server you already have can still be added.';
+  $('#bCreate').disabled = true;
+  const jump = document.createElement('button');
+  jump.type = 'button';
+  jump.textContent = 'Add an existing server instead';
+  jump.onclick = () => selectTab('adopt');
+  $('#bCreate').after(jump);
 });
 
-// ---- desktop-only: version + updates ----------------------------------------
+// ------------------------------------------------------------ prerequisites -
+
+/**
+ * Java, said once, at the top, until it is fixed.
+ *
+ * <p>Everything else in this panel works without it; nothing actually runs. Putting it in a banner
+ * rather than a toast is the point - a toast is for something that just happened, and this is a
+ * condition.
+ */
+api('/health').then((health) => {
+  const java = health.java;
+  if (!java || (java.ok && java.reason === 'ok')) return;
+
+  const bar = document.createElement('div');
+  bar.className = 'banner' + (java.ok ? ' warn' : '');
+  const b = document.createElement('b');
+  b.textContent = java.found ? 'Java needs updating' : 'Java is not installed';
+  const text = document.createElement('span');
+  text.textContent = java.message + ' Servers will not start until it is sorted.';
+  const grow = document.createElement('span');
+  grow.className = 'grow';
+  bar.append(b, text, grow);
+
+  if (desktop) {
+    const get = document.createElement('button');
+    get.textContent = 'Get Java';
+    get.onclick = () => desktop.openExternal(health.javaDownload);
+    bar.append(get);
+  } else {
+    const link = document.createElement('a');
+    link.href = health.javaDownload;
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    link.style.color = 'inherit';
+    link.textContent = health.javaDownload;
+    bar.append(link);
+  }
+  $('#banner').append(bar);
+}).catch(() => {
+  // An unreachable health check is not worth a banner of its own; the panel is clearly running.
+});
+
+// ---- desktop-only: version and updates -------------------------------------
 // The same page runs in a plain browser, where window.mcctlDesktop does not exist. Everything here
 // is additive and silent when it is absent.
-const desktop = window.mcctlDesktop;
+
 if (desktop) {
   desktop.appInfo().then((info) => {
+    state.appInfo = info;
     $('#appver').textContent = 'v' + info.version + (info.packaged ? '' : ' (' + info.coreMode + ')');
     $('#bUpdate').hidden = false;
   });
@@ -295,12 +1938,28 @@ if (desktop) {
   let pending = null;
   desktop.onUpdate((kind, data) => {
     const b = $('#bUpdate');
-    if (kind === 'available') { pending = data.version; b.textContent = 'Download ' + data.version; b.disabled = false; }
-    else if (kind === 'none') { b.textContent = 'Up to date'; b.disabled = true;
-                                setTimeout(() => { b.textContent = 'Check for updates'; b.disabled = false; }, 4000); }
-    else if (kind === 'progress') { b.textContent = 'Downloading ' + data.percent + '%'; b.disabled = true; }
-    else if (kind === 'ready') { b.textContent = 'Restart to install ' + data.version; b.disabled = false; pending = 'ready'; }
-    else if (kind === 'error') { b.textContent = 'Update failed'; b.disabled = false; alert('Update error:\n' + data.error); }
+    if (kind === 'available') {
+      pending = data.version;
+      b.textContent = 'Download ' + data.version;
+      b.disabled = false;
+    } else if (kind === 'none') {
+      pending = null;
+      b.textContent = 'Up to date';
+      b.disabled = true;
+      setTimeout(() => { b.textContent = 'Check for updates'; b.disabled = false; }, 4000);
+    } else if (kind === 'progress') {
+      b.textContent = 'Downloading ' + data.percent + '%';
+      b.disabled = true;
+    } else if (kind === 'ready') {
+      pending = 'ready';
+      b.textContent = 'Restart to install ' + data.version;
+      b.disabled = false;
+    } else if (kind === 'error') {
+      pending = null;
+      b.textContent = 'Check for updates';
+      b.disabled = false;
+      toast('Update failed: ' + data.error, 'bad');
+    }
   });
 
   $('#bUpdate').onclick = async () => {
@@ -308,20 +1967,51 @@ if (desktop) {
     if (pending === 'ready') {
       // Servers survive the restart - they are detached daemons - but saying so beats letting
       // someone guess whether updating will drop their running world.
-      if (!confirm('Restart to install?\n\nRunning servers keep running; only this window restarts.')) return;
-      await desktop.installUpdate();
+      const go = await ask({
+        title: 'Restart to install?',
+        text: 'Only this window restarts. Running servers keep running — mcctl supervises them as separate processes.',
+        confirmLabel: 'Restart and install',
+      });
+      if (go) await desktop.installUpdate();
       return;
     }
-    if (pending) { await desktop.downloadUpdate(); return; }
-    b.textContent = 'Checking...'; b.disabled = true;
+    if (pending) {
+      b.textContent = 'Starting download…';
+      b.disabled = true;
+      await desktop.downloadUpdate();
+      return;
+    }
+    b.textContent = 'Checking…';
+    b.disabled = true;
     const res = await desktop.checkUpdate();
     if (!res.ok) {
-      b.textContent = 'Check for updates'; b.disabled = false;
-      alert(res.message || 'Could not check for updates.');
+      b.textContent = 'Check for updates';
+      b.disabled = false;
+      toast(res.message || 'Could not check for updates.', 'bad');
+      return;
     }
+    // A successful check resolves through onUpdate. If the feed answers nothing at all, do not
+    // leave the button stuck on "Checking…" forever.
+    setTimeout(() => {
+      if (b.textContent === 'Checking…') { b.textContent = 'Check for updates'; b.disabled = false; }
+    }, 20000);
   };
 }
 
-refresh();
+// --------------------------------------------------------------- startup ---
+
+// Escape closes whatever is on top. The dialog handles itself, so this is for the sheets.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || $('#dlg').open) return;
+  if (state.view === 'add' || state.view === 'settings') back();
+});
+
+show('empty');
+loadSettings();
+refresh().then(() => {
+  renderEmptyFor(state.rows);
+  // One server and nothing selected is not a choice worth making anyone click through.
+  if (state.rows.length === 1) select(state.rows[0].name);
+});
 setInterval(refresh, 4000);
 </script>
