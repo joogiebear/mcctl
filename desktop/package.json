@@ -1,6 +1,6 @@
 {
   "name": "mcctl-desktop",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "Desktop app for mcctl - a local Minecraft server dev platform",
   "main": "main.js",
