@@ -11,7 +11,8 @@
     "dist": "electron-builder",
     "release": "electron-builder --publish always",
     "verify": "node verify-build.mjs",
-    "test": "node window-state.test.js"
+    "test": "node window-state.test.js",
+    "release:publish": "node finish-release.mjs"
   },
   "devDependencies": {
     "electron": "^44.0.0",
@@ -75,7 +76,7 @@
         "provider": "github",
         "owner": "joogiebear",
         "repo": "mcctl-releases",
-        "releaseType": "release"
+        "releaseType": "draft"
       }
     ],
     "afterPack": "./after-pack.js"

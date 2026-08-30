@@ -307,13 +307,22 @@ in every copy of the app, where anyone who downloads it can extract it.
 ```bash
 cd desktop
 npm version patch                 # bump; the app reports this version
-GH_TOKEN=<token> npm run release  # build + publish installer and latest.yml
+GH_TOKEN=<token> npm run release  # build, sign, upload as a DRAFT
+npm run release:publish           # check it is whole, then make it live
 ```
 
-Releases publish live, not as drafts. electron-builder defaults to `draft`, and a draft is invisible
-to `electron-updater` — the release looks published on GitHub while no one is offered the update,
-which is a confusing thing to debug weeks later. `releaseType: release` in the publish config is
-what makes shipping one step instead of two.
+**Two steps, deliberately.** Both one-step options fail, and this project has now seen each:
+
+- Publishing **live** means a failed upload leaves a release tagged, live and marked latest with
+  nothing to download and no update feed. That happened on v0.2.6 — the blockmap uploaded, the
+  111 MB installer did not, and a client checking for updates in that window got a 404.
+- Publishing as a **draft and leaving it** means the release looks published on GitHub while
+  `electron-updater` cannot see it at all, so nobody is offered the update and nothing says so.
+
+So the build uploads a draft, and `release:publish` makes it live only after confirming the things
+whose absence caused the first failure: all three assets present, uploaded and non-empty, and
+`latest.yml` naming this version with a size matching the installer actually up there. It refuses
+and exits non-zero otherwise.
 
 Builds are signed through **Azure Artifact Signing** (formerly Trusted Signing), configured under
 `win.azureSignOptions`. That publishes under a validated individual identity, which is what turns
