@@ -23,6 +23,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -37,6 +38,8 @@ const ICO = path.join(HERE, 'build', 'icon.ico')
 
 const problems = []
 const notes = []
+
+const pkg = JSON.parse(fs.readFileSync(path.join(HERE, 'package.json'), 'utf8'))
 
 /** Every image in an .ico, as raw bytes. The format is a 6-byte header then 16 bytes per entry. */
 function icoFrames(file) {
@@ -92,6 +95,48 @@ if (!fs.existsSync(asar)) {
     if (!bytes.includes(Buffer.from(name))) problems.push(`${name} is not in app.asar - check the "files" list in package.json`)
   }
   if (!problems.some((p) => p.includes('app.asar'))) notes.push('app: main.js, preload.js, window-state.js and setup.html are packaged')
+}
+
+/**
+ * Is the executable signed, and will the signature outlive its certificate?
+ *
+ * <p>Artifact Signing issues certificates that live about three days and rotate. That is by design,
+ * and it is also why the timestamp matters more here than anywhere else: without one, every
+ * signature stops validating within the week rather than staying good for the moment it was signed
+ * in. So this checks both, and treats a missing timestamp as a failure rather than a detail.
+ *
+ * <p>Skipped entirely when the build is not configured to sign, so an unsigned local build is not
+ * reported as broken.
+ */
+function checkSignature(file) {
+  const ps = spawnSync(
+    'powershell',
+    ['-NoProfile', '-Command',
+      `$s = Get-AuthenticodeSignature '${file}'; ` +
+      `Write-Output $s.Status; ` +
+      `Write-Output $s.SignerCertificate.Subject; ` +
+      `Write-Output ($s.TimeStamperCertificate -ne $null)`],
+    { encoding: 'utf8', windowsHide: true, timeout: 60000 },
+  )
+  if (ps.status !== 0) return { ok: false, why: 'could not read the signature' }
+  const [status, subject, stamped] = String(ps.stdout).trim().split(/\r?\n/)
+  if (status !== 'Valid') return { ok: false, why: `signature status is ${status || 'unreadable'}` }
+  if (String(stamped).trim() !== 'True') {
+    return { ok: false, why: 'the signature has no timestamp, so it dies when the certificate expires' }
+  }
+  const cn = /CN=([^,]+)/.exec(subject || '')
+  return { ok: true, publisher: cn ? cn[1] : subject }
+}
+
+if (!STRUCTURE_ONLY && fs.existsSync(EXE)) {
+  const configured = Boolean(pkg?.build?.win?.azureSignOptions || pkg?.build?.win?.signtoolOptions)
+  if (!configured) {
+    notes.push('signing: not configured for this build, so not checked')
+  } else {
+    const res = checkSignature(EXE)
+    if (res.ok) notes.push(`signing: valid and timestamped, published as "${res.publisher}"`)
+    else problems.push(`mcctl.exe is configured to be signed but ${res.why}.`)
+  }
 }
 
 for (const note of notes) process.stdout.write(`  ok   ${note}\n`)

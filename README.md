@@ -315,14 +315,31 @@ to `electron-updater` — the release looks published on GitHub while no one is 
 which is a confusing thing to debug weeks later. `releaseType: release` in the publish config is
 what makes shipping one step instead of two.
 
-Builds are **unsigned**, so the first thing anyone downloading mcctl sees is Windows SmartScreen:
-a blue box saying "Windows protected your PC". The way past it is **More info → Run anyway**, and it
-stops appearing once enough people have installed the same file. Auto-update works regardless.
-Signing is a certificate purchase rather than a code change, and the build config is arranged so it
-can be switched on without rework.
+Builds are signed through **Azure Artifact Signing** (formerly Trusted Signing), configured under
+`win.azureSignOptions`. That publishes under a validated individual identity, which is what turns
+"Unknown publisher" into a name.
 
-Worth saying plainly in release notes, because a warning nobody warned you about reads as a virus
-rather than as a missing signature.
+It does **not** make SmartScreen go away immediately. SmartScreen is a reputation system, not a
+signature check, and reputation accrues to the publisher identity through real installs — so a new
+publisher still gets warned about. EV certificates used to grant reputation automatically; Microsoft
+removed that in 2024. Keep telling people about **More info → Run anyway** until the reputation
+builds.
+
+Signing needs, on the build machine:
+
+- the **.NET SDK** — electron-builder installs a `dotnet` tool to do the signing, and fails with
+  "No .NET SDKs were found" if only the runtime is present
+- **`az login`**, against the tenant holding the signing account. Note that MFA is enforced for
+  Azure Resource Manager, and a bare `az login` fails against such a tenant because it tries to
+  acquire tokens silently — use `az login --tenant <id>`, which authenticates interactively.
+- the **Artifact Signing Certificate Profile Signer** role. Being subscription Owner does not
+  include it; identity validation does not include it either. It is assigned separately, and its
+  absence is the last thing that bites before a first successful signature.
+
+Certificates live about **three days** and rotate automatically, which is why every signature is
+timestamped — without one, everything already shipped would stop validating within the week rather
+than staying valid for the moment it was signed in. `npm run verify` treats a missing timestamp as
+a failure for exactly that reason.
 
 ### Tests
 
@@ -349,7 +366,7 @@ npm run verify    # re-checks a build that already exists, icon included
 
 The check covers the things that have gone wrong silently before — the app icon not reaching the
 executable, the core not being copied into `resources`, a file added to `desktop/` and forgotten in
-the `files` allowlist. `afterPack` runs during the build itself, so a bad build throws before an
+the `files` allowlist, and a signature that is missing, invalid or untimestamped. `afterPack` runs during the build itself, so a bad build throws before an
 installer is made and long before anything is published.
 
 ### How updates behave
