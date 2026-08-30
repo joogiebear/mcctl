@@ -268,6 +268,97 @@ async function handleBackups(req, res, name, seg) {
 }
 
 /**
+ * Scheduled tasks for one server.
+ *
+ * <p>Scoped to an instance rather than global, and every id is checked to belong to the instance in
+ * the URL. Without that check the instance name would be decoration: any name plus another server's
+ * task id would delete that server's backup schedule.
+ */
+async function handleSchedules(req, res, name, seg) {
+  registry.getInstance(name)
+  const id = seg[4] ?? null
+  const verb = seg[5] ?? null
+
+  const mine = () => schedule.list().filter((t) => t.instance === name)
+
+  const shape = (t) => ({
+    id: t.id,
+    name: t.name,
+    action: t.action,
+    schedule: t.schedule,
+    enabled: t.enabled,
+    owner: t.owner ?? null,
+    createdAt: t.createdAt,
+    // Windows is the authority on whether this actually exists and when it last ran. A task mcctl
+    // believes in that the scheduler has never heard of reports known:false rather than as working.
+    known: Boolean(t.windows),
+    state: t.windows?.state ?? null,
+    lastRun: t.windows?.lastRun ?? null,
+    lastResult: t.windows ? schedule.describeResult(t.windows.lastResult) : null,
+    nextRun: t.windows?.nextRun ?? null,
+  })
+
+  if (req.method === 'GET') {
+    return json(res, 200, {
+      tasks: mine().map(shape),
+      runs: schedule.recentRuns(name),
+      actions: Object.entries(schedule.ACTIONS).map(([type, meta]) => ({
+        type, label: meta.label, needsRunning: meta.needsRunning,
+      })),
+      kinds: schedule.SCHEDULE_KINDS,
+      days: schedule.DAYS,
+      running: supervisor.isRunning(name),
+    })
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+
+  const body = await readBody(req)
+
+  if (!id) {
+    const made = schedule.create({
+      instance: name,
+      name: body.name,
+      action: body.action,
+      schedule: body.schedule,
+      enabled: body.enabled !== false,
+    })
+    return json(res, 200, shape({ ...made, windows: null }))
+  }
+
+  // Every id-addressed route below acts on a task, so the ownership check happens once, here.
+  const owned = mine().find((t) => t.id === id)
+  if (!owned) return json(res, 404, { error: `"${name}" has no scheduled task "${id}"` })
+
+  if (!verb) {
+    schedule.update(id, {
+      name: body.name,
+      action: body.action,
+      schedule: body.schedule,
+      enabled: body.enabled,
+    })
+    return json(res, 200, shape(mine().find((t) => t.id === id)))
+  }
+
+  if (verb === 'enable') {
+    schedule.setEnabled(id, body.enabled !== false)
+    return json(res, 200, shape(mine().find((t) => t.id === id)))
+  }
+
+  if (verb === 'run') {
+    schedule.runNow(id)
+    // Fired, not finished: schtasks /Run returns as soon as Windows has started the task. What it
+    // did shows up in the run log a moment later, which is what the panel re-reads.
+    return json(res, 200, { started: true })
+  }
+
+  if (verb === 'delete') {
+    return json(res, 200, schedule.remove(id))
+  }
+
+  return json(res, 404, { error: 'not found' })
+}
+
+/**
  * An instance as the page is allowed to see it.
  *
  * <p>The RCON password is a credential. The page has never needed it, but only the list route was
@@ -534,6 +625,7 @@ async function route(req, res) {
   // Reads and writes, so it sits above the gate that allows only POST past this point.
   if (seg[3] === 'props') return handleProps(req, res, name)
   if (seg[3] === 'backups') return handleBackups(req, res, name, seg)
+  if (seg[3] === 'schedules') return handleSchedules(req, res, name, seg)
 
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
 
