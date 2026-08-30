@@ -117,7 +117,7 @@ function runTar(args, cwd) {
   })
 }
 
-export async function createSnapshot(inst, { scope = 'standard', label = null, running = false } = {}) {
+export async function createSnapshot(inst, { scope = 'standard', label = null, running = false, taskId = null } = {}) {
   const members = membersFor(inst, scope)
   if (!members.length) fail(`nothing to back up for scope "${scope}" in ${inst.dir}`)
 
@@ -144,6 +144,9 @@ export async function createSnapshot(inst, { scope = 'standard', label = null, r
     instance: inst.name,
     scope,
     label,
+    // Which scheduled task produced this, so its retention limit governs its own snapshots
+    // and nobody else's. Null for anything a person asked for directly.
+    taskId,
     members,
     sourceDir: inst.dir,
     createdAt: new Date().toISOString(),
@@ -178,6 +181,7 @@ export function listSnapshots(name) {
         mtime: st.mtime,
         scope: manifest.scope ?? '?',
         label: manifest.label ?? '',
+        taskId: manifest.taskId ?? null,
         members: manifest.members ?? [],
       }
     })
@@ -227,8 +231,16 @@ export function removeSnapshot(name, ref) {
  * one was taken because somebody was about to try something. An hourly task set to keep 5 would
  * have deleted both within five hours of them being made.
  */
-export function pruneSnapshots(name, keep, { only = null } = {}) {
-  const all = listSnapshots(name).filter((s) => (only ? s.label === only : true))
+export function pruneSnapshots(name, keep, { only = null, taskId = null } = {}) {
+  const all = listSnapshots(name).filter((s) => {
+    if (only && s.label !== only) return false
+    // A limit belongs to the task that set it. Two scheduled backups on one server - a nightly
+    // keeping 7 and a weekly archive keeping 8 - were drawing from the same pool, so whichever ran
+    // next applied its own number to the other's snapshots and the smaller limit always won. The
+    // weekly archive could never accumulate eight weeks of anything.
+    if (taskId && s.taskId !== taskId) return false
+    return true
+  })
   const remove = all.slice(keep)
   for (const snap of remove) {
     fs.rmSync(snap.path, { force: true })

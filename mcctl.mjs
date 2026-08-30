@@ -887,12 +887,15 @@ async function runTask(id) {
     const running = sup.isRunning(instance)
 
     if (action.type === 'backup') {
-      const res = await backup.createSnapshot(inst, { scope: 'standard', label: 'scheduled', running })
+      const res = await backup.createSnapshot(inst, { scope: 'standard', label: 'scheduled', running, taskId: id })
       let pruned = ''
       // Pruned AFTER the new one exists, never before: trimming first would mean a failed backup
       // leaves you with fewer than you had, which is the opposite of what a retention limit is for.
       if (Number.isInteger(action.keep) && action.keep > 0) {
-        const gone = backup.pruneSnapshots(instance, action.keep, { only: 'scheduled' })
+        // Scoped to this task's own snapshots. Scheduled ones taken before snapshots recorded
+        // which task made them have no id and belong to nobody, so they are left where they are
+        // rather than being counted against a limit that was never about them.
+        const gone = backup.pruneSnapshots(instance, action.keep, { only: 'scheduled', taskId: id })
         if (gone.length) pruned = `, pruned ${gone.length} over the limit of ${action.keep}`
       }
       record('ok', `${res.file} (${humanBytes(res.size)})${pruned}`)
