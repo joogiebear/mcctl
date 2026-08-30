@@ -170,8 +170,14 @@ function queryWindows() {
     ['-NoProfile', '-Command',
       `Get-ScheduledTask -TaskPath '\\${TASK_FOLDER}\\' -ErrorAction SilentlyContinue | ` +
       'ForEach-Object { $i = $_ | Get-ScheduledTaskInfo; ' +
+      // Round-trip ("o") rather than [string]. Casting a DateTime to a string gives whatever the
+      // machine's locale prints, and on a machine that writes 31/08/2026 the panel's Date() saw an
+      // invalid date and fell back to showing the raw text. ISO parses the same everywhere, and the
+      // page formats it into the reader's own locale afterwards.
       '[pscustomobject]@{ name=$_.TaskName; state=[string]$_.State; ' +
-      'lastRun=[string]$i.LastRunTime; lastResult=$i.LastTaskResult; nextRun=[string]$i.NextRunTime } } | ' +
+      'lastRun=$(if ($i.LastRunTime) { $i.LastRunTime.ToString("o") }); ' +
+      'lastResult=$i.LastTaskResult; ' +
+      'nextRun=$(if ($i.NextRunTime) { $i.NextRunTime.ToString("o") }) } } | ' +
       // No -AsArray: that needs PowerShell 6+, and Windows ships 5.1. A single task therefore
       // comes back as an object rather than a one-element array, which is handled below.
       'ConvertTo-Json -Compress'],
@@ -180,7 +186,12 @@ function queryWindows() {
   if (ps.status !== 0 || !ps.stdout.trim()) return out
   try {
     const parsed = JSON.parse(ps.stdout)
-    for (const row of Array.isArray(parsed) ? parsed : [parsed]) out.set(row.name, row)
+    for (const row of Array.isArray(parsed) ? parsed : [parsed]) {
+      // Task Scheduler reports a task that has never run as having run in 1999. Passing that on
+      // would put "Nov 30 1999" in front of someone as the last time their backup happened.
+      if (row.lastRun && new Date(row.lastRun).getFullYear() < 2000) row.lastRun = null
+      out.set(row.name, row)
+    }
   } catch {
     /* nothing usable from the scheduler; every task reports as unknown */
   }
@@ -426,11 +437,16 @@ export function recentRuns(instance, limit = 40) {
 export function renameInstance(oldName, newName) {
   const data = load()
   const moved = []
+  // Ids claimed during this rename count as taken. Checking only data.tasks would let two tasks
+  // that fall back to the same suffix both pick the same new id, and the second would overwrite
+  // the first in Windows and in the file.
+  const claimed = new Set(Object.keys(data.tasks))
   for (const [id, task] of Object.entries(data.tasks)) {
     if (task.instance !== oldName) continue
     const suffix = id.startsWith(`${oldName}-`) ? id.slice(oldName.length + 1) : task.action.type
     let next = `${newName}-${suffix}`
-    for (let n = 2; next !== id && Object.hasOwn(data.tasks, next); n++) next = `${newName}-${suffix}-${n}`
+    for (let n = 2; next !== id && claimed.has(next); n++) next = `${newName}-${suffix}-${n}`
+    claimed.add(next)
     moved.push({ from: id, to: next, task: { ...task, instance: newName } })
   }
   if (!moved.length) return { moved: 0 }
