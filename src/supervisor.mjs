@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getInstance, assertInstanceDir } from './registry.mjs'
 import { readState, clearState, controlRequest } from './control.mjs'
-import { consoleLog, runDir, stateFile } from './paths.mjs'
+import { consoleLog, daemonLog, runDir, stateFile } from './paths.mjs'
 import { readProps, writeProps } from './props.mjs'
 import { fail, sleep, pidAlive, UserError } from './util.mjs'
 
@@ -69,6 +69,11 @@ export async function start(name, { wait = true, timeout = 180000, sync = true }
     stdio: 'ignore',
     windowsHide: true,
     cwd: path.dirname(DAEMON),
+    // The desktop app runs this code INSIDE Electron, where process.execPath is mcctl.exe rather
+    // than node. Without this flag that spawn re-launches the whole application - a second hidden
+    // copy of the GUI, no daemon, and a fifteen-second wait ending in "did not come up". Plain
+    // node ignores the variable, so the CLI path is unaffected.
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   })
   child.unref()
 
@@ -83,7 +88,13 @@ export async function start(name, { wait = true, timeout = 180000, sync = true }
       break
     }
   }
-  if (!live) fail(`daemon for "${name}" did not come up - check ${path.join(runDir(name), 'daemon.log')}`)
+  if (!live) {
+    // Naming a log file that was never written sends people looking for a file that is not there.
+    const log = daemonLog(name)
+    fail(fs.existsSync(log)
+      ? `"${name}" did not start - see ${log}`
+      : `"${name}" did not start: the supervisor process never came up.`)
+  }
   if (live.state.error) fail(`failed to launch "${name}": ${live.state.error}`)
 
   if (!wait) return { started: true, javaPid: live.state.javaPid, ready: false }
