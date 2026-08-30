@@ -324,6 +324,19 @@ can be switched on without rework.
 Worth saying plainly in release notes, because a warning nobody warned you about reads as a virus
 rather than as a missing signature.
 
+### Tests
+
+```bash
+cd desktop
+npm test
+```
+
+Covers window-state.js, which decides whether a remembered window position is still somewhere a
+person can reach. That decision depends on which monitors are attached — the thing you cannot
+arrange on the machine running the test — so the module takes the display list as an argument and
+the test passes it fictional ones, including the case that matters: a window last seen on a second
+monitor that is no longer plugged in.
+
 ### Checking a build before shipping it
 
 There is no CI on this repository, so the build checks itself:

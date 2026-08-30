@@ -10,7 +10,8 @@
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "release": "electron-builder --publish always",
-    "verify": "node verify-build.mjs"
+    "verify": "node verify-build.mjs",
+    "test": "node window-state.test.js"
   },
   "devDependencies": {
     "electron": "^44.0.0",
@@ -23,6 +24,7 @@
       "main.js",
       "preload.js",
       "setup.html",
+      "window-state.js",
       "package.json"
     ],
     "extraResources": [

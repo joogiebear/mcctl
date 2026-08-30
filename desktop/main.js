@@ -5,6 +5,7 @@ const path = require('node:path')
 const fs = require('node:fs')
 const { pathToFileURL } = require('node:url')
 const { autoUpdater } = require('electron-updater')
+const windowState = require('./window-state')
 
 /**
  * mcctl desktop.
@@ -78,12 +79,27 @@ async function needsSetup() {
  */
 const ICON = path.join(__dirname, 'build', 'icon.ico')
 
+// ---- window size and position ------------------------------------------------
+
+/** Where the window was last time. Kept with Electron's own state, not in the core's settings. */
+function windowStateFile() {
+  return path.join(app.getPath('userData'), 'window-state.json')
+}
+
+/** The work area of every attached display, as plain rectangles. */
+function displayAreas() {
+  return require('electron').screen.getAllDisplays().map((d) => d.workArea)
+}
+
 function createWindow(loadUrl) {
+  const state = windowState.load(windowStateFile(), displayAreas())
   win = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 900,
-    minHeight: 600,
+    width: state.width,
+    height: state.height,
+    x: state.x,
+    y: state.y,
+    minWidth: windowState.MIN_WIDTH,
+    minHeight: windowState.MIN_HEIGHT,
     backgroundColor: '#0c0e14',
     title: 'mcctl',
     icon: fs.existsSync(ICON) ? ICON : undefined,
@@ -99,6 +115,11 @@ function createWindow(loadUrl) {
       contextIsolation: true,
     },
   })
+  // Maximise before showing, so a window that was left maximised does not appear at its restored
+  // size and then jump.
+  if (state.maximized) win.maximize()
+  windowState.track(win, windowStateFile())
+
   win.loadURL(loadUrl)
   win.once('ready-to-show', () => win.show())
   // A page that fails to load would otherwise leave a hidden window and a process with no UI.
