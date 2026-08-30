@@ -1868,6 +1868,18 @@ async function renderScheduler(opts) {
   const base = '/instances/' + encodeURIComponent(row.name) + '/schedules';
   const again = () => renderScheduler({ force: true });
 
+  // One form open at a time. Two of them - New task plus an edit, or two edits - put two "Save
+  // changes" buttons on screen with nothing to say which task either belonged to, and hid the
+  // cards that would have said.
+  const editor = {
+    restore: null,
+    close() {
+      const undo = this.restore;
+      this.restore = null;
+      if (undo) undo();
+    },
+  };
+
   // ---- what a schedule is, before the list of them ---------------------------
   const intro = document.createElement('div');
   intro.className = 'hint';
@@ -1884,12 +1896,13 @@ async function renderScheduler(opts) {
   body.append(addWrap);
 
   add.onclick = () => {
+    editor.close();
     add.hidden = true;
     const form = taskForm({
       actions: data.actions,
       kinds: data.kinds,
       days: data.days,
-      onCancel: () => { form.remove(); add.hidden = false; },
+      onCancel: () => editor.close(),
       onSubmit: async (payload) => {
         try {
           await post(base, payload);
@@ -1901,6 +1914,7 @@ async function renderScheduler(opts) {
       },
     });
     addWrap.append(form);
+    editor.restore = () => { form.remove(); add.hidden = false; };
   };
 
   // ---- the tasks ------------------------------------------------------------
@@ -1918,7 +1932,7 @@ async function renderScheduler(opts) {
   } else {
     const list = document.createElement('div');
     list.className = 'tasks';
-    for (const task of data.tasks) list.append(taskCard(task, data, base, again));
+    for (const task of data.tasks) list.append(taskCard(task, data, base, again, editor));
     body.append(list);
   }
 
@@ -1960,7 +1974,7 @@ async function renderScheduler(opts) {
 }
 
 /** One scheduled task, with the four things you can do to it. */
-function taskCard(task, data, base, again) {
+function taskCard(task, data, base, again, editor) {
   const el = document.createElement('div');
   el.className = 'task';
   if (!task.enabled) el.setAttribute('data-off', '');
@@ -2048,12 +2062,13 @@ function taskCard(task, data, base, again) {
   };
 
   edit.onclick = () => {
+    editor.close();
     const form = taskForm({
       actions: data.actions,
       kinds: data.kinds,
       days: data.days,
       task,
-      onCancel: () => { form.remove(); el.hidden = false; },
+      onCancel: () => editor.close(),
       onSubmit: async (payload) => {
         try {
           await post(base + '/' + encodeURIComponent(task.id), payload);
@@ -2066,6 +2081,7 @@ function taskCard(task, data, base, again) {
     });
     el.hidden = true;
     el.after(form);
+    editor.restore = () => { form.remove(); el.hidden = false; };
   };
 
   drop.onclick = async () => {
