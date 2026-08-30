@@ -626,8 +626,9 @@
           </div>
           <div class="field" style="flex:1">
             <label for="nMem">Memory</label>
-            <input id="nMem" name="memory" value="4G" class="mono" autocomplete="off">
+            <input id="nMem" name="memory" value="4G" class="mono" autocomplete="off" inputmode="text">
             <div class="hint">e.g. 4G</div>
+            <div class="bad" id="nMemBad"></div>
           </div>
           <div class="field" style="flex:1">
             <label for="nPort">Port</label>
@@ -662,7 +663,8 @@
           </div>
           <div class="field" style="flex:1">
             <label for="aMem">Memory</label>
-            <input id="aMem" value="4G" class="mono" autocomplete="off">
+            <input id="aMem" value="4G" class="mono" autocomplete="off" inputmode="text">
+            <div class="bad" id="aMemBad"></div>
           </div>
         </div>
         <div class="row">
@@ -1634,6 +1636,18 @@ $('#cmd').onkeydown = (e) => {
 // ------------------------------------------------------------ add server ---
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
+// The same shape registry.parseMemoryGb accepts. Checked here so a typo is caught while the field
+// is in front of you - "*G" is what you get typing 8G with the shift a keystroke early, and it used
+// to sail through create and only surface as a server that would not start.
+const MEM_RE = /^\d+(?:\.\d+)?\s*[GgMm]$/;
+
+function checkMemory(input, out) {
+  const value = input.value.trim();
+  const bad = value && !MEM_RE.test(value);
+  out.textContent = bad ? 'Use a number followed by G or M — for example 4G, or 6144M.' : '';
+  input.setAttribute('aria-invalid', String(Boolean(bad)));
+  return Boolean(value) && !bad;
+}
 
 function selectTab(tab) {
   for (const b of $$('.tabs [data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -1667,10 +1681,13 @@ function checkName(input, out) {
 
 $('#nName').oninput = () => checkName($('#nName'), $('#nNameBad'));
 $('#aName').oninput = () => checkName($('#aName'), $('#aNameBad'));
+$('#nMem').oninput = () => checkMemory($('#nMem'), $('#nMemBad'));
+$('#aMem').oninput = () => checkMemory($('#aMem'), $('#aMemBad'));
 
 $('#formNew').onsubmit = async (e) => {
   e.preventDefault();
   if (!checkName($('#nName'), $('#nNameBad'))) { $('#nName').focus(); return; }
+  if (!checkMemory($('#nMem'), $('#nMemBad'))) { $('#nMem').focus(); return; }
 
   const jobId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'job-' + Date.now();
   const bar = $('#newBar');
@@ -1730,6 +1747,7 @@ $('#formAdopt').onsubmit = async (e) => {
   const dir = $('#aDir').value.trim();
   if (!dir) { $('#aDir').focus(); return; }
   if (!checkName($('#aName'), $('#aNameBad'))) { $('#aName').focus(); return; }
+  if (!checkMemory($('#aMem'), $('#aMemBad'))) { $('#aMem').focus(); return; }
   $('#bAdopt').disabled = true;
   try {
     const inst = await post('/instances/adopt', {

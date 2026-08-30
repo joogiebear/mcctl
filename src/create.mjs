@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { JARS_DIR, TEMPLATES_DIR, INSTANCES_DIR, ROOT } from './paths.mjs'
-import { getInstance, hasInstance, putInstance, usedPorts, defaultDir } from './registry.mjs'
+import { getInstance, hasInstance, putInstance, usedPorts, defaultDir, parseMemoryGb } from './registry.mjs'
 import { readProps, writeProps } from './props.mjs'
 import { fail, findFreePort, randomPassword, validateName, humanBytes } from './util.mjs'
 
@@ -151,6 +151,11 @@ export async function newInstance(
 ) {
   validateName(name)
   if (hasInstance(name)) fail(`instance "${name}" already exists`)
+  // Before a directory is made or a jar is downloaded. An unusable memory value written into the
+  // registry does not fail here - it fails when the daemon builds -Xmx from it, minutes later, on
+  // a server that looks created. Same parser the launcher uses, so what is accepted here is what
+  // will start.
+  parseMemoryGb(memory)
 
   const dir = defaultDir(name)
   if (fs.existsSync(dir) && fs.readdirSync(dir).length) {
@@ -252,6 +257,7 @@ export async function newInstance(
 export async function adoptInstance(name, dir, { jar = null, memory = '4G', java = 'java' } = {}) {
   validateName(name)
   if (hasInstance(name)) fail(`instance "${name}" already exists`)
+  parseMemoryGb(memory)
   const abs = path.resolve(dir)
   if (!fs.existsSync(abs)) fail(`directory not found: ${abs}`)
 
