@@ -297,9 +297,15 @@ function safeInstance(row) {
  * console, so "local" has to mean local, not merely reachable.
  *
  * <p>Two checks, both cheap: the Host header must name a loopback address, which defeats rebinding
- * (the attacker's own hostname is what arrives); and a cross-origin request is refused outright,
- * which defeats the plain form-post case. Requests with no Origin - the panel's own fetches, curl,
- * the CLI - are allowed through, because that is what a first-party request looks like.
+ * (the attacker's own hostname is what arrives); and an Origin, when there is one, must match that
+ * Host exactly - port included. Requests with no Origin - the panel's own fetches, curl, the CLI -
+ * are allowed through, because that is what a first-party request looks like.
+ *
+ * <p>The port is the half that matters here and was missing. Comparing only the hostname made
+ * every page on loopback first-party, and this machine is full of them: dynmap, BlueMap, Plan and
+ * friends all serve web UIs on their own loopback ports, all of them rendering names and chat that
+ * players chose. One stored-content injection in a map plugin was enough to reach an endpoint that
+ * can type into a server console.
  */
 const LOOPBACK_HOST = /^(?:127\.\d+\.\d+\.\d+|\[::1\]|localhost)(?::\d+)?$/i
 
@@ -309,7 +315,8 @@ function isLocalRequest(req) {
   const origin = req.headers.origin
   if (!origin) return true
   try {
-    return LOOPBACK_HOST.test(new URL(origin).host)
+    // Exact match against our own Host, not merely "also on loopback".
+    return new URL(origin).host.toLowerCase() === host.toLowerCase()
   } catch {
     return false
   }
