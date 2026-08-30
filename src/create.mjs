@@ -38,25 +38,45 @@ export function importJar(src, { as = null } = {}) {
  * <p>They shell out to mcctl by absolute path rather than duplicating any logic, so a launcher can
  * never drift from what the CLI actually does - it IS the CLI.
  */
+/**
+ * How a .bat should invoke mcctl on THIS installation.
+ *
+ * <p>`node` is only on PATH if the person installed Node themselves. Someone who downloaded the
+ * desktop app has no reason to have it, and a launcher that opens a console saying 'node' is not
+ * recognized is worse than no launcher. The app already carries a Node runtime - its own
+ * executable - so the launchers use whatever is actually running mcctl right now.
+ */
+function launcherRuntime() {
+  const exe = process.execPath
+  // Electron's binary runs scripts as Node only when told to; plain node ignores the variable.
+  const viaElectron = Boolean(process.versions.electron)
+  return {
+    prelude: viaElectron ? 'set ELECTRON_RUN_AS_NODE=1\r\n' : '',
+    exe: /[\\\/]node(?:\.exe)?$/i.test(exe) ? 'node' : `"${exe}"`,
+  }
+}
+
 export function writeLaunchers(inst) {
   const cli = path.join(ROOT, 'mcctl.mjs')
+  const rt = launcherRuntime()
+  const run = `${rt.exe} "${cli}"`
   const files = {
     // Starts, then attaches - so a double-click gives you a running server AND its console, which is
     // what "start the server" means to anyone not thinking about daemons.
     'start.bat': `@echo off
-title ${inst.name} - mcctl
-node "${cli}" start ${inst.name}
+${rt.prelude}title ${inst.name} - mcctl
+${run} start ${inst.name}
 if errorlevel 1 (echo.& echo Failed to start. & pause & exit /b 1)
-node "${cli}" console ${inst.name}
+${run} console ${inst.name}
 `,
     'console.bat': `@echo off
-title ${inst.name} console - mcctl
-node "${cli}" console ${inst.name}
+${rt.prelude}title ${inst.name} console - mcctl
+${run} console ${inst.name}
 pause
 `,
     'stop.bat': `@echo off
-title ${inst.name} - mcctl
-node "${cli}" stop ${inst.name}
+${rt.prelude}title ${inst.name} - mcctl
+${run} stop ${inst.name}
 pause
 `,
   }
