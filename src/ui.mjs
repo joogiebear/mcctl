@@ -11,6 +11,7 @@ import * as manage from './manage.mjs'
 import { LAYOUT } from './paths.mjs'
 import * as java from './java.mjs'
 import { readProps, writeProps } from './props.mjs'
+import { storedPlayers } from './players.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -153,7 +154,9 @@ async function handleProps(req, res, name) {
   }))
 
   if (req.method === 'GET') {
-    return json(res, 200, { fields: shape(readProps(file)), file })
+    // Who the world already knows about, so the page can warn before online mode is changed under
+    // them. Switching does not migrate anyone - it hands everybody a different identity.
+    return json(res, 200, { fields: shape(readProps(file)), file, players: storedPlayers(inst.dir) })
   }
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
 

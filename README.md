@@ -263,6 +263,12 @@ What it does:
   read from that folder's own `server.properties`.
 - **Renaming, resetting and deleting** ask you to type the server's name. That friction is
   deliberate: a dialog that only says "are you sure" gets answered reflexively.
+- **Changing who can join** on a world that already has players warns first. Minecraft derives an
+  offline UUID from the player's name and uses the real Mojang one otherwise, so flipping this
+  hands everybody a different identity — permissions, homes, inventories and anything else a plugin
+  keyed by UUID stay attached to the identity nobody has any more. The panel reads the world's
+  `playerdata` directory, tells the two kinds of UUID apart by version, and says how many players
+  are affected before you decide.
 - **Settings…** edits the part of `server.properties` people actually change — who can join,
   MOTD, difficulty, game mode, max players, PvP, whitelist, view distance, spawn protection.
   Everything else stays in the file for `mcctl props` or an editor, and nothing the panel writes

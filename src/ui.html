@@ -452,6 +452,17 @@
   dialog p { margin: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.55; }
   dialog footer { display: flex; justify-content: flex-end; gap: 8px; padding: 16px 20px 18px; }
 
+  /* A consequence you need before you decide, not after. Sits under the control it belongs to. */
+  .inline-warn {
+    background: rgba(240, 182, 77, .1);
+    border: 1px solid rgba(240, 182, 77, .3);
+    border-radius: var(--r-sm);
+    padding: 9px 11px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: #f4cd86;
+  }
+
   .choice { display: grid; gap: 8px; }
   .choice label {
     display: grid;
@@ -1489,6 +1500,7 @@ async function editProps(row) {
   form.style.gap = '13px';
 
   const controls = new Map();
+  const players = data.players;
   for (const f of data.fields) {
     const wrap = document.createElement('div');
     wrap.className = 'field';
@@ -1527,6 +1539,40 @@ async function editProps(row) {
     input.id = 'p_' + f.key;
     wrap.append(input);
     controls.set(f.key, { input, original: f.value == null ? '' : String(f.value) });
+
+    /*
+      Changing online mode on a world that already has players in it is not a setting change, it is
+      an identity change: Minecraft derives an offline UUID from the player's name and uses the real
+      Mojang one otherwise, so flipping this hands everybody a different UUID. Nothing migrates.
+      Permissions, homes, inventories and anything else a plugin stored per-player stay attached to
+      the identity nobody has any more, and the same person joins as a stranger.
+
+      Shown live, next to the control, rather than as a second dialog after Save - the point is to
+      inform the decision, not to interrupt it.
+    */
+    if (f.key === 'online-mode' && players && players.count > 0) {
+      const warn = document.createElement('div');
+      warn.className = 'inline-warn';
+      warn.hidden = true;
+      input.addEventListener('change', () => {
+        const changed = input.value !== controls.get('online-mode').original;
+        warn.hidden = !changed;
+        if (!changed) return;
+        const goingOnline = input.value === 'true';
+        const affected = goingOnline ? players.offline : players.online;
+        const kind = goingOnline ? 'offline' : 'real';
+        warn.textContent =
+          'This world already has data for ' + players.count +
+          (players.count === 1 ? ' player' : ' players') +
+          (affected > 0
+            ? ', ' + affected + ' of them under ' + kind + ' UUIDs. Changing this gives ' +
+              (affected === 1 ? 'that player' : 'those players') +
+              ' a different UUID, so anything stored against them — permissions, homes, ' +
+              'inventories, plugin data — will not follow, and they will join as new players.'
+            : '. Changing this alters how UUIDs are issued, so stored per-player data may not follow.');
+      });
+      wrap.append(warn);
+    }
 
     // A value the server has not written yet is still the value it will use; saying so beats an
     // empty box or a number with no explanation.
