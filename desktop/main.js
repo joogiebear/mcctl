@@ -288,11 +288,36 @@ ipcMain.handle('mcctl:installUpdate', async () => {
   return { ok: true }
 })
 
-ipcMain.handle('mcctl:appInfo', async () => ({
-  version: app.getVersion(),
-  packaged: app.isPackaged,
-  coreMode: core.mode,
-}))
+/**
+ * What this copy is, precisely.
+ *
+ * <p>A version number is a label someone typed; the commit is what actually produced the binary.
+ * Written into resources at build time, so a bug report can name the exact code rather than
+ * "0.2.7", of which there could be several.
+ */
+function buildInfo() {
+  try {
+    const file = app.isPackaged
+      ? path.join(process.resourcesPath, 'build-info.json')
+      : path.join(__dirname, 'dist', 'build-info.json')
+    return JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    // Running from a checkout, or a build that predates this. Neither is worth an error.
+    return null
+  }
+}
+
+ipcMain.handle('mcctl:appInfo', async () => {
+  const build = buildInfo()
+  return {
+    version: app.getVersion(),
+    packaged: app.isPackaged,
+    coreMode: core.mode,
+    commit: build?.shortCommit ?? null,
+    dirty: build?.dirty ?? null,
+    builtAt: build?.builtAt ?? null,
+  }
+})
 
 // ---- lifecycle ---------------------------------------------------------------
 

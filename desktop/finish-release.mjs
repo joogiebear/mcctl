@@ -77,6 +77,35 @@ if (size !== byName.get(installer).size) {
 for (const name of expected) process.stdout.write(`  ok   ${name} (${byName.get(name).size} bytes)\n`)
 process.stdout.write(`  ok   latest.yml describes ${version} and matches the installer\n`)
 
+// ---- record which commit produced the binary ------------------------------------------------
+// The source repository is private and this one holds only binaries, so without this nothing
+// connects the installer to the code. Read from what the BUILD wrote, not from git now: a draft can
+// sit for days while the branch moves on, and the commit that matters is the one that made the file.
+let footer = ''
+try {
+  const info = JSON.parse(fs.readFileSync(path.join(HERE, 'dist', 'build-info.json'), 'utf8'))
+  if (info.version !== pkg.version) {
+    fail(`dist/build-info.json is from version ${info.version}, but this is ${pkg.version}. ` +
+      'That is a stale build directory - rebuild before publishing.')
+  }
+  if (info.commit) {
+    footer = `\n\n---\nBuilt from \`${info.shortCommit}\`` +
+      (info.dirty ? ' **plus uncommitted changes**' : '') +
+      ` on ${info.builtAt}.`
+    process.stdout.write(`  ok   built from ${info.shortCommit}${info.dirty ? ' (dirty tree)' : ''}\n`)
+  }
+} catch (err) {
+  if (err?.code === 'ENOENT') process.stdout.write('  ok   no build-info.json; release notes will not name a commit\n')
+  else throw err
+}
+
+if (footer) {
+  const current = JSON.parse(gh(['release', 'view', TAG, '--repo', REPO, '--json', 'body'])).body ?? ''
+  if (!current.includes('Built from')) {
+    gh(['release', 'edit', TAG, '--repo', REPO, '--notes', current + footer])
+  }
+}
+
 gh(['release', 'edit', TAG, '--repo', REPO, '--draft=false', '--latest'])
 process.stdout.write(`\n${TAG} is now published and marked latest.\n`)
 process.stdout.write(`https://github.com/${REPO}/releases/tag/${TAG}\n`)

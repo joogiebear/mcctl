@@ -53,6 +53,35 @@ async function findRcedit(context) {
   return null
 }
 
+/**
+ * Which commit produced this build.
+ *
+ * <p>The source repository is private and the releases repository holds only binaries, so nothing
+ * otherwise connects mcctl-Setup-0.2.7.exe to the code that made it. Six months later "what is
+ * actually in this build" has no answer beyond trusting the version number, and a version number
+ * is a label someone typed.
+ *
+ * <p>Recorded at build time rather than publish time, because those are not the same moment - a
+ * draft can sit for a week while the branch moves on.
+ */
+function buildInfo() {
+  const repo = path.resolve(__dirname, '..')
+  const git = (args) => {
+    const res = spawnSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true })
+    return res.status === 0 ? res.stdout.trim() : null
+  }
+  const commit = git(['rev-parse', 'HEAD'])
+  // A build from a dirty tree is not reproducible from any commit, and saying so is the whole point.
+  const dirty = commit ? git(['status', '--porcelain']) !== '' : null
+  return {
+    version: require('./package.json').version,
+    commit,
+    shortCommit: commit ? commit.slice(0, 12) : null,
+    dirty,
+    builtAt: new Date().toISOString(),
+  }
+}
+
 exports.default = async function afterPack(context) {
   // ---- 1. the icon toolchain has to exist, or the icon is silently skipped -------------------
   if (context.packager.platformSpecificBuildOptions.signAndEditExecutable !== false) {
@@ -74,7 +103,19 @@ exports.default = async function afterPack(context) {
     }
   }
 
-  // ---- 2. everything the app needs is actually in the package --------------------------------
+  // ---- 2. record what built this, for the app and for the release notes ----------------------
+  const info = buildInfo()
+  if (!info.commit) {
+    console.warn('  warn could not read the source commit; this build will not say what produced it')
+  } else if (info.dirty) {
+    console.warn(`  warn building from a dirty tree - ${info.shortCommit} plus uncommitted changes`)
+  }
+  const body = JSON.stringify(info, null, 2) + '\n'
+  fs.writeFileSync(path.join(context.appOutDir, 'resources', 'build-info.json'), body)
+  fs.mkdirSync(path.join(__dirname, 'dist'), { recursive: true })
+  fs.writeFileSync(path.join(__dirname, 'dist', 'build-info.json'), body)
+
+  // ---- 3. everything the app needs is actually in the package --------------------------------
   const res = spawnSync(
     process.execPath,
     [path.join(__dirname, 'verify-build.mjs'), context.appOutDir, '--structure-only'],

@@ -2077,6 +2077,11 @@ function renderSettings() {
   about.textContent = '';
   const info = [['Panel', 'Local only — bound to 127.0.0.1']];
   if (state.appInfo) {
+    // The commit, not just the version: a version is a label, and a bug report that names the
+    // build is the difference between reproducing something and guessing at it.
+    if (state.appInfo.commit) {
+      info.unshift(['Build', state.appInfo.commit + (state.appInfo.dirty ? ' (with uncommitted changes)' : '')]);
+    }
     info.unshift(['Version', 'v' + state.appInfo.version + (state.appInfo.packaged ? '' : ' (' + state.appInfo.coreMode + ')')]);
   }
   for (const r of info) {
