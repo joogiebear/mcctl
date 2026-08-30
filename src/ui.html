@@ -1821,9 +1821,16 @@ function taskForm({ actions, kinds, days, task, onCancel, onSubmit }) {
   save.onclick = async () => {
     const action = { type: act.value };
     if (act.value === 'command') action.line = line.value.trim();
-    if (act.value === 'backup') action.keep = Number(keep.value);
+    // Cleared or zeroed, this used to store as "no limit" and quietly disable pruning on a task
+    // that runs unattended - which is how a backups folder fills a disk.
+    if (act.value === 'backup') action.keep = Math.min(Math.max(Math.round(Number(keep.value)) || 1, 1), 365);
     const sched = { kind: kind.value };
-    if (kind.value === 'minutes' || kind.value === 'hourly') sched.every = Number(every.value);
+    // sync() clamps when a dropdown changes; this catches a number typed straight into the box
+    // afterwards, which nothing else was checking before it was sent and bounced.
+    if (kind.value === 'minutes' || kind.value === 'hourly') {
+      const most = kind.value === 'minutes' ? 1439 : 23;
+      sched.every = Math.min(Math.max(Math.round(Number(every.value)) || 1, 1), most);
+    }
     if (kind.value === 'daily' || kind.value === 'weekly') sched.at = at.value;
     if (kind.value === 'weekly') sched.day = day.value;
     save.disabled = true;
@@ -1860,6 +1867,9 @@ async function renderScheduler(opts) {
     bad.className = 'bad';
     bad.textContent = e.message;
     body.append(bad);
+    // Cleared, so leaving the tab and coming back tries again. Leaving it set cached the failure
+    // as if it were the drawn pane, and the error stayed until the server was reselected.
+    body.dataset.for = '';
     return;
   }
   if (body.dataset.for !== row.name) return;
@@ -2043,7 +2053,9 @@ function taskCard(task, data, base, again, editor) {
       // Windows starts the task and returns immediately, so there is nothing to report yet beyond
       // having asked. The run log below is where the answer turns up.
       toast('Started. Watch Recent runs for what it did.', 'good');
-      setTimeout(again, 2500);
+      // Only if nothing is being edited. The refresh rebuilds the whole pane, and doing that under
+      // a half-filled form throws the typing away with nothing said.
+      setTimeout(() => { if (!editor.restore) again(); }, 2500);
     } catch (e) {
       toast(e.message, 'bad');
       busy(false);
@@ -2234,6 +2246,9 @@ async function renderBackups(opts) {
     bad.className = 'bad';
     bad.textContent = e.message;
     body.append(bad);
+    // Cleared, so leaving the tab and coming back tries again. Leaving it set cached the failure
+    // as if it were the drawn pane, and the error stayed until the server was reselected.
+    body.dataset.for = '';
     return;
   }
   // The selection can move while the request is in flight; the answer to the old question is not
@@ -2496,6 +2511,9 @@ async function renderServerSettings() {
     bad.className = 'bad';
     bad.textContent = e.message;
     body.append(bad);
+    // Cleared, so leaving the tab and coming back tries again. Leaving it set cached the failure
+    // as if it were the drawn pane, and the error stayed until the server was reselected.
+    body.dataset.for = '';
     return;
   }
   if (body.dataset.for !== row.name) return; // switched servers while the fetch was in flight
