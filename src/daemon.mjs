@@ -29,15 +29,52 @@ function log(msg) {
   diag.write(`[${new Date().toISOString()}] ${msg}\n`)
 }
 
-process.on('uncaughtException', (err) => {
-  log(`uncaught: ${err.stack || err}`)
+/**
+ * Die legibly.
+ *
+ * <p>Everything below runs while this module is still being evaluated, and a throw there produced
+ * absolutely nothing: no state file, no daemon.log - the write stream above has not finished
+ * opening yet - and no stderr, because this process is spawned detached with stdio ignored. All
+ * the caller could report was that the daemon "never came up", which is true and useless. One bad
+ * memory value in the registry was enough to reach it.
+ *
+ * <p>So the reason is written SYNCHRONOUSLY, to both places the caller looks: appendFileSync lands
+ * even when the process is about to exit, and the state file is what `start` is already polling.
+ */
+function die(err) {
+  const reason = err?.message ?? String(err)
+  try {
+    fs.appendFileSync(daemonLog(name), `[${new Date().toISOString()}] failed to start: ${reason}\n`)
+  } catch {
+    /* nothing left to try */
+  }
+  try {
+    writeJson(stateFile(name), {
+      name,
+      daemonPid: process.pid,
+      running: false,
+      error: reason,
+      failedAt: Date.now(),
+    })
+  } catch {
+    /* nothing left to try */
+  }
   process.exit(1)
-})
+}
 
-const inst = getInstance(name)
-const jar = serverJarPath(inst)
-const flags = inst.jvmFlags?.length ? inst.jvmFlags : jvmFlagsFor(inst.memory)
-const args = [`-Xms${inst.memory}`, `-Xmx${inst.memory}`, ...flags, '-jar', path.basename(jar), '--nogui']
+process.on('uncaughtException', die)
+
+let inst
+let jar
+let args
+try {
+  inst = getInstance(name)
+  jar = serverJarPath(inst)
+  const flags = inst.jvmFlags?.length ? inst.jvmFlags : jvmFlagsFor(inst.memory)
+  args = [`-Xms${inst.memory}`, `-Xmx${inst.memory}`, ...flags, '-jar', path.basename(jar), '--nogui']
+} catch (err) {
+  die(err)
+}
 
 // Truncate the captured console on each start so `logs` shows this run only.
 // The server's own logs/ directory keeps the full rolling history.

@@ -60,6 +60,9 @@ export async function start(name, { wait = true, timeout = 180000, sync = true }
     )
   }
   if (status === 'stale') clearState(name)
+  // A failure record from a previous attempt would otherwise be read as this attempt's failure, so
+  // a server that had one bad start could never be started again without deleting a file by hand.
+  if (state?.error) clearState(name)
 
   if (sync) syncProps(inst)
   fs.mkdirSync(runDir(name), { recursive: true })
@@ -83,6 +86,10 @@ export async function start(name, { wait = true, timeout = 180000, sync = true }
   while (Date.now() < deadline) {
     await sleep(150)
     const cur = readState(name)
+    // A daemon that failed during startup writes its reason and nothing else. Watching only for a
+    // successful launch meant waiting the full fifteen seconds and then reporting that nothing came
+    // up, when the answer had been sitting on disk since the first tick.
+    if (cur.state?.error) fail(`"${name}" could not start: ${cur.state.error}`)
     if (cur.state && cur.state.daemonPid && cur.state.startedAt) {
       live = cur
       break
@@ -293,6 +300,7 @@ export function statusOf(name) {
     daemonPid: state?.daemonPid ?? null,
     startedAt: state?.startedAt ?? null,
     exitCode: state?.exitCode ?? null,
+    lastError: state?.error ?? null,
     uptimeMs: status === 'running' && state?.startedAt ? Date.now() - state.startedAt : null,
     stateFile: stateFile(name),
     consoleLog: consoleLog(name),
