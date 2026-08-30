@@ -324,6 +324,15 @@ whose absence caused the first failure: all three assets present, uploaded and n
 `latest.yml` naming this version with a size matching the installer actually up there. It refuses
 and exits non-zero otherwise.
 
+The draft is created **before** the build, by `ensure-draft.mjs`, and that ordering is load-bearing.
+electron-builder uploads artifacts concurrently and each upload creates the release if it cannot
+find it — and a draft has no git tag to find it by, so the first v0.2.7 build produced *two* drafts
+a second apart with the assets split between them. Creating it up front leaves nothing to race over.
+
+Every published release names the commit it was built from, captured at build time rather than
+publish time, and says so if the tree was dirty. Same information under **Settings → About** in the
+app, so a bug report can name the exact build rather than a version several builds could share.
+
 Builds are signed through **Azure Artifact Signing** (formerly Trusted Signing), configured under
 `win.azureSignOptions`. That publishes under a validated individual identity, which is what turns
 "Unknown publisher" into a name.

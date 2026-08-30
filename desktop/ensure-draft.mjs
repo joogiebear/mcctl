@@ -62,9 +62,16 @@ if (matching.length === 1) {
   process.stdout.write(`  ok   ${TAG} ${state} already exists; the build will upload into it\n`)
 } else {
   const notes = path.join(HERE, `RELEASE-NOTES-${TAG}.md`)
-  const args = ['release', 'create', TAG, '--repo', REPO, '--draft', '--title', TAG]
+  // The title comes from the notes' opening line, so a release is named after what it does rather
+  // than after its own tag - which the tag already says, twice, right next to it.
+  let title = TAG
+  if (fs.existsSync(notes)) {
+    const first = fs.readFileSync(notes, 'utf8').split('\n').map((l) => l.trim()).find(Boolean)
+    if (first) title = `${TAG} — ${first.replace(/^#+\s*/, '').replace(/\.$/, '')}`
+  }
+  const args = ['release', 'create', TAG, '--repo', REPO, '--draft', '--title', title]
   if (fs.existsSync(notes)) args.push('--notes-file', notes)
   else args.push('--notes', 'Release notes to follow.')
   gh(args)
-  process.stdout.write(`  ok   created draft ${TAG} for the build to upload into\n`)
+  process.stdout.write(`  ok   created draft "${title}" for the build to upload into\n`)
 }
