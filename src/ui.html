@@ -323,7 +323,9 @@
   /* ---- server view ------------------------------------------------------ */
 
   .server {
-    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    /* head, vitals, notice, tabs, panes. The command bar used to be a sixth row here; it belongs to
+       the console rather than to the server, so it moved inside that pane. */
+    grid-template-rows: auto auto auto auto minmax(0, 1fr);
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r);
@@ -356,6 +358,29 @@
   .notice.fault { background: rgba(242, 100, 92, .1); color: #f7a49f; }
   .notice b { font-weight: 600; white-space: nowrap; }
 
+  /* ---- tabs within a server ---------------------------------------------- */
+
+  .srv-tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+  .srv-tabs button {
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: 9px 13px;
+    color: var(--ink-2);
+    font-size: 13px;
+  }
+  .srv-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--lapis); font-weight: 600; }
+  .srv-tabs button:hover { background: transparent; color: var(--ink); }
+
+  /* One grid cell holding every pane, so switching cannot change the height of anything above. */
+  .panes { display: grid; min-height: 0; }
+  .pane { display: none; min-height: 0; grid-area: 1 / 1; }
+  .pane[data-active] { display: grid; }
+  .pane-console { grid-template-rows: auto minmax(0, 1fr) auto; }
+  .pane-scroll { overflow: auto; align-content: start; }
+  .pane-body { padding: 18px; display: grid; gap: 16px; max-width: 580px; }
+
   /* ---- console ---------------------------------------------------------- */
 
   .con-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
@@ -368,7 +393,9 @@
      box, so `height: 100%` on the log meant "as tall as the toolbar AND the log", and the console
      grew straight through the command bar below it. Only visible once the window was small enough
      for the toolbar to wrap - which is the app's own 900x600 minimum. */
-  .log-wrap { position: relative; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+  /* Holds the log and the jump pill, nothing else - the toolbar and the command bar are siblings
+     in the pane grid now, which is what stops the console growing through them. */
+  .log-wrap { position: relative; min-height: 0; display: grid; }
   #log {
     margin: 0;
     padding: 8px 0 12px;
@@ -591,7 +618,7 @@
           <button class="primary" id="bStart">Start</button>
           <button id="bStop">Stop</button>
           <button id="bRestart">Restart</button>
-          <button id="bProps">Settings…</button>
+          <button id="bFolder" title="Show this server's files in Explorer">Open folder</button>
           <button id="bManage">Manage…</button>
         </span>
       </div>
@@ -599,7 +626,13 @@
       <dl class="vitals-bar" id="srvVitals"></dl>
       <div id="srvNotice"></div>
 
-      <div class="log-wrap">
+      <div class="srv-tabs" role="tablist" aria-label="Server sections">
+        <button role="tab" data-pane="console" aria-selected="true">Console</button>
+        <button role="tab" data-pane="settings" aria-selected="false">Settings</button>
+      </div>
+
+      <div class="panes">
+      <div class="pane pane-console" id="paneConsole" data-active>
         <div class="con-bar">
           <span class="con-search">
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -619,14 +652,21 @@
           <span class="grow"></span>
           <span class="con-count" id="conCount"></span>
         </div>
-        <pre id="log" tabindex="0" role="log" aria-label="Server console"></pre>
-        <button class="jump" id="bJump" hidden>Jump to newest</button>
+        <div class="log-wrap">
+          <pre id="log" tabindex="0" role="log" aria-label="Server console"></pre>
+          <button class="jump" id="bJump" hidden>Jump to newest</button>
+        </div>
+
+        <div class="cmd">
+          <span class="prompt" aria-hidden="true">&gt;</span>
+          <input id="cmd" placeholder="Send a server command — try list" autocomplete="off" aria-label="Server command">
+          <button id="bSend">Send</button>
+        </div>
       </div>
 
-      <div class="cmd">
-        <span class="prompt" aria-hidden="true">&gt;</span>
-        <input id="cmd" placeholder="Send a server command — try list" autocomplete="off" aria-label="Server command">
-        <button id="bSend">Send</button>
+      <div class="pane pane-scroll" id="paneSettings">
+        <div class="pane-body" id="settingsBody"></div>
+      </div>
       </div>
     </div>
 
@@ -795,6 +835,9 @@ const state = {
   layout: null,
   appInfo: null,
   busy: false,
+  // Which section of a server is showing. Kept across servers rather than per server: someone
+  // comparing the same setting on two servers should not have to re-open the tab each time.
+  pane: 'console',
 };
 
 // ------------------------------------------------------------------ api ----
@@ -932,6 +975,28 @@ function show(view) {
   state.view = view;
   for (const key of Object.keys(VIEW_EL)) $(VIEW_EL[key]).toggleAttribute('data-active', key === view);
 }
+
+/**
+ * Show one section of the selected server.
+ *
+ * <p>The console keeps streaming while another tab is showing. Its lines are appended to a hidden
+ * element, which costs nothing, and means coming back to it has the scrollback intact rather than
+ * a console that starts again from whenever you looked away.
+ */
+function showPane(pane) {
+  state.pane = pane;
+  for (const b of $$('.srv-tabs [data-pane]')) b.setAttribute('aria-selected', String(b.dataset.pane === pane));
+  for (const el of $$('.pane')) el.toggleAttribute('data-active', el.id === 'pane' + pane[0].toUpperCase() + pane.slice(1));
+  if (pane === 'settings') renderServerSettings();
+  // Scroll position is not kept while a pre is hidden, so the console has to be put back where it
+  // was - and "at the bottom" is where it was for anyone who had not scrolled up.
+  if (pane === 'console' && state.atBottom) {
+    const log = $('#log');
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
+for (const b of $$('.srv-tabs [data-pane]')) b.onclick = () => showPane(b.dataset.pane);
 
 /** Back out of a sheet to wherever the person was. */
 function back() {
@@ -1330,7 +1395,10 @@ function select(name) {
 
   stopStream();
   show('server');
+  // The settings pane caches which server it drew, so a different one must not inherit it.
+  $('#settingsBody').dataset.for = '';
   renderServer(state.rows.find((r) => r.name === name));
+  showPane(state.pane);
   renderLog();
   renderList(state.rows);
 
@@ -1477,55 +1545,71 @@ $('#bRestart').onclick = act('restart');
  * the core cannot drift about what exists or what a field accepts. The server reads this file once
  * at boot, so anything changed while it is running is announced as taking effect on restart.
  */
-async function editProps(row) {
+/**
+ * The server's own settings, in a tab.
+ *
+ * <p>These were a modal dialog until the panel grew tabs. A dialog was the right shape when this
+ * was the only way to reach them and the panel had nowhere to put them; it is the wrong shape for
+ * something you read as often as you change, and it could not show anything alongside the console.
+ *
+ * <p>Fields come from what the API says is editable rather than from a list kept here, so the panel
+ * and the core cannot drift about what exists or what a field will accept.
+ */
+async function renderServerSettings() {
+  const row = state.rows.find((r) => r.name === state.current);
+  const body = $('#settingsBody');
+  if (!row) { body.textContent = ''; return; }
+
+  // Re-rendering under someone mid-edit would silently discard what they had typed.
+  if (body.dataset.for === row.name && body.childElementCount) return;
+  body.dataset.for = row.name;
+  body.textContent = '';
+
+  const loading = document.createElement('div');
+  loading.className = 'hint';
+  loading.textContent = 'Reading server.properties…';
+  body.append(loading);
+
   let data;
   try {
     data = await api('/instances/' + encodeURIComponent(row.name) + '/props');
   } catch (e) {
-    toast(e.message, 'bad');
+    body.textContent = '';
+    const bad = document.createElement('div');
+    bad.className = 'bad';
+    bad.textContent = e.message;
+    body.append(bad);
     return;
   }
+  if (body.dataset.for !== row.name) return; // switched servers while the fetch was in flight
+  body.textContent = '';
 
-  const dlg = $('#dlg');
-  $('#dlgTitle').textContent = 'Settings for ' + row.name;
-  $('#dlgText').hidden = false;
-  $('#dlgText').textContent = row.status === 'running'
+  const note = document.createElement('div');
+  note.className = 'hint';
+  note.textContent = row.status === 'running'
     ? 'This server is running, so changes take effect the next time it starts.'
     : 'Applies the next time this server starts.';
-  $('#dlgChoice').hidden = true;
-  $('#dlgTypeWrap').hidden = true;
-
-  const form = document.createElement('div');
-  form.style.display = 'grid';
-  form.style.gap = '13px';
+  body.append(note);
 
   const controls = new Map();
   const players = data.players;
+
   for (const f of data.fields) {
     const wrap = document.createElement('div');
     wrap.className = 'field';
-
     const label = document.createElement('label');
     label.setAttribute('for', 'p_' + f.key);
     label.textContent = f.label;
     wrap.append(label);
 
     let input;
-    if (f.type === 'bool') {
+    if (f.type === 'bool' || f.type === 'enum') {
       input = document.createElement('select');
-      for (const v of ['true', 'false']) {
+      const opts = f.type === 'bool' ? ['true', 'false'] : f.options;
+      for (const v of opts) {
         const o = document.createElement('option');
         o.value = v;
-        o.textContent = v === 'true' ? 'Yes' : 'No';
-        o.selected = String(f.value) === v;
-        input.append(o);
-      }
-    } else if (f.type === 'enum') {
-      input = document.createElement('select');
-      for (const v of f.options) {
-        const o = document.createElement('option');
-        o.value = v;
-        o.textContent = v;
+        o.textContent = f.type === 'bool' ? (v === 'true' ? 'Yes' : 'No') : v;
         o.selected = String(f.value) === v;
         input.append(o);
       }
@@ -1540,16 +1624,18 @@ async function editProps(row) {
     wrap.append(input);
     controls.set(f.key, { input, original: f.value == null ? '' : String(f.value) });
 
-    /*
-      Changing online mode on a world that already has players in it is not a setting change, it is
-      an identity change: Minecraft derives an offline UUID from the player's name and uses the real
-      Mojang one otherwise, so flipping this hands everybody a different UUID. Nothing migrates.
-      Permissions, homes, inventories and anything else a plugin stored per-player stay attached to
-      the identity nobody has any more, and the same person joins as a stranger.
+    const bits = [];
+    if (!f.set) bits.push("Not set yet — this is Minecraft's default.");
+    if (f.note) bits.push(f.note);
+    if (bits.length) {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = bits.join(' ');
+      wrap.append(hint);
+    }
 
-      Shown live, next to the control, rather than as a second dialog after Save - the point is to
-      inform the decision, not to interrupt it.
-    */
+    // Changing who can join on a world that already has players is an identity change, not a
+    // setting change. Said next to the control, while the decision is being made.
     if (f.key === 'online-mode' && players && players.count > 0) {
       const warn = document.createElement('div');
       warn.className = 'inline-warn';
@@ -1573,73 +1659,51 @@ async function editProps(row) {
       });
       wrap.append(warn);
     }
+    body.append(wrap);
+  }
 
-    // A value the server has not written yet is still the value it will use; saying so beats an
-    // empty box or a number with no explanation.
-    const bits = [];
-    if (!f.set) bits.push("Not set yet — this is Minecraft's default.");
-    if (f.note) bits.push(f.note);
-    if (bits.length) {
-      const hint = document.createElement('div');
-      hint.className = 'hint';
-      hint.textContent = bits.join(' ');
-      wrap.append(hint);
+  const actions = document.createElement('div');
+  actions.className = 'row';
+  const save = document.createElement('button');
+  save.className = 'primary';
+  save.textContent = 'Save settings';
+  const status = document.createElement('span');
+  status.className = 'hint';
+  actions.append(save, status);
+  body.append(actions);
+
+  save.onclick = async () => {
+    // Only what actually changed: a field left alone is never written, so server.properties keeps
+    // whatever the server itself put there.
+    const patch = {};
+    for (const [key, c] of controls) {
+      const now = c.input.value.trim();
+      if (now !== c.original) patch[key] = now;
     }
-    form.append(wrap);
-  }
-  $('#dlgBody').append(form);
-
-  const ok = $('#dlgOk');
-  ok.textContent = 'Save settings';
-  ok.className = 'primary';
-  ok.disabled = false;
-
-  const mine = ++askSeq;
-  const result = await new Promise((resolve) => {
-    const done = (v) => {
-      dlg.removeEventListener('cancel', onCancel);
-      ok.onclick = null;
-      $('#dlgCancel').onclick = null;
-      if (dlg.open) dlg.close();
-      form.remove();
-      resolve(v);
-    };
-    const onCancel = () => { if (mine === askSeq) done(null); };
-    dlg.addEventListener('cancel', onCancel);
-    ok.onclick = () => {
-      // Only what actually changed, so a field left alone is never written and the file keeps
-      // whatever the server itself put there.
-      const patch = {};
-      for (const [key, c] of controls) {
-        const now = c.input.value.trim();
-        if (now !== c.original) patch[key] = now;
+    if (!Object.keys(patch).length) { status.textContent = 'Nothing changed.'; return; }
+    save.disabled = true;
+    status.textContent = 'Saving…';
+    try {
+      const out = await post('/instances/' + encodeURIComponent(row.name) + '/props', patch);
+      for (const f of out.fields) {
+        const c = controls.get(f.key);
+        if (c) c.original = f.value == null ? '' : String(f.value);
       }
-      done(patch);
-    };
-    $('#dlgCancel').onclick = () => done(null);
-    dlg.showModal();
-  });
-  if (!result) return;
-  if (!Object.keys(result).length) { toast('Nothing changed.'); return; }
-
-  try {
-    const out = await post('/instances/' + encodeURIComponent(row.name) + '/props', result);
-    const n = out.changed.length;
-    toast(
-      'Saved ' + n + (n === 1 ? ' setting' : ' settings') +
-      (out.appliesOnRestart ? '. Restart ' + row.name + ' to apply.' : '.'),
-      'good',
-    );
-    await refresh();
-  } catch (e) {
-    toast(e.message, 'bad');
-  }
+      const n = out.changed.length;
+      status.textContent = '';
+      toast('Saved ' + n + (n === 1 ? ' setting' : ' settings') +
+        (out.appliesOnRestart ? '. Restart ' + row.name + ' to apply.' : '.'), 'good');
+      await refresh();
+    } catch (e) {
+      status.textContent = '';
+      toast(e.message, 'bad');
+    } finally {
+      save.disabled = false;
+    }
+  };
 }
 
-$('#bProps').onclick = () => {
-  const row = state.rows.find((r) => r.name === state.current);
-  if (row) editProps(row);
-};
+$('#bFolder').onclick = () => { if (state.current) openFolder(state.current); };
 
 // --------------------------------------------------------------- manage ----
 
@@ -1656,7 +1720,6 @@ $('#bManage').onclick = async () => {
     choices: live
       ? [{ value: 'folder', label: 'Open its folder', hint: 'Shows the server directory in Explorer.' }]
       : [
-          { value: 'folder', label: 'Open its folder', hint: 'Shows the server directory in Explorer.' },
           { value: 'edit', label: 'Rename, or change memory and port', hint: 'Takes effect the next time it starts.' },
           { value: 'rebuild', label: 'Reset the world', hint: 'Deletes worlds and generated state. A snapshot is taken first.' },
           { value: 'delete', label: 'Delete this server', hint: 'Removes it from mcctl, and optionally its files.' },
