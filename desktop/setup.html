@@ -1,119 +1,410 @@
 <!doctype html>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <title>mcctl setup</title>
+
 <style>
+  /* ==========================================================================
+     Design tokens.
+
+     Kept identical to the block at the top of src/ui.html. This page is loaded from disk by
+     Electron before the panel server exists, so the two cannot share a stylesheet without a build
+     step, and there is no build step. Duplicated deliberately; change both or neither.
+     ========================================================================== */
   :root {
-    --bg: #10131a; --panel: #171b24; --line: #262c39; --ink: #e6e9ef; --dim: #8b94a7;
-    --accent: #5aa9e6; --bad: #e06c75;
-    --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+    --void:     #0c0e14;
+    --surface:  #141823;
+    --raised:   #1c2130;
+    --sunken:   #0a0c12;
+    --line:     #252b3b;
+    --edge:     #354056;
+
+    --ink:      #e9ecf4;
+    --ink-2:    #9aa4ba;
+    --ink-3:    #6b7488;
+
+    --lapis:     #5b84ff;
+    --lapis-dim: #2c3f8f;
+    --lapis-wash: rgba(91, 132, 255, .12);
+
+    --live:  #4ade80;
+    --warn:  #f0b64d;
+    --fault: #f2645c;
+    --idle:  #6b7488;
+
+    --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+
+    --r: 8px;
+    --r-sm: 6px;
   }
+
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink);
-         font: 14px/1.6 system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; }
-  .card { width: min(620px, 92vw); background: var(--panel); border: 1px solid var(--line);
-          border-radius: 10px; padding: 28px 30px; }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  p.sub { color: var(--dim); margin: 0 0 24px; }
-  label.field { display: block; margin-bottom: 6px; color: var(--dim); font-size: 12px;
-                text-transform: uppercase; letter-spacing: .7px; }
-  .pathrow { display: flex; gap: 8px; margin-bottom: 20px; }
-  .pathrow input { flex: 1; background: #0d1017; color: var(--ink); border: 1px solid var(--line);
-                   border-radius: 6px; padding: 9px 11px; font-family: var(--mono); font-size: 12.5px; }
-  button { background: #222836; color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
-           padding: 9px 14px; font: inherit; cursor: pointer; }
-  button:hover:not(:disabled) { border-color: var(--accent); }
-  button.primary { background: #1d3b2a; border-color: #2c5b40; padding: 10px 22px; }
-  button:disabled { opacity: .45; cursor: default; }
-  .toggle { display: flex; gap: 10px; align-items: flex-start; padding: 14px;
-            border: 1px solid var(--line); border-radius: 8px; margin-bottom: 20px; background: #141821; }
-  .toggle input { margin-top: 3px; }
-  .toggle .why { color: var(--dim); font-size: 12.5px; }
-  .err { color: var(--bad); font-size: 13px; min-height: 20px; margin-bottom: 8px; white-space: pre-wrap; }
-  footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-  .note { color: var(--dim); font-size: 12px; }
+  [hidden] { display: none !important; }
+
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--void);
+    color: var(--ink);
+    font: 14px/1.55 var(--ui);
+    display: grid;
+    place-items: center;
+    padding: 28px;
+    overflow: auto;
+  }
+  :focus-visible { outline: 2px solid var(--lapis); outline-offset: 2px; border-radius: 3px; }
+
+  .card {
+    width: min(660px, 100%);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 30px 32px 26px;
+  }
+
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 26px; }
+  .brand svg { display: block; }
+  .brand b { font: 600 15px/1 var(--mono); letter-spacing: -.02em; }
+  .brand .step { margin-left: auto; font: 11px/1 var(--mono); color: var(--ink-3); letter-spacing: .04em; }
+
+  h1 { font: 600 23px/1.25 var(--ui); margin: 0 0 8px; letter-spacing: -.015em; }
+  p.sub { color: var(--ink-2); margin: 0 0 26px; font-size: 14px; }
+  p.sub b { color: var(--ink); font-weight: 600; }
+
+  .fieldlabel {
+    display: block;
+    margin-bottom: 6px;
+    font: 600 11px/1 var(--ui);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--ink-2);
+  }
+  .pathrow { display: flex; gap: 8px; margin-bottom: 8px; }
+  input[type="text"] {
+    flex: 1;
+    background: var(--sunken);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    padding: 9px 11px;
+    font: 12.5px/1.4 var(--mono);
+    width: 100%;
+  }
+  input[type="text"]:hover { border-color: var(--edge); }
+  input[type="text"]:focus { outline: none; border-color: var(--lapis); box-shadow: 0 0 0 3px var(--lapis-wash); }
+
+  button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--raised);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    padding: 8px 14px;
+    font: 13px/1.4 var(--ui);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover:not(:disabled) { border-color: var(--edge); background: #222839; }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { opacity: .38; cursor: default; }
+  button.primary { background: var(--lapis-dim); border-color: #3d55b8; color: #eaf0ff; font-weight: 600; padding: 10px 22px; }
+  button.primary:hover:not(:disabled) { background: #35499f; border-color: var(--lapis); }
+  button.small { padding: 5px 11px; font-size: 12.5px; }
+
+  .hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
+
+  .toggle {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 4px 11px;
+    padding: 13px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--raised);
+    margin: 20px 0;
+    cursor: pointer;
+  }
+  .toggle:has(input:checked) { border-color: var(--lapis-dim); background: var(--lapis-wash); }
+  /* Explicit rows and columns throughout. The checkbox sits on the title line rather than centred
+     against the whole block - a control beside the explanation reads as if it belongs to the
+     explanation - and pinning the text to column 2 stops auto-placement dropping it into the
+     checkbox's column and collapsing the layout. */
+  .toggle input { grid-row: 1; grid-column: 1; align-self: center; accent-color: var(--lapis); margin: 0; }
+  .toggle b { grid-row: 1; grid-column: 2; font-size: 13.5px; }
+  .toggle .why { grid-row: 2; grid-column: 2; color: var(--ink-3); font-size: 12.5px; }
+
+  /* Prerequisite readout, using the same lamp language the panel uses for a server. */
+  .check {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px 11px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--raised);
+    margin-bottom: 20px;
+  }
+  /* Explicit columns: the button is hidden when Java is fine, and auto-placement would otherwise
+     slide the explanation into the empty third column and strand it against the right edge. */
+  .check .lamp { grid-row: 1; grid-column: 1; align-self: center; }
+  .check b { grid-row: 1; grid-column: 2; font-size: 13.5px; }
+  .check .why { grid-row: 2; grid-column: 2; color: var(--ink-3); font-size: 12.5px; }
+  .check button { grid-row: 1 / 3; grid-column: 3; }
+
+  .lamp {
+    --lamp: var(--idle);
+    position: relative;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--lamp);
+    flex: none;
+  }
+  .lamp::after {
+    content: "";
+    position: absolute;
+    inset: -5px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--lamp) 0%, transparent 68%);
+    opacity: .38;
+  }
+  [data-state="ok"]   .lamp { --lamp: var(--live); }
+  [data-state="warn"] .lamp { --lamp: var(--warn); }
+  [data-state="bad"]  .lamp { --lamp: var(--fault); }
+  [data-state="ok"] .lamp::after { animation: breathe 2.6s ease-in-out infinite; }
+  @keyframes breathe { 0%, 100% { opacity: .22; } 50% { opacity: .7; } }
+
+  .err {
+    color: #f7a49f;
+    background: rgba(242, 100, 92, .1);
+    border: 1px solid rgba(242, 100, 92, .3);
+    border-radius: var(--r-sm);
+    padding: 10px 12px;
+    font-size: 13px;
+    white-space: pre-wrap;
+    margin-bottom: 16px;
+  }
+
+  footer { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-top: 4px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
+    .lamp::after { opacity: .45; }
+  }
 </style>
 
-<div class="card">
-  <h1>Where should mcctl keep things?</h1>
-  <p class="sub">Server files, downloaded jars and backups. You can change this later.</p>
-
-  <label class="field" for="root">Install location</label>
-  <div class="pathrow">
-    <input id="root" spellcheck="false">
-    <button id="pickRoot">Browse…</button>
+<form class="card" id="form">
+  <div class="brand">
+    <svg viewBox="0 0 64 64" width="22" height="22" aria-hidden="true">
+      <polygon points="8,20 32,8 56,20 32,32" fill="#5f85ef"/>
+      <polygon points="8,20 32,32 32,54 8,42" fill="#3a55b4"/>
+      <polygon points="56,20 32,32 32,54 56,42" fill="#24357a"/>
+      <polygon points="51.2,29.0 35.4,36.9 35.4,42.6 51.2,34.7" fill="#cfe0ff"/>
+    </svg>
+    <b>mcctl</b>
+    <span class="step">First run</span>
   </div>
 
-  <div class="toggle">
-    <input type="checkbox" id="same" checked>
-    <div>
-      <label for="same"><b>Keep servers in the same place</b></label>
-      <div class="why">
-        Turn this off to put servers on another drive. Worlds and backups are the parts that grow,
-        so this is usually about space rather than tidiness.
-      </div>
+  <!--
+    Issue #1: the installer used to ask for a location and then this screen asked again. The
+    installer no longer asks - the program goes where Windows puts programs - so this is the only
+    location question there is, and it says out loud which one it is. "Install location" was the
+    exact wording that made the two read as the same question asked twice.
+  -->
+  <h1>Where should mcctl keep your servers?</h1>
+  <p class="sub">
+    Worlds, downloaded server jars and backups go here. <b>Not the program itself</b> — that is
+    already installed. You can move this later from Settings.
+  </p>
+
+  <div>
+    <label class="fieldlabel" for="root">Data folder</label>
+    <div class="pathrow">
+      <input type="text" id="root" spellcheck="false" autocomplete="off">
+      <button type="button" id="pickRoot">Browse…</button>
     </div>
+    <div class="hint">A fresh server takes about 300 MB. Worlds grow from there.</div>
   </div>
+
+  <label class="toggle" for="separate">
+    <input type="checkbox" id="separate">
+    <b>Put servers on a different drive</b>
+    <span class="why">
+      Worlds and backups are the parts that grow. Turn this on if they should live somewhere with
+      more room than the folder above.
+    </span>
+  </label>
 
   <div id="serversBlock" hidden>
-    <label class="field" for="servers">Servers location</label>
+    <label class="fieldlabel" for="servers">Servers folder</label>
     <div class="pathrow">
-      <input id="servers" spellcheck="false">
-      <button id="pickServers">Browse…</button>
+      <input type="text" id="servers" spellcheck="false" autocomplete="off">
+      <button type="button" id="pickServers">Browse…</button>
     </div>
+    <div class="hint">Jars, backups and settings stay in the data folder above.</div>
   </div>
 
-  <div class="err" id="err"></div>
+  <!--
+    Java is the one prerequisite mcctl cannot supply. Checked here, before anything is downloaded,
+    because finding out at the first press of Start - after setup and a fifty-megabyte download -
+    is the difference between a missing dependency and a broken application.
+  -->
+  <div class="check" id="javaCheck" data-state="pending">
+    <span class="lamp"></span>
+    <b id="javaTitle">Checking for Java…</b>
+    <span class="why" id="javaWhy">Minecraft servers run on Java. mcctl needs one installed.</span>
+    <button type="button" class="small" id="javaGet" hidden>Get Java</button>
+  </div>
+
+  <div class="err" id="err" hidden></div>
 
   <footer>
-    <span class="note" id="mode"></span>
-    <button class="primary" id="go">Continue</button>
+    <span class="hint" id="note"></span>
+    <button type="submit" class="primary" id="go">Continue</button>
   </footer>
-</div>
+</form>
 
 <script>
-  const $ = (s) => document.querySelector(s);
-  const d = window.mcctlDesktop;
+'use strict';
 
-  let defaults = null;
+const $ = (s) => document.querySelector(s);
+const d = window.mcctlDesktop;
 
-  async function init() {
+let defaults = null;
+// Once the servers box has been typed in by hand it stops following the data folder. Until then it
+// tracks, so picking a new root does not silently leave the servers path on the old drive - which
+// is the exact opposite of what the separate-drive option is for.
+let serversEdited = false;
+
+function fail(message) {
+  const box = $('#err');
+  box.hidden = false;
+  box.textContent = message;
+}
+
+function clearError() {
+  $('#err').hidden = true;
+  $('#err').textContent = '';
+}
+
+/** The default servers folder under a data root - the same name the core actually uses. */
+function serversUnder(root) {
+  const trimmed = String(root || '').trim().replace(/[\\/]+$/, '');
+  return trimmed ? trimmed + '\\instances' : '';
+}
+
+function syncServers() {
+  if (!serversEdited) $('#servers').value = serversUnder($('#root').value);
+}
+
+async function init() {
+  if (!d) {
+    fail('This screen is part of the mcctl desktop app and cannot run in a browser.');
+    $('#go').disabled = true;
+    return;
+  }
+  try {
     defaults = await d.getSetup();
-    $('#root').value = defaults.defaultDataRoot;
-    $('#servers').value = defaults.defaultDataRoot + '\\servers';
-    $('#mode').textContent = 'core: ' + defaults.coreMode;
+  } catch (err) {
+    // A wizard that renders empty boxes and no explanation is worse than one that says what broke.
+    fail('mcctl could not read its settings.\n\n' + (err && err.message ? err.message : String(err)));
+    $('#go').disabled = true;
+    return;
+  }
+  $('#root').value = defaults.defaultDataRoot;
+  // Seeded from the layout the core actually resolved, not from a guessed folder name.
+  $('#servers').value =
+    (defaults.current && defaults.current.instancesDir) || serversUnder(defaults.defaultDataRoot);
+  checkJava();
+}
+
+$('#root').oninput = syncServers;
+$('#servers').oninput = () => { serversEdited = true; };
+
+$('#separate').onchange = (e) => {
+  $('#serversBlock').hidden = !e.target.checked;
+  if (e.target.checked) syncServers();
+};
+
+$('#pickRoot').onclick = async () => {
+  const p = await d.pickFolder('Choose where mcctl keeps its files');
+  if (!p) return;
+  $('#root').value = p;
+  syncServers();
+  clearError();
+};
+
+$('#pickServers').onclick = async () => {
+  const p = await d.pickFolder('Choose where servers are stored');
+  if (!p) return;
+  $('#servers').value = p;
+  serversEdited = true;
+  clearError();
+};
+
+async function checkJava() {
+  const box = $('#javaCheck');
+  let res;
+  try {
+    res = await d.checkJava();
+  } catch {
+    box.dataset.state = 'warn';
+    $('#javaTitle').textContent = 'Could not check for Java';
+    $('#javaWhy').textContent = 'Carry on — mcctl will say so again if a server fails to start.';
+    return;
+  }
+  if (res.ok && res.reason === 'ok') {
+    box.dataset.state = 'ok';
+    $('#javaTitle').textContent = 'Java is installed';
+    $('#javaWhy').textContent = res.version || res.message;
+    return;
+  }
+  box.dataset.state = res.ok ? 'warn' : 'bad';
+  $('#javaTitle').textContent = res.found ? 'Java needs updating' : 'Java is not installed';
+  $('#javaWhy').textContent =
+    res.message + ' You can finish setting up either way — servers will not start until it is sorted.';
+  const get = $('#javaGet');
+  get.hidden = false;
+  get.onclick = () => d.openExternal(res.downloadUrl);
+}
+
+// A form, so Enter submits. The old screen ignored Enter entirely, which reads as a stuck window.
+$('#form').onsubmit = async (e) => {
+  e.preventDefault();
+  clearError();
+
+  const separate = $('#separate').checked;
+  // Trailing spaces survive a paste out of Explorer and make a folder nobody can find again.
+  const dataRoot = $('#root').value.trim();
+  const instancesDir = $('#servers').value.trim();
+  if (!dataRoot || (separate && !instancesDir)) {
+    fail('Both folders are needed before mcctl can continue.');
+    return;
   }
 
-  $('#same').onchange = (e) => {
-    $('#serversBlock').hidden = e.target.checked;
-  };
+  const go = $('#go');
+  go.disabled = true;
+  // saveSetup relaunches the app on success, so the window vanishes for a second or two. Saying
+  // what is about to happen is the difference between a restart and a glitch.
+  $('#note').textContent = 'Setting up, then restarting into the panel…';
 
-  $('#pickRoot').onclick = async () => {
-    const p = await d.pickFolder('Choose where mcctl keeps its files');
-    if (p) $('#root').value = p;
-  };
+  let res;
+  try {
+    res = await d.saveSetup({ dataRoot, instancesDir, separate });
+  } catch (err) {
+    res = { ok: false, error: (err && err.message) ? err.message : String(err) };
+  }
+  if (!res || !res.ok) {
+    fail(res && res.error ? res.error : 'mcctl could not save these locations.');
+    go.disabled = false;
+    $('#note').textContent = '';
+  }
+  // On success the app relaunches into the panel, so there is nothing left to do here.
+};
 
-  $('#pickServers').onclick = async () => {
-    const p = await d.pickFolder('Choose where servers are stored');
-    if (p) $('#servers').value = p;
-  };
-
-  $('#go').onclick = async () => {
-    const separate = !$('#same').checked;
-    const dataRoot = $('#root').value.trim();
-    const instancesDir = $('#servers').value.trim();
-    if (!dataRoot || (separate && !instancesDir)) {
-      $('#err').textContent = 'Both locations are needed.';
-      return;
-    }
-    $('#go').disabled = true;
-    $('#err').textContent = '';
-    const res = await d.saveSetup({ dataRoot, instancesDir, separate });
-    if (!res.ok) {
-      $('#err').textContent = res.error;
-      $('#go').disabled = false;
-    }
-    // On success the app relaunches into the panel, so there is nothing to do here.
-  };
-
-  init();
+init();
 </script>
