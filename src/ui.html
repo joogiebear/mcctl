@@ -380,6 +380,41 @@
   .pane-console { grid-template-rows: auto minmax(0, 1fr) auto; }
   .pane-scroll { overflow: auto; align-content: start; }
   .pane-body { padding: 18px; display: grid; gap: 16px; max-width: 580px; }
+  .pane-body.wide { max-width: 860px; }
+
+  /* ---- snapshot history --------------------------------------------------- */
+
+  .snaps { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+  .snap {
+    display: grid;
+    /* Named areas, not auto-flow: an item with a definite grid-row is placed BEFORE the auto-flow
+       items, so giving the buttons a row span sent them to column 1 and pushed the date right. */
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    grid-template-areas:
+      "when size tag actions"
+      "what size tag actions";
+    gap: 2px 14px;
+    align-items: center;
+    padding: 10px 12px;
+    background: var(--surface);
+  }
+  .snap:hover { background: var(--raised); }
+  .snap .when { grid-area: when; font: 12.5px/1.4 var(--ui); color: var(--ink); }
+  .snap .what { grid-area: what; font: 11.5px/1.4 var(--mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .snap .size { grid-area: size; font: 12px/1 var(--mono); color: var(--ink-2); white-space: nowrap; text-align: right; }
+  .snap .tag {
+    font: 600 10px/1 var(--ui); text-transform: uppercase; letter-spacing: .06em;
+    grid-area: tag; padding: 3px 6px; border-radius: 3px; background: var(--raised); color: var(--ink-3);
+    border: 1px solid var(--line); white-space: nowrap;
+  }
+  .snap button { padding: 4px 9px; font-size: 12px; }
+  .snap-actions { grid-area: actions; display: flex; gap: 6px; }
+
+  .section { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: var(--r-sm); background: #11151f; }
+  .section h3 { margin: 0; font: 600 12px/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); }
+  .where { margin: 0 0 10px; gap: 10px; }
+  .mono-path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hist-title { margin: 0 0 6px; font: 600 12px/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); }
 
   /* ---- console ---------------------------------------------------------- */
 
@@ -628,6 +663,7 @@
 
       <div class="srv-tabs" role="tablist" aria-label="Server sections">
         <button role="tab" data-pane="console" aria-selected="true">Console</button>
+        <button role="tab" data-pane="backups" aria-selected="false">Backups</button>
         <button role="tab" data-pane="settings" aria-selected="false">Settings</button>
       </div>
 
@@ -662,6 +698,10 @@
           <input id="cmd" placeholder="Send a server command — try list" autocomplete="off" aria-label="Server command">
           <button id="bSend">Send</button>
         </div>
+      </div>
+
+      <div class="pane pane-scroll" id="paneBackups">
+        <div class="pane-body wide" id="backupsBody"></div>
       </div>
 
       <div class="pane pane-scroll" id="paneSettings">
@@ -919,15 +959,22 @@ function ask(opts) {
     });
   }
 
+  // One text box serves two jobs: typing a name to confirm something destructive, and answering a
+  // question that needs a value. They never appear together, so they share the field rather than
+  // the dialog growing a second one that is hidden nine times out of ten.
   const typeWrap = $('#dlgTypeWrap');
   const typeBox = $('#dlgType');
-  typeWrap.hidden = !opts.typeToConfirm;
-  typeBox.value = '';
+  typeWrap.hidden = !opts.typeToConfirm && !opts.input;
+  typeBox.value = opts.input ? (opts.input.value || '') : '';
+  typeBox.placeholder = opts.input ? (opts.input.placeholder || '') : '';
   if (opts.typeToConfirm) $('#dlgTypeLabel').textContent = 'Type ' + opts.typeToConfirm + ' to confirm';
+  else if (opts.input) $('#dlgTypeLabel').textContent = opts.input.label || '';
 
   const ok = $('#dlgOk');
   ok.textContent = opts.confirmLabel || 'Confirm';
   ok.className = opts.danger ? 'danger' : 'primary';
+  // Nothing to cancel when the dialog is telling you something rather than asking.
+  $('#dlgCancel').hidden = Boolean(opts.tellOnly);
 
   const check = () => { ok.disabled = Boolean(opts.typeToConfirm) && typeBox.value !== opts.typeToConfirm; };
   check();
@@ -958,14 +1005,14 @@ function ask(opts) {
     dlg.addEventListener('cancel', onCancel);
     ok.onclick = () => {
       const picked = choiceBox.querySelector('input:checked');
-      done({ choice: picked ? picked.value : null });
+      done({ choice: picked ? picked.value : null, text: typeBox.value.trim() });
     };
     $('#dlgCancel').onclick = () => done(null);
     typeBox.onkeydown = (e) => {
       if (e.key === 'Enter' && !ok.disabled) { e.preventDefault(); ok.click(); }
     };
     dlg.showModal();
-    (opts.typeToConfirm ? typeBox : ok).focus();
+    (opts.typeToConfirm || opts.input ? typeBox : ok).focus();
   });
 }
 
@@ -988,6 +1035,7 @@ function showPane(pane) {
   for (const b of $$('.srv-tabs [data-pane]')) b.setAttribute('aria-selected', String(b.dataset.pane === pane));
   for (const el of $$('.pane')) el.toggleAttribute('data-active', el.id === 'pane' + pane[0].toUpperCase() + pane.slice(1));
   if (pane === 'settings') renderServerSettings();
+  if (pane === 'backups') renderBackups();
   // Scroll position is not kept while a pre is hidden, so the console has to be put back where it
   // was - and "at the bottom" is where it was for anyone who had not scrolled up.
   if (pane === 'console' && state.atBottom) {
@@ -1397,6 +1445,7 @@ function select(name) {
   show('server');
   // The settings pane caches which server it drew, so a different one must not inherit it.
   $('#settingsBody').dataset.for = '';
+  $('#backupsBody').dataset.for = '';
   renderServer(state.rows.find((r) => r.name === name));
   showPane(state.pane);
   renderLog();
@@ -1545,6 +1594,360 @@ $('#bRestart').onclick = act('restart');
  * the core cannot drift about what exists or what a field accepts. The server reads this file once
  * at boot, so anything changed while it is running is announced as taking effect on restart.
  */
+// ---------------------------------------------------------------- backups ---
+
+const STAMP = new Intl.DateTimeFormat(undefined, {
+  month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+});
+
+/** Seconds are noise on something taken minutes apart at most; the age beside it carries the rest. */
+function stamp(iso) {
+  return STAMP.format(new Date(iso));
+}
+
+function ago(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return '';
+  // A file dated in the future is a clock that moved, not a backup from tomorrow. Saying nothing
+  // beats "in -3 hours", and the absolute timestamp beside it is still true.
+  if (ms < 0) return '';
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ago';
+  const d = Math.floor(h / 24);
+  return d + (d === 1 ? ' day ago' : ' days ago');
+}
+
+const AUTO_INTERVALS = [
+  { label: 'Every hour', schedule: { kind: 'hourly', every: 1 } },
+  { label: 'Every 6 hours', schedule: { kind: 'hourly', every: 6 } },
+  { label: 'Every 12 hours', schedule: { kind: 'hourly', every: 12 } },
+  { label: 'Daily at 03:00', schedule: { kind: 'daily', at: '03:00' } },
+  { label: 'Daily at 05:00', schedule: { kind: 'daily', at: '05:00' } },
+  { label: 'Weekly, Sunday 03:00', schedule: { kind: 'weekly', day: 'SUN', at: '03:00' } },
+];
+
+/**
+ * What a snapshot puts back, in a sentence someone will read.
+ *
+ * A full snapshot lists sixteen members, and spelling them all out filled the confirm dialog with
+ * a wall of filenames - which is the opposite of what a dialog asking "are you sure" is for. The
+ * first few name the things that matter; the count carries the rest.
+ */
+function describeMembers(members) {
+  if (!members || !members.length) return 'everything the snapshot holds';
+  if (members.length <= 4) return members.join(', ');
+  const rest = members.length - 3;
+  return members.slice(0, 3).join(', ') + ' and ' + rest + ' other files and folders';
+}
+
+function sameSchedule(a, b) {
+  if (!a || !b || a.kind !== b.kind) return false;
+  return (a.every ?? null) === (b.every ?? null)
+    && (a.at ?? null) === (b.at ?? null)
+    && (a.day ?? null) === (b.day ?? null);
+}
+
+/**
+ * Move where future backups are written.
+ *
+ * Deliberately does NOT move what is already there. Snapshots run to gigabytes and live on drives
+ * chosen for having room; copying them as a side effect of changing a preference is a long, silent,
+ * failable operation nobody asked for. So the old ones stay put and the dialog says so - the
+ * alternative is a history that looks like it lost everything.
+ *
+ * The path is resolved when mcctl starts, for the reason spelled out in paths.mjs, so this takes
+ * effect on the next launch rather than pretending to apply now.
+ */
+async function changeBackupsLocation(current) {
+  let chosen = null;
+  if (desktop) {
+    chosen = await desktop.pickFolder('Where should mcctl keep backups?');
+    if (!chosen) return;
+  } else {
+    const answer = await ask({
+      title: 'Where should backups be kept?',
+      text: 'This is where every server writes its snapshots. Backups already taken stay where they '
+        + 'are - nothing is moved - so this history will look empty until new ones are made.',
+      input: { label: 'Full path to a folder', value: '', placeholder: current },
+      confirmLabel: 'Use this folder',
+    });
+    if (!answer || !answer.text) return;
+    chosen = answer.text;
+  }
+
+  try {
+    const out = await post('/settings', { backupsDir: chosen });
+    if (!out.restartRequired) {
+      toast('Backups are already kept there.', 'good');
+      return;
+    }
+    await ask({
+      title: 'Restart mcctl to use the new folder',
+      text: 'New backups will be written to ' + out.backupsDir + '. The snapshots already taken '
+        + 'stay where they are - nothing was moved or deleted - so this history will look empty '
+        + 'until the next backup runs. mcctl reads this path once at startup, so the change takes '
+        + 'effect the next time it launches.',
+      confirmLabel: 'Got it',
+      tellOnly: true,
+    });
+  } catch (e) {
+    toast(e.message, 'bad');
+  }
+}
+
+/**
+ * Snapshots for the selected server.
+ *
+ * Restore is the one action here that can destroy something, so it is the one with friction:
+ * refused outright while the server is running, and gated behind typing the server's name
+ * otherwise. The core refuses too - a page that only disables a button is not a guard.
+ */
+async function renderBackups(opts) {
+  const force = Boolean(opts && opts.force);
+  const row = state.rows.find((r) => r.name === state.current);
+  const body = $('#backupsBody');
+  if (!row) { body.textContent = ''; return; }
+  if (!force && body.dataset.for === row.name && body.childElementCount) return;
+  body.dataset.for = row.name;
+
+  let data;
+  try {
+    data = await api('/instances/' + encodeURIComponent(row.name) + '/backups');
+  } catch (e) {
+    body.textContent = '';
+    const bad = document.createElement('div');
+    bad.className = 'bad';
+    bad.textContent = e.message;
+    body.append(bad);
+    return;
+  }
+  // The selection can move while the request is in flight; the answer to the old question is not
+  // an answer to the new one.
+  if (body.dataset.for !== row.name) return;
+  body.textContent = '';
+
+  const base = '/instances/' + encodeURIComponent(row.name) + '/backups';
+
+  // ---- take one now ---------------------------------------------------------
+  const now = document.createElement('div');
+  now.className = 'section';
+  const nowTitle = document.createElement('h3');
+  nowTitle.textContent = 'Back up now';
+  const nowRow = document.createElement('div');
+  nowRow.className = 'row';
+  const scope = document.createElement('select');
+  for (const sc of data.scopes) {
+    const o = document.createElement('option');
+    o.value = sc;
+    o.textContent = sc;
+    o.selected = sc === 'standard';
+    scope.append(o);
+  }
+  scope.style.maxWidth = '150px';
+  const go = document.createElement('button');
+  go.className = 'primary';
+  go.textContent = 'Back up now';
+  nowRow.append(scope, go);
+  const nowNote = document.createElement('div');
+  nowNote.className = 'hint';
+  nowNote.textContent = data.running
+    ? 'standard covers plugins, worlds and config. Safe while running - the one file the server holds locked is left out.'
+    : 'standard covers plugins, worlds and config. full is everything except caches and logs.';
+  now.append(nowTitle, nowRow, nowNote);
+  body.append(now);
+
+  go.onclick = async () => {
+    go.disabled = true;
+    const was = nowNote.textContent;
+    nowNote.textContent = 'Archiving. Large worlds take a moment.';
+    try {
+      const out = await post(base, { scope: scope.value });
+      toast('Saved ' + out.created + '.', 'good');
+      await renderBackups({ force: true });
+    } catch (e) {
+      toast(e.message, 'bad');
+      go.disabled = false;
+      nowNote.textContent = was;
+    }
+  };
+
+  // ---- on a schedule --------------------------------------------------------
+  const auto = document.createElement('div');
+  auto.className = 'section';
+  const autoTitle = document.createElement('h3');
+  autoTitle.textContent = 'Automatic backups';
+
+  const autoRow = document.createElement('div');
+  autoRow.className = 'row';
+  const onOff = document.createElement('input');
+  onOff.type = 'checkbox';
+  onOff.style.width = 'auto';
+  onOff.checked = Boolean(data.auto);
+  const onOffLabel = document.createElement('label');
+  onOffLabel.className = 'row';
+  onOffLabel.style.cursor = 'pointer';
+  onOffLabel.append(onOff, document.createTextNode('On'));
+
+  const every = document.createElement('select');
+  for (const opt of AUTO_INTERVALS) {
+    const o = document.createElement('option');
+    o.value = opt.label;
+    o.textContent = opt.label;
+    o.selected = data.auto ? sameSchedule(opt.schedule, data.auto.schedule) : opt.label === 'Daily at 03:00';
+    every.append(o);
+  }
+  every.style.maxWidth = '190px';
+
+  const keepLabel = document.createElement('span');
+  keepLabel.className = 'hint';
+  keepLabel.textContent = 'keeping';
+  const keep = document.createElement('input');
+  keep.type = 'number';
+  keep.min = '1';
+  keep.max = '365';
+  keep.value = String((data.auto && data.auto.keep) || 7);
+  keep.style.maxWidth = '68px';
+  const keepAfter = document.createElement('span');
+  keepAfter.className = 'hint';
+  keepAfter.textContent = 'of them';
+
+  const apply = document.createElement('button');
+  apply.textContent = 'Apply';
+  autoRow.append(onOffLabel, every, keepLabel, keep, keepAfter, apply);
+
+  const autoState = document.createElement('div');
+  autoState.className = 'hint';
+  autoState.textContent = data.auto
+    ? 'Held by Windows Task Scheduler. Last run: ' + (data.auto.lastResult || 'unknown')
+      + '. Next: ' + (data.auto.nextRun || 'unknown') + '.'
+    : 'Runs through Windows Task Scheduler, so it happens whether or not this window is open - while '
+      + 'you are signed in, screen locked included, but not after you sign out.';
+  auto.append(autoTitle, autoRow, autoState);
+  body.append(auto);
+
+  apply.onclick = async () => {
+    apply.disabled = true;
+    try {
+      const chosen = AUTO_INTERVALS.find((o) => o.label === every.value);
+      await post(base + '/auto', onOff.checked
+        ? { enabled: true, schedule: chosen.schedule, keep: Number(keep.value) }
+        : { enabled: false });
+      toast(onOff.checked ? 'Automatic backups scheduled.' : 'Automatic backups turned off.', 'good');
+      await renderBackups({ force: true });
+    } catch (e) {
+      toast(e.message, 'bad');
+      apply.disabled = false;
+    }
+  };
+
+  // ---- what is already there ------------------------------------------------
+  const hist = document.createElement('div');
+  const histTitle = document.createElement('h3');
+  histTitle.className = 'hist-title';
+  histTitle.textContent = 'History (' + data.snapshots.length + ')';
+  const where = document.createElement('div');
+  where.className = 'row where';
+  const wherePath = document.createElement('span');
+  wherePath.className = 'hint mono-path';
+  wherePath.textContent = data.dir;
+  const change = document.createElement('button');
+  change.className = 'ghost';
+  change.type = 'button';
+  change.textContent = 'Change';
+  change.title = 'Where backups are kept, for every server';
+  change.style.cssText = 'padding:3px 8px;font-size:12px;flex:none';
+  where.append(wherePath, change);
+  change.onclick = () => changeBackupsLocation(data.root);
+  hist.append(histTitle, where);
+
+  if (!data.snapshots.length) {
+    const none = document.createElement('div');
+    none.className = 'hint';
+    none.textContent = 'Nothing here yet. Reset and delete both take one automatically before they run, '
+      + 'so this fills up on its own.';
+    hist.append(none);
+  } else {
+    const list = document.createElement('div');
+    list.className = 'snaps';
+    for (const snap of data.snapshots) {
+      const el = document.createElement('div');
+      el.className = 'snap';
+      const when = document.createElement('div');
+      when.className = 'when';
+      const age = ago(snap.mtime);
+      when.textContent = stamp(snap.mtime) + (age ? '  \u00b7  ' + age : '');
+      const what = document.createElement('div');
+      what.className = 'what';
+      what.textContent = snap.name;
+      const size = document.createElement('div');
+      size.className = 'size';
+      size.textContent = snap.sizeHuman;
+      const tag = document.createElement('div');
+      tag.className = 'tag';
+      tag.textContent = snap.scope;
+      const actions = document.createElement('div');
+      actions.className = 'snap-actions';
+      const restore = document.createElement('button');
+      restore.textContent = 'Restore';
+      restore.disabled = data.running;
+      restore.title = data.running
+        ? 'Stop the server first'
+        : 'Extract this snapshot back over the server files';
+      const drop = document.createElement('button');
+      drop.className = 'danger';
+      drop.textContent = 'Delete';
+      actions.append(restore, drop);
+      el.append(when, size, tag, actions, what);
+      list.append(el);
+
+      restore.onclick = async () => {
+        const covers = describeMembers(snap.members);
+        const ok = await ask({
+          title: 'Restore into ' + row.name + '?',
+          text: 'This puts back ' + covers + ' as they were on '
+            + new Date(snap.mtime).toLocaleString() + '. Anything changed since then is overwritten, and '
+            + 'restoring is not itself undoable - take a backup first if you are unsure.',
+          confirmLabel: 'Restore',
+          danger: true,
+          typeToConfirm: row.name,
+        });
+        if (!ok) return;
+        const note = toast('Restoring ' + snap.name + '.');
+        try {
+          await post(base + '/restore', { snapshot: snap.name });
+          note.remove();
+          toast('Restored ' + snap.name + '.', 'good');
+        } catch (e) {
+          note.remove();
+          toast(e.message, 'bad');
+        }
+      };
+
+      drop.onclick = async () => {
+        const ok = await ask({
+          title: 'Delete this snapshot?',
+          text: snap.name + ', ' + snap.sizeHuman + '. What it holds goes with it.',
+          confirmLabel: 'Delete snapshot',
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          await post(base + '/delete', { snapshot: snap.name });
+          toast('Deleted ' + snap.name + '.', 'good');
+          await renderBackups({ force: true });
+        } catch (e) {
+          toast(e.message, 'bad');
+        }
+      };
+    }
+    hist.append(list);
+  }
+  body.append(hist);
+}
+
 /**
  * The server's own settings, in a tab.
  *
@@ -1777,6 +2180,8 @@ async function editServer(row) {
   ok.textContent = 'Save changes';
   ok.className = 'primary';
   ok.disabled = false;
+  // The <dialog> is shared, so anything ask() may have hidden has to be put back.
+  $('#dlgCancel').hidden = false;
 
   const mine = ++askSeq;
   const result = await new Promise((resolve) => {
