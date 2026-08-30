@@ -204,6 +204,19 @@ export async function restoreSnapshot(inst, snapshot) {
   return { restored: snapshot.name, into: inst.dir, members: snapshot.members }
 }
 
+/**
+ * Delete one snapshot, and the manifest that describes it.
+ *
+ * <p>Both or neither: a manifest without its archive is a row in the history that cannot be
+ * restored, and an archive without its manifest loses the record of what is inside it.
+ */
+export function removeSnapshot(name, ref) {
+  const snap = resolveSnapshot(name, ref)
+  fs.rmSync(snap.path, { force: true })
+  fs.rmSync(snap.path.replace(/\.tar\.gz$/, '.json'), { force: true })
+  return { removed: snap.name, size: snap.size }
+}
+
 export function pruneSnapshots(name, keep) {
   const all = listSnapshots(name)
   const remove = all.slice(keep)
