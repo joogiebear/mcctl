@@ -24,24 +24,50 @@ const { spawnSync } = require('node:child_process')
  *
  * <p>`npm run verify` checks the finished artifact, and is the belt to this hook's braces.
  */
+/**
+ * Where rcedit is, according to whichever electron-builder this is.
+ *
+ * <p>There is no public API for this, and the internal one moved between 24 and 26 -
+ * `getSignVendorPath` in codeSign/windowsCodeSign became `getRceditBundle` in toolsets/windows. So
+ * this tries what it knows and returns null when it recognises nothing, rather than pretending a
+ * missing resolver is a missing toolchain.
+ */
+async function findRcedit(context) {
+  // electron-builder 25+
+  try {
+    const { getRceditBundle } = require('app-builder-lib/out/toolsets/windows')
+    if (typeof getRceditBundle === 'function') {
+      const bundle = await getRceditBundle(context.packager.config.toolsets?.winCodeSign)
+      return bundle?.x64 ?? null
+    }
+  } catch {
+    /* fall through to the older shape */
+  }
+  // electron-builder 24
+  try {
+    const { getSignVendorPath } = require('app-builder-lib/out/codeSign/windowsCodeSign')
+    if (typeof getSignVendorPath === 'function') return path.join(await getSignVendorPath(), 'rcedit-x64.exe')
+  } catch {
+    /* neither shape is available */
+  }
+  return null
+}
+
 exports.default = async function afterPack(context) {
   // ---- 1. the icon toolchain has to exist, or the icon is silently skipped -------------------
   if (context.packager.platformSpecificBuildOptions.signAndEditExecutable !== false) {
-    let vendor = null
-    try {
-      const { getSignVendorPath } = require('app-builder-lib/out/codeSign/windowsCodeSign')
-      vendor = await getSignVendorPath()
-    } catch (err) {
-      throw new Error(
-        "could not resolve electron-builder's winCodeSign toolchain, which is what applies the " +
-          `app icon to mcctl.exe: ${err.message}. ` +
-          'See desktop/build/README.md for the fix. Nothing has been published.',
+    const rcedit = await findRcedit(context)
+    if (rcedit == null) {
+      // Not knowing is not the same as knowing it is broken, and a guard that fails a good build
+      // because electron-builder moved a private function is worse than no guard. `npm run verify`
+      // checks the finished executable for the icon bytes themselves and is the real authority.
+      console.warn(
+        '  warn rcedit could not be located through any known electron-builder internal, so the\n' +
+          '       icon pre-flight was skipped. Run "npm run verify" after the build.',
       )
-    }
-    const rcedit = path.join(vendor, 'rcedit-x64.exe')
-    if (!fs.existsSync(rcedit)) {
+    } else if (!fs.existsSync(rcedit)) {
       throw new Error(
-        `rcedit is missing from ${vendor}, so the app icon would not reach mcctl.exe and this ` +
+        `rcedit is missing from ${rcedit}, so the app icon would not reach mcctl.exe and this ` +
           "build would ship Electron's default icon without failing. " +
           'See desktop/build/README.md. Nothing has been published.',
       )
