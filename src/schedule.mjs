@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-import { DATA_ROOT, ROOT } from './paths.mjs'
+import { DATA_ROOT, ROOT, RUN_DIR } from './paths.mjs'
 import { readJson, writeJson, fail, validateName } from './util.mjs'
 
 /**
@@ -69,6 +69,72 @@ const TASK_RESULT = {
   267045: 'queued',
   2147750687: 'already running, so this run was skipped',
   2147943645: 'not run - the machine was not logged in',
+}
+
+/** Days schtasks accepts for /SC WEEKLY, in the order a week is usually drawn. */
+export const DAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
+
+export const SCHEDULE_KINDS = ['minutes', 'hourly', 'daily', 'weekly', 'onlogon']
+
+/**
+ * Check a schedule before Windows sees it.
+ *
+ * <p>schtasks is not a validator. Handed a time it cannot parse it fails loudly, which is fine; but
+ * handed `/MO 0` or `/MO 9999` it can create a task that simply never fires, and a backup schedule
+ * that silently never runs is the worst outcome this module has. Everything is therefore checked
+ * and clamped here, once, so the panel and the CLI cannot disagree about what is allowed.
+ *
+ * <p>Returns a new object rather than editing the caller's: what gets stored should be exactly what
+ * was validated, not whatever shape arrived over HTTP.
+ */
+export function normaliseSchedule(input) {
+  const kind = String(input?.kind ?? '')
+  if (!SCHEDULE_KINDS.includes(kind)) {
+    fail(`unknown schedule kind "${kind}" - expected one of ${SCHEDULE_KINDS.join(', ')}`)
+  }
+  if (kind === 'onlogon') return { kind }
+
+  if (kind === 'minutes' || kind === 'hourly') {
+    const every = Number(input.every)
+    if (!Number.isInteger(every) || every < 1) fail('the interval must be a whole number of at least 1')
+    // schtasks tops out at 1439 minutes and 23 hours for /MO; past that the task is created and
+    // never fires, which looks exactly like a working schedule until the night it matters.
+    const max = kind === 'minutes' ? 1439 : 23
+    if (every > max) fail(`the largest ${kind} interval Windows accepts is ${max}`)
+    return { kind, every }
+  }
+
+  const at = String(input.at ?? '')
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(at)) fail(`"${at}" is not a time - use HH:MM on a 24 hour clock`)
+  if (kind === 'daily') return { kind, at }
+
+  const day = String(input.day ?? '').toUpperCase()
+  if (!DAYS.includes(day)) fail(`"${input.day}" is not a day - use one of ${DAYS.join(', ')}`)
+  return { kind, day, at }
+}
+
+/**
+ * Check an action, and keep only the fields that action actually uses.
+ *
+ * <p>Whatever else arrived is dropped rather than stored. schedules.json is a file that causes code
+ * to run on a timer; it should hold the five things a task can be and nothing a caller invented.
+ */
+export function normaliseAction(input) {
+  const type = String(input?.type ?? '')
+  if (!Object.hasOwn(ACTIONS, type)) {
+    fail(`unknown action "${type}" - expected one of ${Object.keys(ACTIONS).join(', ')}`)
+  }
+  if (type === 'command') {
+    const line = String(input.line ?? '').trim()
+    if (!line) fail('a command is required')
+    if (line.length > 400) fail('that command is too long for a console line')
+    return { type, line }
+  }
+  if (type === 'backup') {
+    const keep = Number(input.keep)
+    return { type, keep: Number.isInteger(keep) && keep > 0 ? Math.min(keep, 365) : null }
+  }
+  return { type }
 }
 
 export function describeResult(code) {
@@ -173,31 +239,90 @@ function schtasks(args) {
   return res.stdout
 }
 
-export function create({ instance, name, action, schedule, enabled = true }) {
+/**
+ * Put the trigger into Windows, or replace the one already there.
+ *
+ * <p>`/F` overwrites by name, which is what makes editing a task possible without it becoming a
+ * different task: the id stays, so the run history written against it stays attached.
+ */
+function writeWindowsTask(id, task) {
+  const shim = writeShim(id)
+  schtasks(['/Create', '/TN', `${TASK_FOLDER}\\${id}`, '/TR', shim, ...triggerArgs(task.schedule), '/F'])
+  // /Create always makes an enabled task, so a disabled one is disabled immediately afterwards
+  // rather than being created in the state it is meant to be in. Windows offers no way to do the
+  // latter through schtasks.
+  if (!task.enabled) schtasks(['/Change', '/TN', `${TASK_FOLDER}\\${id}`, '/DISABLE'])
+  return shim
+}
+
+/**
+ * Which part of the app created a task, when it was not a person.
+ *
+ * <p>The Backups tab owns exactly one task per server - the automatic backup behind its toggle -
+ * and has to find it again later. Finding it by "any task on this server whose action is backup"
+ * was wrong the moment the Scheduler tab let people make backup tasks of their own: the lookup
+ * matched whichever sorted first by name, so turning automatic backups off deleted a task the user
+ * had written, and turning them on left two.
+ */
+export const OWNER_BACKUPS = 'backups'
+
+export function create({ instance, name, action, schedule, enabled = true, owner = null }) {
   validateName(instance)
-  if (!ACTIONS[action?.type]) fail(`unknown action "${action?.type}"`)
-  if (action.type === 'command' && !String(action.line || '').trim()) fail('a command is required')
+  const cleanAction = normaliseAction(action)
+  const cleanSchedule = normaliseSchedule(schedule)
 
   const data = load()
   // Readable in Task Scheduler next to everything else on the machine, and unique without a clock.
-  const base = `${instance}-${action.type}`
+  // validateName has already restricted the instance to characters that are safe in a task name,
+  // a path segment and a filename, which is what the id becomes.
+  const base = `${instance}-${cleanAction.type}`
   let id = base
   for (let n = 2; data.tasks[id]; n++) id = `${base}-${n}`
 
-  const shim = writeShim(id)
-  schtasks(['/Create', '/TN', `${TASK_FOLDER}\\${id}`, '/TR', shim, ...triggerArgs(schedule), '/F'])
-  if (!enabled) schtasks(['/Change', '/TN', `${TASK_FOLDER}\\${id}`, '/DISABLE'])
-
-  data.tasks[id] = {
+  const task = {
     instance,
-    name: name || ACTIONS[action.type].label,
-    action,
-    schedule,
-    enabled,
+    name: String(name || ACTIONS[cleanAction.type].label).slice(0, 60),
+    action: cleanAction,
+    schedule: cleanSchedule,
+    enabled: Boolean(enabled),
+    owner: owner || null,
     createdAt: new Date().toISOString(),
   }
+
+  writeWindowsTask(id, task)
+  // Written to disk only once Windows has accepted it. A definition mcctl believes in that has no
+  // trigger behind it is a schedule that silently never runs; the reverse - a trigger with no
+  // definition - fails loudly on its next fire, which is the better half of the trade.
+  data.tasks[id] = task
   writeJson(TASKS_FILE(), data)
-  return { id, ...data.tasks[id] }
+  return { id, ...task }
+}
+
+/**
+ * Change an existing task in place.
+ *
+ * <p>Remove-and-recreate would have been less code, but it hands the task a new id, and the id is
+ * what the run log is keyed by - so editing the time on a nightly backup would have orphaned every
+ * record of it having ever run.
+ */
+export function update(id, patch) {
+  const data = load()
+  if (!Object.hasOwn(data.tasks, id)) fail(`no scheduled task "${id}"`)
+  const current = data.tasks[id]
+  const task = {
+    ...current,
+    // owner is deliberately not patchable: it says who is responsible for a task, and letting an
+    // edit claim or disown one would put the Backups tab's toggle back in the business of guessing.
+    name: patch.name === undefined ? current.name : String(patch.name || '').slice(0, 60),
+    action: patch.action === undefined ? current.action : normaliseAction(patch.action),
+    schedule: patch.schedule === undefined ? current.schedule : normaliseSchedule(patch.schedule),
+    enabled: patch.enabled === undefined ? current.enabled : Boolean(patch.enabled),
+  }
+  if (!task.name) task.name = ACTIONS[task.action.type].label
+  writeWindowsTask(id, task)
+  data.tasks[id] = task
+  writeJson(TASKS_FILE(), data)
+  return { id, ...task }
 }
 
 export function setEnabled(id, enabled) {
@@ -211,13 +336,26 @@ export function setEnabled(id, enabled) {
 
 export function remove(id) {
   const data = load()
+  // Checked, like every other id-addressed call here. Without it a mistyped id reported success
+  // while the real task kept firing, and the id went on to build a path that rmSync would follow.
+  if (!Object.hasOwn(data.tasks, id)) fail(`no scheduled task "${id}"`)
+
   // Windows first: a definition without a trigger is inert, a trigger without a definition fires
   // into nothing and fails at 3am.
-  try {
-    schtasks(['/Delete', '/TN', `${TASK_FOLDER}\\${id}`, '/F'])
-  } catch {
-    /* already gone from the scheduler, which is the state we were heading for */
+  const res = spawnSync('schtasks', ['/Delete', '/TN', `${TASK_FOLDER}\\${id}`, '/F'],
+    { encoding: 'utf8', windowsHide: true, timeout: 30000 })
+  const said = `${res.stderr || ''}${res.stdout || ''}`
+  // "It was not there" is the state we were heading for anyway. Anything else - schtasks missing
+  // from PATH, a timeout, access denied - is a real failure, and swallowing it used to mean
+  // deleting mcctl's only record of a task that Windows still holds and still runs.
+  const alreadyGone = /cannot find|does not exist|ERROR: The system cannot find/i.test(said)
+  if (res.error && res.error.code !== 'ENOENT') {
+    fail(`could not reach schtasks to delete "${id}": ${res.error.message}`)
   }
+  if (res.status !== 0 && !alreadyGone) {
+    fail(`Windows would not delete the task for "${id}", so it has been left alone: ${said.trim()}`)
+  }
+
   fs.rmSync(path.join(DATA_ROOT, 'tasks', `${id}.cmd`), { force: true })
   delete data.tasks[id]
   writeJson(TASKS_FILE(), data)
@@ -230,6 +368,109 @@ export function runNow(id) {
   if (!Object.hasOwn(data.tasks, id)) fail(`no scheduled task "${id}"`)
   schtasks(['/Run', '/TN', `${TASK_FOLDER}\\${id}`])
   return { id, started: true }
+}
+
+/**
+ * What actually happened, the last time each of these fired.
+ *
+ * <p>Task Scheduler records one exit code per task and nothing else, which answers "did it work"
+ * but never "what did it do". mcctl writes its own line per run into the instance's run directory,
+ * and this reads it back so the panel can show a backup's filename and size next to the task that
+ * produced it rather than the number 0.
+ *
+ * <p>Two formats are parsed. The original line was `time \t ok \t type \t detail` and did not say
+ * WHICH task wrote it, so an instance with two backup tasks could not tell them apart; the id was
+ * added as a second field. Old lines are still read - a log written before the change is still the
+ * only record of what ran that night, and dropping it would be worse than showing it unattributed.
+ */
+export function recentRuns(instance, limit = 40) {
+  validateName(instance)
+  let text
+  try {
+    text = fs.readFileSync(path.join(RUN_DIR, instance, 'tasks.log'), 'utf8')
+  } catch {
+    return []
+  }
+  const rows = []
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    const parts = line.split('\t')
+    if (parts.length < 3) continue
+    // Old lines put the outcome where new ones put the task id. An id is always
+    // "<instance>-<action>", so it can never be mistaken for one of the outcome words.
+    const legacy = parts[1] === 'ok' || parts[1] === 'FAILED'
+    const at = parts[0]
+    const id = legacy ? null : parts[1]
+    const raw = legacy ? parts[1] : parts[2]
+    const status = raw === 'ok' || raw === 'skipped' ? raw : 'FAILED'
+    const action = legacy ? parts[2] : parts[3]
+    // The detail is free text and may itself contain tabs, so it is everything that is left.
+    const detail = parts.slice(legacy ? 3 : 4).join('\t')
+    if (Number.isNaN(Date.parse(at))) continue
+    rows.push({ at, id, status, action, detail })
+  }
+  return rows.reverse().slice(0, limit)
+}
+
+/**
+ * Follow an instance that has been renamed.
+ *
+ * <p>Without this the tasks kept their old instance name and went on firing at a server that no
+ * longer answered to it - every night, into a log, failing, with nothing in the panel to say why.
+ *
+ * <p>The ids move too. An id is `<instance>-<action>`, and leaving `survival-backup` attached to a
+ * server now called `smp` would be wrong in Task Scheduler, in `mcctl task list`, and in the panel.
+ * Lines already in the run log keep the old id, which is correct: that is what the task was called
+ * when it ran.
+ */
+export function renameInstance(oldName, newName) {
+  const data = load()
+  const moved = []
+  for (const [id, task] of Object.entries(data.tasks)) {
+    if (task.instance !== oldName) continue
+    const suffix = id.startsWith(`${oldName}-`) ? id.slice(oldName.length + 1) : task.action.type
+    let next = `${newName}-${suffix}`
+    for (let n = 2; next !== id && Object.hasOwn(data.tasks, next); n++) next = `${newName}-${suffix}-${n}`
+    moved.push({ from: id, to: next, task: { ...task, instance: newName } })
+  }
+  if (!moved.length) return { moved: 0 }
+
+  // The new trigger goes in before the old one comes out. The other order leaves a window where a
+  // rename that fails half way has removed the schedule and put nothing back.
+  for (const m of moved) {
+    writeWindowsTask(m.to, m.task)
+    if (m.to !== m.from) {
+      try {
+        schtasks(['/Delete', '/TN', `${TASK_FOLDER}\\${m.from}`, '/F'])
+      } catch {
+        /* the new one is in place and is what runs; a stale trigger is cleaned up below */
+      }
+      fs.rmSync(path.join(DATA_ROOT, 'tasks', `${m.from}.cmd`), { force: true })
+      delete data.tasks[m.from]
+    }
+    data.tasks[m.to] = m.task
+  }
+  writeJson(TASKS_FILE(), data)
+  return { moved: moved.length }
+}
+
+/**
+ * Drop every task belonging to an instance that is being deleted.
+ *
+ * <p>A trigger outliving its server is the worst kind of leftover: it fires forever, fails every
+ * time, and turns up months later in Task Scheduler with nothing to explain it.
+ */
+export function removeForInstance(name) {
+  const data = load()
+  const ids = Object.entries(data.tasks).filter(([, t]) => t.instance === name).map(([id]) => id)
+  for (const id of ids) {
+    try {
+      remove(id)
+    } catch {
+      /* one stuck task should not stop an instance being deleted */
+    }
+  }
+  return { removed: ids.length }
 }
 
 /**
