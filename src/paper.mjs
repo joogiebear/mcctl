@@ -94,13 +94,14 @@ export async function resolveBuild(version, wanted = null) {
  * plausible and then fails at runtime with a class-loading error that says nothing about the real
  * cause. Verified before it is put in place, so a bad download never becomes a stored jar.
  */
-export async function fetchBuild(version, wanted = null, { force = false } = {}) {
+export async function fetchBuild(version, wanted = null, { force = false, onProgress = null } = {}) {
   const build = await resolveBuild(version, wanted)
   if (!build.url) fail(`Paper ${version} build ${build.build} publishes no server jar.`)
 
   fs.mkdirSync(JARS_DIR, { recursive: true })
   const dest = path.join(JARS_DIR, build.name)
   if (fs.existsSync(dest) && !force) {
+    onProgress?.({ received: build.size, total: build.size, cached: true })
     return { ...build, path: dest, cached: true }
   }
 
@@ -110,7 +111,16 @@ export async function fetchBuild(version, wanted = null, { force = false } = {})
 
   const hash = crypto.createHash('sha256')
   const source = Readable.fromWeb(res.body)
-  source.on('data', (chunk) => hash.update(chunk))
+  // The panel reports this to someone watching a progress bar, so it is measured from the bytes
+  // that actually arrive rather than estimated. A server jar is ~50MB on a home connection: long
+  // enough that silence reads as a hang.
+  let received = 0
+  const total = Number(res.headers.get('content-length')) || build.size || 0
+  source.on('data', (chunk) => {
+    hash.update(chunk)
+    received += chunk.length
+    onProgress?.({ received, total })
+  })
   await pipeline(source, fs.createWriteStream(tmp))
 
   const got = hash.digest('hex')
