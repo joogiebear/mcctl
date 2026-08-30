@@ -1,6 +1,6 @@
 {
   "name": "mcctl-desktop",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Desktop app for mcctl - a local Minecraft server dev platform",
   "main": "main.js",
@@ -59,7 +59,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "mcctl",
-      "artifactName": "mcctl-Setup-${version}.${ext}"
+      "artifactName": "mcctl-Setup-${version}.${ext}",
+      "allowElevation": false
     },
     "publish": [
       {

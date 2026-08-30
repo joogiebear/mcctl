@@ -179,6 +179,25 @@ ipcMain.handle('mcctl:saveSetup', async (_e, { dataRoot, instancesDir, separate 
     instancesDir: separate ? instancesDir : null,
   })
 
+  // Read it back before relaunching into it.
+  //
+  // The app resolves its data root once, at import, so the choice made here only survives via this
+  // file. If the write did not land - a roaming profile that is read-only, a sync client holding
+  // the file, anything - the relaunched app silently falls back to the default location and shows
+  // the wizard again, while the servers created in the meantime sit in a folder it no longer looks
+  // at. Failing here is recoverable; relaunching into a lost setting is not obviously anything.
+  const written = settings.load()
+  if (path.resolve(written.dataRoot ?? '') !== path.resolve(dataRoot)) {
+    return {
+      ok: false,
+      error:
+        `mcctl could not remember that location.\n\n` +
+        `It saved to ${settings.settingsFile()} but read back ` +
+        `${written.dataRoot ? `"${written.dataRoot}"` : 'nothing'}. ` +
+        `Check that file is writable, then try again.`,
+    }
+  }
+
   // The core resolves its locations once at import, so the new layout only takes effect on a fresh
   // start. Relaunching is honest about that rather than leaving a half-configured process running.
   app.relaunch({ args: process.argv.slice(1) })
