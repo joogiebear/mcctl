@@ -7,6 +7,19 @@ import { fail, stamp, humanBytes, writeJson, readJson, UserError } from './util.
 
 export const SCOPES = ['plugins', 'worlds', 'config', 'standard', 'full']
 
+/**
+ * Things that must never go into a snapshot.
+ *
+ * <p>`session.lock` is the one that matters. Minecraft holds it open exclusively for as long as the
+ * server runs, and bsdtar does not skip a file it cannot read - it gives up on the whole archive,
+ * exits 1, and leaves a zero-byte .tar.gz behind. So every snapshot of a running server produced
+ * nothing while reporting success.
+ *
+ * <p>Excluding it costs nothing: it is a lock, it is regenerated on the next start, and restoring
+ * a stale one would be actively wrong.
+ */
+const EXCLUDE_ARGS = ['--exclude', 'session.lock']
+
 const ROOT_CONFIG_FILES = [
   'server.properties',
   'bukkit.yml',
@@ -112,9 +125,21 @@ export async function createSnapshot(inst, { scope = 'standard', label = null, r
   const base = `${slug}${scope}_${stamp()}`
   const file = path.join(backupDir(inst.name), `${base}.tar.gz`)
 
-  const { stderr } = await runTar(['-czf', file, ...members], inst.dir)
+  const { stderr } = await runTar(['-czf', file, ...EXCLUDE_ARGS, ...members], inst.dir)
 
   const size = fs.statSync(file).size
+  // An empty archive is not a snapshot, and this one is load-bearing: rebuild and delete both take
+  // one "first" and both are safe only if it exists. bsdtar reports a locked file as exit 1, which
+  // is deliberately tolerated above because a hot snapshot legitimately skips things - so without
+  // this check a failure that produced nothing at all would be recorded as a successful backup.
+  if (size === 0) {
+    fs.rmSync(file, { force: true })
+    const said = stderr.trim().split(/\r?\n/)[0]
+    fail(
+      `snapshot of "${inst.name}" came out empty and has been discarded.` +
+        (said ? `\n  tar said: ${said}` : ''),
+    )
+  }
   const manifest = {
     instance: inst.name,
     scope,
