@@ -420,6 +420,58 @@
   .section h3 { margin: 0; font: 600 12px/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); }
   .where { margin: 0 0 10px; gap: 10px; }
   .mono-path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* ---- scheduled tasks ---------------------------------------------------- */
+
+  .tasks { display: grid; gap: 10px; }
+  .task {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "what state" "when when" "acts acts";
+    gap: 6px 14px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+  }
+  .task[data-off] { opacity: .62; }
+  .task .t-what { grid-area: what; font: 600 13.5px/1.3 var(--ui); color: var(--ink); }
+  .task .t-owner { font: 400 11px/1 var(--ui); color: var(--ink-3); letter-spacing: 0; }
+  .task .t-when { grid-area: when; font: 12px/1.5 var(--ui); color: var(--ink-3); }
+  .task .t-when code { font: 11.5px/1 var(--mono); color: var(--ink-2); }
+  .task .t-acts { grid-area: acts; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+  .task .t-acts button { padding: 4px 9px; font-size: 12px; }
+  .t-state {
+    grid-area: state; align-self: start;
+    font: 600 10px/1 var(--ui); text-transform: uppercase; letter-spacing: .06em;
+    padding: 4px 7px; border-radius: 3px; white-space: nowrap;
+    background: var(--raised); color: var(--ink-3); border: 1px solid var(--line);
+  }
+  .t-state[data-tone="good"] { color: #9ff0c4; border-color: #22503a; background: #14261d; }
+  .t-state[data-tone="bad"] { color: #ffc9c5; border-color: #4a2529; background: #2b1719; }
+  .t-state[data-tone="off"] { color: var(--ink-3); }
+
+  /* The form for a new or edited task. Fields appear and vanish with the kind of schedule
+     chosen, so it is a grid of rows rather than a fixed set of columns. */
+  .task-form { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--edge); border-radius: var(--r-sm); background: #11151f; }
+  .task-form .field { display: grid; gap: 5px; }
+  .task-form label { font: 600 11px/1 var(--ui); text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3); }
+  .task-form .when-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+  .task-form .when-row .field { flex: 0 0 auto; }
+
+  .runs { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+  .run {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    gap: 12px; align-items: baseline;
+    padding: 7px 12px; background: var(--surface);
+    font: 11.5px/1.5 var(--mono);
+  }
+  .run .r-when { color: var(--ink-3); white-space: nowrap; }
+  .run .r-who { color: var(--ink-2); white-space: nowrap; }
+  .run .r-what { color: var(--ink-2); overflow-wrap: anywhere; }
+  .run[data-status="FAILED"] .r-what { color: var(--fault); }
+  .run[data-status="skipped"] .r-what { color: var(--ink-3); }
+
   .hist-title { margin: 0 0 6px; font: 600 12px/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); }
 
   /* ---- console ---------------------------------------------------------- */
@@ -670,6 +722,7 @@
       <div class="srv-tabs" role="tablist" aria-label="Server sections">
         <button role="tab" data-pane="console" aria-selected="true">Console</button>
         <button role="tab" data-pane="backups" aria-selected="false">Backups</button>
+        <button role="tab" data-pane="scheduler" aria-selected="false">Scheduler</button>
         <button role="tab" data-pane="settings" aria-selected="false">Settings</button>
       </div>
 
@@ -708,6 +761,10 @@
 
       <div class="pane pane-scroll" id="paneBackups">
         <div class="pane-body wide" id="backupsBody"></div>
+      </div>
+
+      <div class="pane pane-scroll" id="paneScheduler">
+        <div class="pane-body wide" id="schedulerBody"></div>
       </div>
 
       <div class="pane pane-scroll" id="paneSettings">
@@ -1042,6 +1099,7 @@ function showPane(pane) {
   for (const el of $$('.pane')) el.toggleAttribute('data-active', el.id === 'pane' + pane[0].toUpperCase() + pane.slice(1));
   if (pane === 'settings') renderServerSettings();
   if (pane === 'backups') renderBackups();
+  if (pane === 'scheduler') renderScheduler();
   // Scroll position is not kept while a pre is hidden, so the console has to be put back where it
   // was - and "at the bottom" is where it was for anyone who had not scrolled up.
   if (pane === 'console' && state.atBottom) {
@@ -1452,6 +1510,7 @@ function select(name) {
   // The settings pane caches which server it drew, so a different one must not inherit it.
   $('#settingsBody').dataset.for = '';
   $('#backupsBody').dataset.for = '';
+  $('#schedulerBody').dataset.for = '';
   renderServer(state.rows.find((r) => r.name === name));
   showPane(state.pane);
   renderLog();
@@ -1600,6 +1659,430 @@ $('#bRestart').onclick = act('restart');
  * the core cannot drift about what exists or what a field accepts. The server reads this file once
  * at boot, so anything changed while it is running is announced as taking effect on restart.
  */
+// -------------------------------------------------------------- scheduler ---
+
+const DAY_NAMES = { MON: 'Monday', TUE: 'Tuesday', WED: 'Wednesday', THU: 'Thursday',
+  FRI: 'Friday', SAT: 'Saturday', SUN: 'Sunday' };
+
+const KIND_LABELS = {
+  minutes: 'Every few minutes',
+  hourly: 'Every few hours',
+  daily: 'Once a day',
+  weekly: 'Once a week',
+  onlogon: 'When you sign in',
+};
+
+/** The schedule as a sentence, because "hourly /MO 6" is not one. */
+function describeSchedule(s) {
+  if (!s) return '';
+  if (s.kind === 'onlogon') return 'when you sign in to Windows';
+  if (s.kind === 'minutes') return s.every === 1 ? 'every minute' : 'every ' + s.every + ' minutes';
+  if (s.kind === 'hourly') return s.every === 1 ? 'every hour' : 'every ' + s.every + ' hours';
+  if (s.kind === 'weekly') return 'every ' + (DAY_NAMES[s.day] || s.day) + ' at ' + s.at;
+  return 'every day at ' + s.at;
+}
+
+/** Windows hands back its own date format; keep it, but drop the seconds nobody reads. */
+function whenNext(text) {
+  if (!text) return null;
+  const d = new Date(text);
+  return Number.isNaN(d.getTime()) ? String(text) : stamp(d.toISOString());
+}
+
+function actionSummary(task, actions) {
+  const meta = actions.find((a) => a.type === task.action.type);
+  const label = meta ? meta.label : task.action.type;
+  if (task.action.type === 'command') return label + ': ' + task.action.line;
+  if (task.action.type === 'backup' && task.action.keep) {
+    return label + ', keeping the newest ' + task.action.keep;
+  }
+  return label;
+}
+
+/**
+ * The form for a new task, or for editing one that exists.
+ *
+ * <p>Which fields it shows depends on what is chosen: a command needs a line to send, a weekly
+ * schedule needs a day, an interval needs a number. Showing all of them at once and ignoring the
+ * irrelevant ones is how a form ends up asking what time a "every 30 minutes" task should run.
+ *
+ * <p>Returns the element; the caller decides where it goes and what happens on submit.
+ */
+function taskForm({ actions, kinds, days, task, onCancel, onSubmit }) {
+  const form = document.createElement('div');
+  form.className = 'task-form';
+
+  const mk = (label, control) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'field';
+    const l = document.createElement('label');
+    l.textContent = label;
+    wrap.append(l, control);
+    return wrap;
+  };
+  const select = (options, value) => {
+    const el = document.createElement('select');
+    for (const o of options) {
+      const opt = document.createElement('option');
+      opt.value = o.value;
+      opt.textContent = o.label;
+      opt.selected = o.value === value;
+      el.append(opt);
+    }
+    return el;
+  };
+
+  const act = select(actions.map((a) => ({ value: a.type, label: a.label })), task?.action?.type ?? 'backup');
+  const actField = mk('What should happen', act);
+
+  const line = document.createElement('input');
+  line.placeholder = 'say Server restarting in 5 minutes';
+  line.value = task?.action?.line ?? '';
+  line.maxLength = 400;
+  const lineField = mk('Console command to send', line);
+
+  const keep = document.createElement('input');
+  keep.type = 'number';
+  keep.min = '1';
+  keep.max = '365';
+  keep.value = String(task?.action?.keep ?? 7);
+  keep.style.maxWidth = '90px';
+  const keepField = mk('Snapshots to keep', keep);
+
+  const kind = select(kinds.map((k) => ({ value: k, label: KIND_LABELS[k] || k })), task?.schedule?.kind ?? 'daily');
+  const every = document.createElement('input');
+  every.type = 'number';
+  every.min = '1';
+  every.value = String(task?.schedule?.every ?? 6);
+  every.style.maxWidth = '90px';
+  const at = document.createElement('input');
+  at.type = 'time';
+  at.value = task?.schedule?.at ?? '03:00';
+  at.style.maxWidth = '130px';
+  const day = select(days.map((d) => ({ value: d, label: DAY_NAMES[d] || d })), task?.schedule?.day ?? 'SUN');
+  day.style.maxWidth = '150px';
+
+  const everyField = mk('How many', every);
+  const atField = mk('At', at);
+  const dayField = mk('On', day);
+  const whenRow = document.createElement('div');
+  whenRow.className = 'when-row';
+  whenRow.append(mk('How often', kind), everyField, dayField, atField);
+
+  const title = document.createElement('input');
+  title.maxLength = 60;
+  title.value = task?.name ?? '';
+  const titleField = mk('Call it', title);
+
+  const note = document.createElement('div');
+  note.className = 'hint';
+
+  const row = document.createElement('div');
+  row.className = 'row';
+  const save = document.createElement('button');
+  save.className = 'primary';
+  save.textContent = task ? 'Save changes' : 'Create task';
+  const cancel = document.createElement('button');
+  cancel.textContent = 'Cancel';
+  row.append(save, cancel);
+
+  form.append(actField, lineField, keepField, whenRow, titleField, note, row);
+
+  const sync = () => {
+    const a = act.value;
+    const k = kind.value;
+    lineField.hidden = a !== 'command';
+    keepField.hidden = a !== 'backup';
+    everyField.hidden = k !== 'minutes' && k !== 'hourly';
+    dayField.hidden = k !== 'weekly';
+    atField.hidden = k !== 'daily' && k !== 'weekly';
+    every.min = '1';
+    every.max = k === 'minutes' ? '1439' : '23';
+    const meta = actions.find((x) => x.type === a);
+    // The example name follows the action, so a command task is not prompted with "Nightly backup".
+    title.placeholder = meta ? meta.label : 'Scheduled task';
+    note.textContent = meta && meta.needsRunning
+      ? 'Skipped, and recorded as skipped, whenever the server is not running at that moment.'
+      : '';
+    note.hidden = !note.textContent;
+  };
+  act.onchange = sync;
+  kind.onchange = sync;
+  sync();
+
+  cancel.onclick = onCancel;
+  save.onclick = async () => {
+    const action = { type: act.value };
+    if (act.value === 'command') action.line = line.value.trim();
+    if (act.value === 'backup') action.keep = Number(keep.value);
+    const sched = { kind: kind.value };
+    if (kind.value === 'minutes' || kind.value === 'hourly') sched.every = Number(every.value);
+    if (kind.value === 'daily' || kind.value === 'weekly') sched.at = at.value;
+    if (kind.value === 'weekly') sched.day = day.value;
+    save.disabled = true;
+    try {
+      await onSubmit({ name: title.value.trim(), action, schedule: sched });
+    } finally {
+      save.disabled = false;
+    }
+  };
+  return form;
+}
+
+/**
+ * Everything scheduled for this server, and what happened when it ran.
+ *
+ * <p>The run log is the half Task Scheduler cannot give you. Windows records an exit code per task
+ * and nothing else, so "0" is all it can say about a backup; mcctl writes its own line naming the
+ * file it produced, and both are shown - the state from Windows, the detail from us.
+ */
+async function renderScheduler(opts) {
+  const force = Boolean(opts && opts.force);
+  const row = state.rows.find((r) => r.name === state.current);
+  const body = $('#schedulerBody');
+  if (!row) { body.textContent = ''; return; }
+  if (!force && body.dataset.for === row.name && body.childElementCount) return;
+  body.dataset.for = row.name;
+
+  let data;
+  try {
+    data = await api('/instances/' + encodeURIComponent(row.name) + '/schedules');
+  } catch (e) {
+    body.textContent = '';
+    const bad = document.createElement('div');
+    bad.className = 'bad';
+    bad.textContent = e.message;
+    body.append(bad);
+    return;
+  }
+  if (body.dataset.for !== row.name) return;
+  body.textContent = '';
+
+  const base = '/instances/' + encodeURIComponent(row.name) + '/schedules';
+  const again = () => renderScheduler({ force: true });
+
+  // ---- what a schedule is, before the list of them ---------------------------
+  const intro = document.createElement('div');
+  intro.className = 'hint';
+  intro.textContent = 'Windows Task Scheduler runs these, so they happen whether or not this window '
+    + 'is open - while you are signed in, screen locked included, but not after you sign out.';
+  body.append(intro);
+
+  // ---- add ------------------------------------------------------------------
+  const addWrap = document.createElement('div');
+  const add = document.createElement('button');
+  add.className = 'primary';
+  add.textContent = 'New task';
+  addWrap.append(add);
+  body.append(addWrap);
+
+  add.onclick = () => {
+    add.hidden = true;
+    const form = taskForm({
+      actions: data.actions,
+      kinds: data.kinds,
+      days: data.days,
+      onCancel: () => { form.remove(); add.hidden = false; },
+      onSubmit: async (payload) => {
+        try {
+          await post(base, payload);
+          toast('Task created.', 'good');
+          await again();
+        } catch (e) {
+          toast(e.message, 'bad');
+        }
+      },
+    });
+    addWrap.append(form);
+  };
+
+  // ---- the tasks ------------------------------------------------------------
+  const listTitle = document.createElement('h3');
+  listTitle.className = 'hist-title';
+  listTitle.textContent = 'Tasks (' + data.tasks.length + ')';
+  body.append(listTitle);
+
+  if (!data.tasks.length) {
+    const none = document.createElement('div');
+    none.className = 'hint';
+    none.textContent = 'Nothing scheduled. A nightly backup and a daily restart are the two most '
+      + 'servers ever need.';
+    body.append(none);
+  } else {
+    const list = document.createElement('div');
+    list.className = 'tasks';
+    for (const task of data.tasks) list.append(taskCard(task, data, base, again));
+    body.append(list);
+  }
+
+  // ---- what actually ran ----------------------------------------------------
+  const runTitle = document.createElement('h3');
+  runTitle.className = 'hist-title';
+  runTitle.style.marginTop = '18px';
+  runTitle.textContent = 'Recent runs';
+  body.append(runTitle);
+
+  if (!data.runs.length) {
+    const none = document.createElement('div');
+    none.className = 'hint';
+    none.textContent = 'Nothing has run yet. Every run writes a line here, including the ones that fail.';
+    body.append(none);
+  } else {
+    const runs = document.createElement('div');
+    runs.className = 'runs';
+    for (const r of data.runs) {
+      const el = document.createElement('div');
+      el.className = 'run';
+      el.dataset.status = r.status;
+      const when = document.createElement('span');
+      when.className = 'r-when';
+      when.textContent = stamp(r.at);
+      const who = document.createElement('span');
+      who.className = 'r-who';
+      who.textContent = r.id || r.action;
+      const what = document.createElement('span');
+      what.className = 'r-what';
+      // A skip is neither a success nor a failure and reads as neither. Prefixing every line with
+      // its outcome would be noise when almost all of them say ok.
+      what.textContent = (r.status === 'ok' ? '' : r.status + ': ') + r.detail;
+      el.append(when, who, what);
+      runs.append(el);
+    }
+    body.append(runs);
+  }
+}
+
+/** One scheduled task, with the four things you can do to it. */
+function taskCard(task, data, base, again) {
+  const el = document.createElement('div');
+  el.className = 'task';
+  if (!task.enabled) el.setAttribute('data-off', '');
+
+  const what = document.createElement('div');
+  what.className = 't-what';
+  what.textContent = task.name;
+  // The Backups tab makes one of these and keeps a toggle pointing at it. Showing it here without
+  // saying so would leave someone wondering where it came from - and deleting it from here is
+  // allowed, so the label also explains what the toggle will read afterwards.
+  if (task.owner === 'backups') {
+    const from = document.createElement('span');
+    from.className = 't-owner';
+    from.textContent = 'from the Backups tab';
+    what.append(' ', from);
+  }
+
+  const state = document.createElement('div');
+  state.className = 't-state';
+  if (!task.enabled) {
+    state.textContent = 'Off';
+    state.dataset.tone = 'off';
+  } else if (!task.known) {
+    // mcctl has a definition Windows has never heard of. Someone deleted it in Task Scheduler, or
+    // the query failed - either way it is not going to run, and saying "Ready" would be a lie.
+    state.textContent = 'Not in Windows';
+    state.dataset.tone = 'bad';
+    state.title = 'mcctl has this task but Windows Task Scheduler does not. Edit it to put it back.';
+  } else {
+    state.textContent = task.state || 'Ready';
+    state.dataset.tone = task.state === 'Running' ? 'good' : '';
+  }
+
+  const when = document.createElement('div');
+  when.className = 't-when';
+  const bits = [actionSummary(task, data.actions), describeSchedule(task.schedule)];
+  when.textContent = bits.join('  \u00b7  ');
+  if (task.enabled && task.known) {
+    const next = whenNext(task.nextRun);
+    const extra = document.createElement('div');
+    extra.textContent = (next ? 'Next ' + next : 'No next run scheduled')
+      + (task.lastResult ? '  \u00b7  last run: ' + task.lastResult : '');
+    when.append(extra);
+  }
+
+  const acts = document.createElement('div');
+  acts.className = 't-acts';
+  const runNow = document.createElement('button');
+  runNow.textContent = 'Run now';
+  const toggle = document.createElement('button');
+  toggle.textContent = task.enabled ? 'Turn off' : 'Turn on';
+  const edit = document.createElement('button');
+  edit.textContent = 'Edit';
+  const drop = document.createElement('button');
+  drop.className = 'danger';
+  drop.textContent = 'Delete';
+  acts.append(runNow, toggle, edit, drop);
+  el.append(what, state, when, acts);
+
+  const busy = (on) => { for (const b of acts.children) b.disabled = on; };
+
+  runNow.onclick = async () => {
+    busy(true);
+    try {
+      await post(base + '/' + encodeURIComponent(task.id) + '/run');
+      // Windows starts the task and returns immediately, so there is nothing to report yet beyond
+      // having asked. The run log below is where the answer turns up.
+      toast('Started. Watch Recent runs for what it did.', 'good');
+      setTimeout(again, 2500);
+    } catch (e) {
+      toast(e.message, 'bad');
+      busy(false);
+    }
+  };
+
+  toggle.onclick = async () => {
+    busy(true);
+    try {
+      await post(base + '/' + encodeURIComponent(task.id) + '/enable', { enabled: !task.enabled });
+      await again();
+    } catch (e) {
+      toast(e.message, 'bad');
+      busy(false);
+    }
+  };
+
+  edit.onclick = () => {
+    const form = taskForm({
+      actions: data.actions,
+      kinds: data.kinds,
+      days: data.days,
+      task,
+      onCancel: () => { form.remove(); el.hidden = false; },
+      onSubmit: async (payload) => {
+        try {
+          await post(base + '/' + encodeURIComponent(task.id), payload);
+          toast('Saved.', 'good');
+          await again();
+        } catch (e) {
+          toast(e.message, 'bad');
+        }
+      },
+    });
+    el.hidden = true;
+    el.after(form);
+  };
+
+  drop.onclick = async () => {
+    const ok = await ask({
+      title: 'Delete "' + task.name + '"?',
+      text: 'It stops running and is removed from Windows Task Scheduler. Backups it already took '
+        + 'are not touched.',
+      confirmLabel: 'Delete task',
+      danger: true,
+    });
+    if (!ok) return;
+    busy(true);
+    try {
+      await post(base + '/' + encodeURIComponent(task.id) + '/delete');
+      toast('Deleted.', 'good');
+      await again();
+    } catch (e) {
+      toast(e.message, 'bad');
+      busy(false);
+    }
+  };
+  return el;
+}
+
 // ---------------------------------------------------------------- backups ---
 
 const STAMP = new Intl.DateTimeFormat(undefined, {
