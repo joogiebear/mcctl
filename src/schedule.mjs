@@ -322,14 +322,21 @@ export function update(id, patch) {
   const current = data.tasks[id]
   const task = {
     ...current,
-    // owner is deliberately not patchable: it says who is responsible for a task, and letting an
-    // edit claim or disown one would put the Backups tab's toggle back in the business of guessing.
     name: patch.name === undefined ? current.name : String(patch.name || '').slice(0, 60),
     action: patch.action === undefined ? current.action : normaliseAction(patch.action),
     schedule: patch.schedule === undefined ? current.schedule : normaliseSchedule(patch.schedule),
     enabled: patch.enabled === undefined ? current.enabled : Boolean(patch.enabled),
+    // Ownership can be claimed but never taken. An unowned task - one made before the mark existed
+    // - becomes owned the first time the tab that made it touches it, which is how those migrate;
+    // an owned one cannot be reassigned by an edit, so the Backups tab's toggle never has to guess
+    // again.
+    owner: current.owner || (patch.owner === undefined ? null : patch.owner) || null,
   }
   if (!task.name) task.name = ACTIONS[task.action.type].label
+  // The Backups tab owns a task because it takes backups. Edited into a restart, it is no longer
+  // the thing that tab is a toggle for, so it stops being that tab's - and the toggle reads Off
+  // rather than pointing at a task that no longer backs anything up.
+  if (task.owner === OWNER_BACKUPS && task.action.type !== 'backup') task.owner = null
   writeWindowsTask(id, task)
   data.tasks[id] = task
   writeJson(TASKS_FILE(), data)
@@ -345,6 +352,22 @@ export function setEnabled(id, enabled) {
   return { id, ...data.tasks[id] }
 }
 
+/**
+ * Does Windows still hold this task?
+ *
+ * <p>The question a failed delete actually needs answered. An exit code says something went wrong;
+ * only the scheduler can say whether the thing is still there afterwards, and that answer is the
+ * same in every language.
+ */
+function stillInWindows(id) {
+  const res = spawnSync('schtasks', ['/Query', '/TN', `${TASK_FOLDER}\\${id}`],
+    { encoding: 'utf8', windowsHide: true, timeout: 30000 })
+  // Cannot tell - treat it as still there. Keeping a record of a task that may exist is recoverable;
+  // dropping the record of one that does is not.
+  if (res.error) return true
+  return res.status === 0
+}
+
 export function remove(id) {
   const data = load()
   // Checked, like every other id-addressed call here. Without it a mistyped id reported success
@@ -356,14 +379,18 @@ export function remove(id) {
   const res = spawnSync('schtasks', ['/Delete', '/TN', `${TASK_FOLDER}\\${id}`, '/F'],
     { encoding: 'utf8', windowsHide: true, timeout: 30000 })
   const said = `${res.stderr || ''}${res.stdout || ''}`
-  // "It was not there" is the state we were heading for anyway. Anything else - schtasks missing
-  // from PATH, a timeout, access denied - is a real failure, and swallowing it used to mean
-  // deleting mcctl's only record of a task that Windows still holds and still runs.
-  const alreadyGone = /cannot find|does not exist|ERROR: The system cannot find/i.test(said)
   if (res.error && res.error.code !== 'ENOENT') {
     fail(`could not reach schtasks to delete "${id}": ${res.error.message}`)
   }
-  if (res.status !== 0 && !alreadyGone) {
+  // "It was not there" is the state we were heading for anyway. Anything else - schtasks missing
+  // from PATH, a timeout, access denied - is a real failure, and swallowing it used to mean
+  // deleting mcctl's only record of a task that Windows still holds and still runs.
+  //
+  // Asked of the scheduler rather than read out of the error text. schtasks prints its messages
+  // from localized resources, so matching "cannot find" worked on an English Windows and inverted
+  // the meaning on any other - turning a task that was simply absent into a permanent failure
+  // nobody could clear.
+  if (res.status !== 0 && stillInWindows(id)) {
     fail(`Windows would not delete the task for "${id}", so it has been left alone: ${said.trim()}`)
   }
 
@@ -453,21 +480,31 @@ export function renameInstance(oldName, newName) {
 
   // The new trigger goes in before the old one comes out. The other order leaves a window where a
   // rename that fails half way has removed the schedule and put nothing back.
+  const stranded = []
   for (const m of moved) {
     writeWindowsTask(m.to, m.task)
     if (m.to !== m.from) {
       try {
         schtasks(['/Delete', '/TN', `${TASK_FOLDER}\\${m.from}`, '/F'])
       } catch {
-        /* the new one is in place and is what runs; a stale trigger is cleaned up below */
+        /* checked properly below - an exit code is not an answer about what still exists */
       }
-      fs.rmSync(path.join(DATA_ROOT, 'tasks', `${m.from}.cmd`), { force: true })
+      if (stillInWindows(m.from)) {
+        // Windows kept the old trigger. Its batch file stays, because a trigger pointing at a
+        // file that is not there fails in a way nothing explains; this way it runs, finds no
+        // definition under the old id, and says so in the log. Reported either way.
+        stranded.push(m.from)
+      } else {
+        fs.rmSync(path.join(DATA_ROOT, 'tasks', `${m.from}.cmd`), { force: true })
+      }
       delete data.tasks[m.from]
     }
     data.tasks[m.to] = m.task
+    // Written per task, not once at the end. A failure part way through used to lose the record
+    // of every task that had already moved, while their new triggers were live in Windows.
+    writeJson(TASKS_FILE(), data)
   }
-  writeJson(TASKS_FILE(), data)
-  return { moved: moved.length }
+  return { moved: moved.length, stranded }
 }
 
 /**
