@@ -217,8 +217,18 @@ export function removeSnapshot(name, ref) {
   return { removed: snap.name, size: snap.size }
 }
 
-export function pruneSnapshots(name, keep) {
-  const all = listSnapshots(name)
+/**
+ * Trim a server's snapshots down to a limit.
+ *
+ * <p>`only` narrows it to snapshots carrying one label, and the scheduler always passes it.
+ * Retention is a rule about the automatic backups a schedule produces, not a licence to delete
+ * everything else in the folder - and everything else is where the important ones live. A
+ * `pre-rebuild` snapshot is the single copy of a world taken before it was wiped, and a `manual`
+ * one was taken because somebody was about to try something. An hourly task set to keep 5 would
+ * have deleted both within five hours of them being made.
+ */
+export function pruneSnapshots(name, keep, { only = null } = {}) {
+  const all = listSnapshots(name).filter((s) => (only ? s.label === only : true))
   const remove = all.slice(keep)
   for (const snap of remove) {
     fs.rmSync(snap.path, { force: true })
