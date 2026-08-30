@@ -9,6 +9,9 @@ import * as supervisor from './supervisor.mjs'
 import * as schedule from './schedule.mjs'
 import { UserError, validateName } from './util.mjs'
 
+/** Written once, because every editor and shell between here and the file mangles it. */
+const NL = String.fromCharCode(10)
+
 /**
  * Editing and destroying instances.
  *
@@ -58,6 +61,15 @@ export function rename(oldName, newName) {
   const newBackups = path.join(BACKUPS_DIR, newName)
   let movedBackups = false
   if (fs.existsSync(oldBackups)) {
+    // Checked before trying, because renameSync onto an existing directory fails with the same
+    // kind of error as a locked file, and "close anything using that folder" is the wrong advice
+    // for a folder left behind by a server of this name that used to exist.
+    if (fs.existsSync(newBackups)) {
+      throw new UserError(
+        `${newBackups} already holds snapshots - from an earlier server called "${newName}".` + NL +
+          `  "${oldName}" has not been renamed. Move or delete that folder first, or pick another name.`,
+      )
+    }
     try {
       fs.renameSync(oldBackups, newBackups)
       movedBackups = true
