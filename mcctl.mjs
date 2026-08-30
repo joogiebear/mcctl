@@ -21,6 +21,7 @@ import * as paper from './src/paper.mjs'
 import * as ui from './src/ui.mjs'
 import * as manage from './src/manage.mjs'
 import * as settings from './src/settings.mjs'
+import * as java from './src/java.mjs'
 import * as paths from './src/paths.mjs'
 import { readProps, writeProps } from './src/props.mjs'
 import { UserError, fail, table, humanBytes, humanDuration, dirSize, isPortFree } from './src/util.mjs'
@@ -712,9 +713,11 @@ async function cmdDoctor() {
   const problems = []
   const notes = []
 
-  const javaCheck = spawnSync('java', ['-version'], { encoding: 'utf8', windowsHide: true })
-  if (javaCheck.error) problems.push('java is not on PATH')
-  else notes.push(`java: ${(javaCheck.stderr || javaCheck.stdout).split('\n')[0].trim()}`)
+  // The same probe the panel and the first-run wizard use, so all three agree about what
+  // counts as a usable Java.
+  const javaCheck = java.probe()
+  if (!javaCheck.ok) problems.push(`java: ${javaCheck.message} ${java.DOWNLOAD_URL}`)
+  else notes.push(`java: ${javaCheck.version}`)
 
   const tarCheck = spawnSync('tar', ['--version'], { encoding: 'utf8', windowsHide: true })
   if (tarCheck.error) problems.push('tar is not on PATH (needed for snapshots)')
