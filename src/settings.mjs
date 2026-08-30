@@ -80,7 +80,10 @@ export function resolveRoots(overrides = {}) {
     registryFile: path.join(dataRoot, 'instances.json'),
     templatesDir: path.join(dataRoot, 'templates'),
     jarsDir: path.join(dataRoot, 'jars'),
-    backupsDir: path.join(dataRoot, 'backups'),
+    // Snapshots are the thing most likely to outgrow the drive everything else is on, so they get
+    // the same escape hatch the instances directory has. Changing it does not move what already
+    // exists - the panel says so rather than letting history appear to vanish.
+    backupsDir: s.backupsDir ? path.resolve(s.backupsDir) : path.join(dataRoot, 'backups'),
     runDir: path.join(dataRoot, 'run'),
     usingLegacyLayout: legacy && !s.dataRoot,
     settingsFile: settingsFile(),
