@@ -298,6 +298,10 @@ async function cmdNew(positional, flags) {
     port: flags.port ? Number(flags.port) : null,
     rconPort: flags.rconPort ? Number(flags.rconPort) : null,
     acceptEula: Boolean(flags.acceptEula),
+    // --offline for joining as any name without an account, which is what multi-account testing
+    // needs. It also puts an OFFLINE/INSECURE banner in every log the server writes, so it is a
+    // choice rather than the default.
+    onlineMode: !flags.offline,
     motd: flags.motd ?? null,
     java: flags.java ?? 'java',
   })
@@ -803,6 +807,8 @@ INSTANCES
       --template <name>              Start from a saved template
       --memory <4G> --port <n>
       --accept-eula                  Write eula=true (you accept Mojang's EULA)
+      --offline                      Let anyone join as any name, no account needed.
+                                     Puts an OFFLINE/INSECURE banner in every log.
   mcctl clone <src> <new>            Copy plugins+config into a new instance
       --with-worlds                  Also copy world data (default: fresh worlds)
   mcctl set <name> key=value...      memory, java, jar, port, rcon.port, rcon.password

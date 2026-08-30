@@ -202,10 +202,17 @@ This is built for **localhost and LAN only**.
   encryption and must never face the internet.
 - `instances.json` stores RCON passwords in plaintext and is gitignored. So are
   `backups/`, `jars/`, `instances/`, and `run/`.
-- Generated instances default to `online-mode=false` because they are meant for
-  local plugin testing. Any server that real players can reach should have
-  `online-mode=true` — set it with
-  `mcctl props <name> online-mode=true`.
+- Generated instances default to **`online-mode=true`**. That was `false` until v0.2.3, on the
+  reasoning that a scratch server is for testing — but offline mode gives players name-derived
+  UUIDs rather than Mojang ones, so any plugin keying data by UUID behaves differently: some bugs
+  will not reproduce, and some appear that do not exist on a real server. Paper also prints a
+  four-line `OFFLINE/INSECURE` banner near the top of every log, and plugin authors routinely
+  refuse a bug report carrying it. A tool for reproducing plugin bugs should not produce reports
+  that get thrown out on sight.
+
+  Offline is still one toggle away, for multi-account testing or working without internet:
+  `mcctl new <name> --offline`, `mcctl props <name> online-mode=false`, or the panel's
+  **Settings…** on a server. The panel badges any server running that way.
 - Nothing here opens firewall ports or touches your router. Exposing a server to
   the internet is a deliberate, separate decision.
 - The panel is an **unauthenticated local HTTP server that can start processes and type into a
@@ -256,6 +263,10 @@ What it does:
   read from that folder's own `server.properties`.
 - **Renaming, resetting and deleting** ask you to type the server's name. That friction is
   deliberate: a dialog that only says "are you sure" gets answered reflexively.
+- **Settings…** edits the part of `server.properties` people actually change — who can join,
+  MOTD, difficulty, game mode, max players, PvP, whitelist, view distance, spawn protection.
+  Everything else stays in the file for `mcctl props` or an editor, and nothing the panel writes
+  disturbs another key or a comment.
 
 The panel is bound to `127.0.0.1` and refuses any request whose `Host` is not a loopback address, or
 whose `Origin` is another site. It can start processes and type into a server console, so "local"

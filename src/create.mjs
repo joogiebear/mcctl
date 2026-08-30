@@ -147,6 +147,7 @@ export async function newInstance(
     acceptEula = false,
     motd = null,
     java = 'java',
+    onlineMode = true,
   } = {},
 ) {
   validateName(name)
@@ -219,7 +220,20 @@ export async function newInstance(
     'rcon.port': String(finalRcon),
     'rcon.password': rconPassword,
     'server-ip': '',
-    'online-mode': 'false',
+    /*
+      Online mode, by default.
+
+      This used to default to false, on the reasoning that a scratch server is for plugin testing
+      and offline lets you join as any name without an account. The cost turned out to be higher
+      than the convenience: offline issues name-derived UUIDs rather than Mojang ones, so a plugin
+      that keys anything by UUID behaves differently - some bugs will not reproduce, and some appear
+      that do not exist on a real server. Paper also prints a four-line OFFLINE/INSECURE banner near
+      the top of every log, and plugin authors routinely refuse a bug report carrying it.
+
+      A tool whose whole job is reproducing plugin bugs should not produce reports that get thrown
+      out on sight. Offline is still one toggle away for multi-account or no-internet testing.
+    */
+    'online-mode': onlineMode === false ? 'false' : 'true',
     'motd': motd ?? `${name} (mcctl)`,
     'max-players': '10',
     'spawn-protection': '0',

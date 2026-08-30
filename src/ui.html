@@ -331,6 +331,19 @@
   .srv-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
   .srv-head h1 { margin: 0; font: 600 17px/1.2 var(--ui); letter-spacing: -.01em; }
   .srv-state { font: 12.5px/1 var(--ui); color: var(--ink-2); }
+  /* A server anyone can join as any name is a different kind of server, and its logs get bug
+     reports refused. That is worth seeing without opening a properties screen. */
+  .badge {
+    font: 600 10.5px/1 var(--ui);
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    padding: 4px 7px;
+    border-radius: 4px;
+    background: rgba(240, 182, 77, .13);
+    border: 1px solid rgba(240, 182, 77, .32);
+    color: #f4cd86;
+    white-space: nowrap;
+  }
   .srv-actions { display: flex; gap: 7px; }
 
   .vitals-bar { display: flex; flex-wrap: wrap; gap: 4px 22px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: #11151f; }
@@ -428,6 +441,11 @@
     width: min(470px, calc(100vw - 32px));
     box-shadow: 0 18px 60px rgba(0, 0, 0, .6);
   }
+  /* Tall content - the settings list is nine fields - must not push the buttons off the bottom of
+     the screen. The body scrolls; the title and the footer stay put. [open] because a bare
+     `display` here would override the browser's own rule that keeps a closed dialog hidden. */
+  dialog[open] { display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
+  dialog .dlg-body { overflow-y: auto; }
   dialog::backdrop { background: rgba(6, 8, 12, .68); }
   dialog h2 { margin: 0; padding: 16px 20px 0; font: 600 16px/1.3 var(--ui); }
   dialog .dlg-body { padding: 10px 20px 4px; display: grid; gap: 14px; }
@@ -556,11 +574,13 @@
         <span class="lamp lg"></span>
         <h1 id="srvName">—</h1>
         <span class="srv-state" id="srvState"></span>
+        <span class="badge" id="srvOffline" hidden title="Anyone can join as any name. Players get name-derived UUIDs, and every log carries an OFFLINE/INSECURE banner.">Offline mode</span>
         <span class="grow"></span>
         <span class="srv-actions">
           <button class="primary" id="bStart">Start</button>
           <button id="bStop">Stop</button>
           <button id="bRestart">Restart</button>
+          <button id="bProps">Settings…</button>
           <button id="bManage">Manage…</button>
         </span>
       </div>
@@ -634,6 +654,24 @@
             <label for="nPort">Port</label>
             <input id="nPort" name="port" type="number" placeholder="auto" class="mono" autocomplete="off">
             <div class="hint">Blank picks a free one</div>
+          </div>
+        </div>
+        <div class="field">
+          <label>Who can join</label>
+          <div class="choice" id="nJoin">
+            <label>
+              <input type="radio" name="onlineMode" value="online" checked>
+              <b>Require a Minecraft account</b>
+              <span>Matches a real server. Players get their real UUIDs, so plugin behaviour and
+                bug reports match production.</span>
+            </label>
+            <label>
+              <input type="radio" name="onlineMode" value="offline">
+              <b>Anyone, as any name</b>
+              <span>For testing with several accounts, or with no internet. Players get
+                name-derived UUIDs, and every log carries an OFFLINE/INSECURE banner that plugin
+                authors often refuse bug reports over.</span>
+            </label>
           </div>
         </div>
         <div class="prog" id="newProg" hidden>
@@ -959,7 +997,9 @@ function updateCard(el, row) {
   } else {
     vitals.append(document.createTextNode(STATE_TEXT[row.status] + tail));
   }
-  el.title = row.name + ' — ' + STATE_TEXT[row.status] + (row.jar ? ' — ' + row.jar : '');
+  el.title = row.name + ' — ' + STATE_TEXT[row.status] + (row.jar ? ' — ' + row.jar : '')
+    + (row.onlineMode === false ? ' — offline mode' : '');
+  el.classList.toggle('offline', row.onlineMode === false);
 }
 
 /**
@@ -1033,6 +1073,8 @@ function renderServer(row) {
     wrap.append(dt, dd);
     vitals.append(wrap);
   }
+
+  $('#srvOffline').hidden = row.onlineMode !== false;
 
   const notice = $('#srvNotice');
   notice.textContent = '';
@@ -1415,6 +1457,144 @@ $('#bStart').onclick = act('start');
 $('#bStop').onclick = act('stop');
 $('#bRestart').onclick = act('restart');
 
+// ---------------------------------------------------- server properties ----
+
+/**
+ * The handful of server.properties worth a control.
+ *
+ * <p>Built from what the API says is editable rather than from a list kept here, so the panel and
+ * the core cannot drift about what exists or what a field accepts. The server reads this file once
+ * at boot, so anything changed while it is running is announced as taking effect on restart.
+ */
+async function editProps(row) {
+  let data;
+  try {
+    data = await api('/instances/' + encodeURIComponent(row.name) + '/props');
+  } catch (e) {
+    toast(e.message, 'bad');
+    return;
+  }
+
+  const dlg = $('#dlg');
+  $('#dlgTitle').textContent = 'Settings for ' + row.name;
+  $('#dlgText').hidden = false;
+  $('#dlgText').textContent = row.status === 'running'
+    ? 'This server is running, so changes take effect the next time it starts.'
+    : 'Applies the next time this server starts.';
+  $('#dlgChoice').hidden = true;
+  $('#dlgTypeWrap').hidden = true;
+
+  const form = document.createElement('div');
+  form.style.display = 'grid';
+  form.style.gap = '13px';
+
+  const controls = new Map();
+  for (const f of data.fields) {
+    const wrap = document.createElement('div');
+    wrap.className = 'field';
+
+    const label = document.createElement('label');
+    label.setAttribute('for', 'p_' + f.key);
+    label.textContent = f.label;
+    wrap.append(label);
+
+    let input;
+    if (f.type === 'bool') {
+      input = document.createElement('select');
+      for (const v of ['true', 'false']) {
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = v === 'true' ? 'Yes' : 'No';
+        o.selected = String(f.value) === v;
+        input.append(o);
+      }
+    } else if (f.type === 'enum') {
+      input = document.createElement('select');
+      for (const v of f.options) {
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = v;
+        o.selected = String(f.value) === v;
+        input.append(o);
+      }
+    } else {
+      input = document.createElement('input');
+      input.type = f.type === 'int' ? 'number' : 'text';
+      if (f.type === 'int') { input.min = String(f.min); input.max = String(f.max); }
+      input.value = f.value == null ? '' : String(f.value);
+      input.autocomplete = 'off';
+    }
+    input.id = 'p_' + f.key;
+    wrap.append(input);
+    controls.set(f.key, { input, original: f.value == null ? '' : String(f.value) });
+
+    // A value the server has not written yet is still the value it will use; saying so beats an
+    // empty box or a number with no explanation.
+    const bits = [];
+    if (!f.set) bits.push("Not set yet — this is Minecraft's default.");
+    if (f.note) bits.push(f.note);
+    if (bits.length) {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = bits.join(' ');
+      wrap.append(hint);
+    }
+    form.append(wrap);
+  }
+  $('#dlgBody').append(form);
+
+  const ok = $('#dlgOk');
+  ok.textContent = 'Save settings';
+  ok.className = 'primary';
+  ok.disabled = false;
+
+  const mine = ++askSeq;
+  const result = await new Promise((resolve) => {
+    const done = (v) => {
+      dlg.removeEventListener('cancel', onCancel);
+      ok.onclick = null;
+      $('#dlgCancel').onclick = null;
+      if (dlg.open) dlg.close();
+      form.remove();
+      resolve(v);
+    };
+    const onCancel = () => { if (mine === askSeq) done(null); };
+    dlg.addEventListener('cancel', onCancel);
+    ok.onclick = () => {
+      // Only what actually changed, so a field left alone is never written and the file keeps
+      // whatever the server itself put there.
+      const patch = {};
+      for (const [key, c] of controls) {
+        const now = c.input.value.trim();
+        if (now !== c.original) patch[key] = now;
+      }
+      done(patch);
+    };
+    $('#dlgCancel').onclick = () => done(null);
+    dlg.showModal();
+  });
+  if (!result) return;
+  if (!Object.keys(result).length) { toast('Nothing changed.'); return; }
+
+  try {
+    const out = await post('/instances/' + encodeURIComponent(row.name) + '/props', result);
+    const n = out.changed.length;
+    toast(
+      'Saved ' + n + (n === 1 ? ' setting' : ' settings') +
+      (out.appliesOnRestart ? '. Restart ' + row.name + ' to apply.' : '.'),
+      'good',
+    );
+    await refresh();
+  } catch (e) {
+    toast(e.message, 'bad');
+  }
+}
+
+$('#bProps').onclick = () => {
+  const row = state.rows.find((r) => r.name === state.current);
+  if (row) editProps(row);
+};
+
 // --------------------------------------------------------------- manage ----
 
 $('#bManage').onclick = async () => {
@@ -1721,6 +1901,7 @@ $('#formNew').onsubmit = async (e) => {
       paperVersion: form.get('paperVersion') || null,
       memory: form.get('memory') || '4G',
       port: form.get('port') || null,
+      onlineMode: form.get('onlineMode') !== 'offline',
       jobId: jobId,
     });
     jobs.close();

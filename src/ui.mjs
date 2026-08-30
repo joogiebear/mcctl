@@ -10,6 +10,7 @@ import * as paper from './paper.mjs'
 import * as manage from './manage.mjs'
 import { LAYOUT } from './paths.mjs'
 import * as java from './java.mjs'
+import { readProps, writeProps } from './props.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -69,6 +70,111 @@ function jobUpdate(id, patch) {
 }
 
 /**
+ * The server.properties keys the panel offers.
+ *
+ * <p>An allowlist, for two reasons. server.properties has around fifty keys and a panel that showed
+ * all of them would be a worse text editor than the file already is - `mcctl props` exists for the
+ * rest. And several keys are owned by mcctl rather than by the person: the ports and the RCON
+ * password come from the registry and syncProps rewrites them on every launch, so letting the page
+ * set them would produce a value that silently reverts.
+ *
+ * <p>`type` is what the page renders. `note` is shown next to the control when the choice has a
+ * consequence worth knowing before making it.
+ */
+const EDITABLE_PROPS = [
+  {
+    key: 'online-mode',
+    label: 'Require a Minecraft account',
+    type: 'bool',
+    fallback: 'true',
+    note: 'Off lets anyone join as any name, which is what multi-account testing needs - but it '
+      + 'gives players name-derived UUIDs instead of real ones, and puts an OFFLINE/INSECURE '
+      + 'banner in every log. Plugin authors often refuse a bug report carrying it.',
+  },
+  { key: 'motd', label: 'Message of the day', type: 'text', fallback: 'A Minecraft Server' },
+  { key: 'difficulty', label: 'Difficulty', type: 'enum', fallback: 'easy', options: ['peaceful', 'easy', 'normal', 'hard'] },
+  { key: 'gamemode', label: 'Default game mode', type: 'enum', fallback: 'survival', options: ['survival', 'creative', 'adventure', 'spectator'] },
+  { key: 'max-players', label: 'Max players', type: 'int', fallback: '20', min: 1, max: 1000 },
+  { key: 'pvp', label: 'PvP', type: 'bool', fallback: 'true' },
+  { key: 'white-list', label: 'Whitelist', type: 'bool', fallback: 'false', note: 'Only listed players can join. Add them from the console with "whitelist add <name>".' },
+  { key: 'view-distance', label: 'View distance', type: 'int', fallback: '10', min: 2, max: 32 },
+  { key: 'spawn-protection', label: 'Spawn protection', type: 'int', fallback: '16', min: 0, max: 256 },
+]
+
+const PROP_BY_KEY = new Map(EDITABLE_PROPS.map((p) => [p.key, p]))
+
+/** Reject a value the server would reject, before it reaches the file. */
+function coerceProp(spec, raw) {
+  const value = String(raw).trim()
+  if (spec.type === 'bool') {
+    if (value !== 'true' && value !== 'false') fail(`${spec.key} must be true or false`)
+    return value
+  }
+  if (spec.type === 'enum') {
+    if (!spec.options.includes(value)) fail(`${spec.key} must be one of: ${spec.options.join(', ')}`)
+    return value
+  }
+  if (spec.type === 'int') {
+    const n = Number(value)
+    if (!Number.isInteger(n) || n < spec.min || n > spec.max) {
+      fail(`${spec.key} must be a whole number from ${spec.min} to ${spec.max}`)
+    }
+    return String(n)
+  }
+  // Text. A newline would split the line and silently create a second key.
+  if (/[\r\n]/.test(value)) fail(`${spec.key} cannot contain a line break`)
+  return value
+}
+
+function fail(message) {
+  const err = new Error(message)
+  err.userFacing = true
+  throw err
+}
+
+/**
+ * Read or update the properties the panel offers.
+ *
+ * <p>Writes go through writeProps, which rewrites only the keys it is handed and leaves every other
+ * line - and every comment - where it was. The server reads this file once at boot, so a change
+ * made while it is running takes effect on the next start, and the response says so rather than
+ * leaving someone to wonder why nothing happened.
+ */
+async function handleProps(req, res, name) {
+  const inst = registry.getInstance(name)
+  const file = path.join(inst.dir, 'server.properties')
+  // A server that has never booted has only the keys mcctl wrote; Paper fills the rest in on its
+  // first start. Showing those as blank would be wrong - the server has a value for them, it just
+  // has not written it down yet - so the effective default is shown, flagged as not-yet-set.
+  const shape = (current) => EDITABLE_PROPS.map((spec) => ({
+    ...spec,
+    value: current.get(spec.key) ?? spec.fallback,
+    set: current.has(spec.key),
+  }))
+
+  if (req.method === 'GET') {
+    return json(res, 200, { fields: shape(readProps(file)), file })
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+
+  const body = await readBody(req)
+  const updates = {}
+  for (const [key, raw] of Object.entries(body)) {
+    const spec = PROP_BY_KEY.get(key)
+    if (!spec) return json(res, 400, { error: `${key} is not editable from here` })
+    updates[key] = coerceProp(spec, raw)
+  }
+  if (!Object.keys(updates).length) return json(res, 400, { error: 'nothing to change' })
+
+  writeProps(file, updates)
+  return json(res, 200, {
+    changed: Object.keys(updates),
+    appliesOnRestart: supervisor.isRunning(name),
+    fields: shape(readProps(file)),
+  })
+}
+
+/**
  * An instance as the page is allowed to see it.
  *
  * <p>The RCON password is a credential. The page has never needed it, but only the list route was
@@ -77,7 +183,16 @@ function jobUpdate(id, patch) {
  */
 function safeInstance(row) {
   const { rcon, ...safe } = row
-  return { ...safe, rconPort: rcon?.port ?? null }
+  // Whether anyone can join as any name is a property of the server, not of the registry, so it is
+  // read from the file. The panel badges it: an offline server behaves differently for any plugin
+  // that keys data by UUID, and its logs get bug reports refused.
+  let onlineMode = null
+  try {
+    onlineMode = readProps(path.join(row.dir, 'server.properties')).get('online-mode') !== 'false'
+  } catch {
+    /* a directory that has gone missing is already reported through status */
+  }
+  return { ...safe, rconPort: rcon?.port ?? null, onlineMode }
 }
 
 /**
@@ -255,6 +370,7 @@ async function route(req, res) {
         memory: body.memory || '4G',
         port: body.port ? Number(body.port) : null,
         motd: body.motd || null,
+        onlineMode: body.onlineMode !== false,
         // The panel is local and the person clicking Create is the operator; making them re-accept
         // the EULA in a second place would be ceremony, not consent.
         acceptEula: true,
@@ -294,6 +410,9 @@ async function route(req, res) {
     })
     return
   }
+
+  // Reads and writes, so it sits above the gate that allows only POST past this point.
+  if (seg[3] === 'props') return handleProps(req, res, name)
 
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
 
