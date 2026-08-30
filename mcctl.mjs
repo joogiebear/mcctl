@@ -374,12 +374,22 @@ function cmdRemove(positional, flags) {
     fail(`--purge deletes ${inst.dir} permanently. Re-run with --yes to confirm.`)
   }
   removeInstance(name)
+  // The panel's delete does this through manage.destroy; this command has its own older path and
+  // was missing it. A trigger that outlives its server fires forever, fails every time, and turns
+  // up months later in Task Scheduler with nothing to say what put it there.
+  let dropped = 0
+  try {
+    dropped = schedule.removeForInstance(name).removed
+  } catch {
+    /* the instance is gone either way; a stuck task is not a reason to refuse that */
+  }
   if (flags.purge) {
     fs.rmSync(inst.dir, { recursive: true, force: true })
     out(`Removed "${name}" and deleted ${inst.dir}`)
   } else {
     out(`Unregistered "${name}". Files kept at ${inst.dir}`)
   }
+  if (dropped) out(`Also removed ${dropped} scheduled task(s) that pointed at it.`)
   fs.rmSync(runDir(name), { recursive: true, force: true })
 }
 
