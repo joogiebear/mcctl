@@ -6,6 +6,15 @@ injection, and snapshot/restore.
 
 Zero dependencies — plain Node 20+ and the `tar` that ships with Windows.
 
+## What you need
+
+- **Java 21 or newer.** This is the one thing mcctl cannot supply: Minecraft servers *are* Java
+  processes. [Temurin 21](https://adoptium.net/temurin/releases/?version=21) is a good default.
+  The desktop app checks for it on first run and the panel says so in a banner if it is missing;
+  `mcctl doctor` reports it from the command line.
+- **Node 20+**, for the CLI. The desktop app carries its own runtime and does not need it.
+- **Windows 10/11** for the desktop app. The CLI runs anywhere Node does.
+
 ## Why this exists
 
 A Minecraft server is an interactive foreground process. Launched from a normal
@@ -199,6 +208,14 @@ This is built for **localhost and LAN only**.
   `mcctl props <name> online-mode=true`.
 - Nothing here opens firewall ports or touches your router. Exposing a server to
   the internet is a deliberate, separate decision.
+- The panel is an **unauthenticated local HTTP server that can start processes and type into a
+  server console**. Binding to `127.0.0.1` stops other machines reaching it; it does not stop the
+  browser already on this one. So every request must also carry a loopback `Host` — which is what
+  defeats DNS rebinding, since the attacker's own hostname is what arrives in that header — and a
+  cross-origin request is refused outright. Requests with no `Origin` (the panel's own fetches,
+  curl, the CLI) are allowed, because that is what a first-party request looks like.
+- The page never receives an RCON password. Every route that returns an instance strips it first,
+  so it cannot end up in a browser cache, a screenshot, or a pasted bug report.
 
 ## Notes
 
@@ -209,6 +226,40 @@ This is built for **localhost and LAN only**.
   current run. The server's own `logs/` directory keeps the full rolling history.
 - `tar` exits 1 with a warning when it skips a file the running server holds
   locked. That is expected on hot snapshots and is not treated as failure.
+
+---
+
+## The panel
+
+```bash
+node mcctl.mjs ui        # opens http://127.0.0.1:8770 in your browser
+```
+
+One HTML file, served by Node's own http module. No framework, no build step, no npm packages —
+the panel that ships is the file in `src/ui.html`, and it works offline because nothing is fetched
+from anywhere.
+
+The same page runs in a browser tab and inside the desktop app. `window.mcctlDesktop` exists only in
+Electron, and everything that depends on it is additive: a Browse button beside a path field, a
+Settings screen that can move the data folder, update checking. In a browser those simply are not
+there, and nothing else changes.
+
+What it does:
+
+- **Servers** — a card each, with a status lamp, the port, the memory and a live uptime that ticks.
+- **Console** — search, filter to warnings or errors, pause, copy, wrap and a bounded scrollback.
+  Log level shows as a coloured rail in the gutter rather than by recolouring the text, so ERROR
+  stands out without becoming harder to read. A stack trace inherits the level of the line above it,
+  which is what makes "filter to errors" show the whole failure instead of its first line.
+- **Adding a server** — either create one, which downloads Paper and reports real progress, or point
+  mcctl at a folder you already have. Nothing is moved; existing ports and the RCON password are
+  read from that folder's own `server.properties`.
+- **Renaming, resetting and deleting** ask you to type the server's name. That friction is
+  deliberate: a dialog that only says "are you sure" gets answered reflexively.
+
+The panel is bound to `127.0.0.1` and refuses any request whose `Host` is not a loopback address, or
+whose `Origin` is another site. It can start processes and type into a server console, so "local"
+has to mean local rather than merely reachable — see [Security posture](#security-posture).
 
 ---
 
@@ -247,9 +298,29 @@ to `electron-updater` — the release looks published on GitHub while no one is 
 which is a confusing thing to debug weeks later. `releaseType: release` in the publish config is
 what makes shipping one step instead of two.
 
-Builds are **unsigned**. Auto-update works regardless, but Windows SmartScreen warns on first
-install ("More info → Run anyway"). Signing is a certificate purchase, not a code change; the build
-config is arranged so it can be switched on without rework.
+Builds are **unsigned**, so the first thing anyone downloading mcctl sees is Windows SmartScreen:
+a blue box saying "Windows protected your PC". The way past it is **More info → Run anyway**, and it
+stops appearing once enough people have installed the same file. Auto-update works regardless.
+Signing is a certificate purchase rather than a code change, and the build config is arranged so it
+can be switched on without rework.
+
+Worth saying plainly in release notes, because a warning nobody warned you about reads as a virus
+rather than as a missing signature.
+
+### Checking a build before shipping it
+
+There is no CI on this repository, so the build checks itself:
+
+```bash
+cd desktop
+npm run pack      # builds; afterPack fails it if the result is wrong
+npm run verify    # re-checks a build that already exists, icon included
+```
+
+The check covers the things that have gone wrong silently before — the app icon not reaching the
+executable, the core not being copied into `resources`, a file added to `desktop/` and forgotten in
+the `files` allowlist. `afterPack` runs during the build itself, so a bad build throws before an
+installer is made and long before anything is published.
 
 ### How updates behave
 
