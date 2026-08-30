@@ -14,6 +14,7 @@ import * as backup from './backup.mjs'
 import * as schedule from './schedule.mjs'
 import { readProps, writeProps } from './props.mjs'
 import { storedPlayers } from './players.mjs'
+import * as players from './players.mjs'
 import * as settings from './settings.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -285,6 +286,39 @@ function autoBackupTask(name) {
   return mine.find((t) => t.owner === schedule.OWNER_BACKUPS)
     ?? mine.find((t) => !t.owner && t.name === 'Automatic backup')
     ?? null
+}
+
+/**
+ * Who a server knows about, and what it thinks of them.
+ *
+ * <p>Every write goes through players.mjs rather than being decided here, because whether a change
+ * belongs in a file or down the console depends on whether the server is running - and getting
+ * that wrong is invisible until the next restart undoes it.
+ */
+async function handlePlayers(req, res, name, seg) {
+  const inst = registry.getInstance(name)
+  const verb = seg[4] ?? null
+
+  if (req.method === 'GET') {
+    return json(res, 200, {
+      players: players.listPlayers(inst),
+      running: supervisor.isRunning(name),
+      // Whether a name can be recovered at all depends on this, and the tab explains the
+      // difference rather than leaving an id where a name should be.
+      onlineMode: safeInstance(supervisor.statusOf(name)).onlineMode,
+    })
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+
+  const body = await readBody(req)
+  if (!body.uuid) return json(res, 400, { error: 'which player?' })
+  const uuid = String(body.uuid)
+
+  if (verb === 'op') return json(res, 200, await players.setOp(inst, uuid, body.on !== false))
+  if (verb === 'ban') return json(res, 200, await players.setBan(inst, uuid, body.on !== false, body.reason))
+  if (verb === 'forget') return json(res, 200, players.forgetPlayer(inst, uuid))
+
+  return json(res, 404, { error: 'not found' })
 }
 
 /**
@@ -656,6 +690,7 @@ async function route(req, res) {
   if (seg[3] === 'props') return handleProps(req, res, name)
   if (seg[3] === 'backups') return handleBackups(req, res, name, seg)
   if (seg[3] === 'schedules') return handleSchedules(req, res, name, seg)
+  if (seg[3] === 'players') return handlePlayers(req, res, name, seg)
 
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
 
