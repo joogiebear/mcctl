@@ -6,7 +6,7 @@ import { INSTANCES_DIR, runDir } from './paths.mjs'
 import { getInstance, hasInstance, putInstance, removeInstance } from './registry.mjs'
 import * as backup from './backup.mjs'
 import * as supervisor from './supervisor.mjs'
-import { UserError } from './util.mjs'
+import { UserError, validateName } from './util.mjs'
 
 /**
  * Editing and destroying instances.
@@ -30,8 +30,16 @@ function assertStopped(name, verb) {
  * pointing at it, is not a rename, it is a surprise.
  */
 export function rename(oldName, newName) {
-  if (!/^[A-Za-z0-9_-]+$/.test(newName)) {
-    throw new UserError('a name may contain letters, numbers, underscore and hyphen only')
+  // The registry's rule, not a second one that happens to be looser. This used to accept names
+  // like "_scratch" that putInstance then rejected - after removeInstance had already run and the
+  // directory had already moved, which lost the instance from the registry entirely.
+  try {
+    validateName(newName)
+  } catch {
+    throw new UserError(
+      `"${newName}" is not a usable name - start with a letter or digit, then letters, digits, ` +
+        'dash or underscore, up to 32 characters.',
+    )
   }
   const inst = getInstance(oldName)
   if (hasInstance(newName)) throw new UserError(`"${newName}" already exists`)
@@ -119,8 +127,20 @@ export async function destroy(name, { purge = false, snapshot = true } = {}) {
     const res = await backup.createSnapshot(inst, { label: 'pre-delete' })
     snapshotFile = res?.file ?? res?.path ?? null
   }
+  // Files first, registry second. The other order loses the instance from mcctl and leaves the
+  // directory on disk when the delete fails - a locked world file is enough - and the person is
+  // then holding a folder mcctl no longer knows about.
+  if (purge) {
+    try {
+      fs.rmSync(inst.dir, { recursive: true, force: true })
+    } catch (err) {
+      throw new UserError(
+        `could not delete ${inst.dir}: ${err.message}\n` +
+          `  "${name}" is still registered. Close anything using that folder and try again.`,
+      )
+    }
+  }
   removeInstance(name)
-  if (purge) fs.rmSync(inst.dir, { recursive: true, force: true })
   return { name, purged: purge, snapshot: snapshotFile }
 }
 
