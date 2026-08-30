@@ -420,6 +420,38 @@
   .section h3 { margin: 0; font: 600 12px/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); }
   .where { margin: 0 0 10px; gap: 10px; }
   .mono-path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* ---- players -------------------------------------------------------------- */
+
+  .who-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .who-bar input[type="search"] { flex: 1 1 200px; min-width: 160px; }
+  .filters { display: flex; gap: 4px; }
+  .filters button[aria-pressed="true"] { background: var(--lapis-dim); border-color: #3d55b8; color: #eaf0ff; }
+
+  .people { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+  .who {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "name acts" "meta acts";
+    gap: 2px 14px;
+    align-items: center;
+    padding: 10px 12px;
+    background: var(--surface);
+  }
+  .who:hover { background: var(--raised); }
+  .who .w-name { grid-area: name; display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; font: 600 13.5px/1.3 var(--ui); color: var(--ink); }
+  .who .w-name .unknown { font-weight: 400; font-style: italic; color: var(--ink-3); }
+  .who .w-meta { grid-area: meta; font: 11.5px/1.5 var(--mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .who .w-acts { grid-area: acts; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  .who .w-acts button { padding: 4px 9px; font-size: 12px; }
+
+  .pill {
+    font: 600 10px/1 var(--ui); text-transform: uppercase; letter-spacing: .06em;
+    padding: 3px 6px; border-radius: 3px; white-space: nowrap;
+    background: var(--raised); color: var(--ink-3); border: 1px solid var(--line);
+  }
+  .pill[data-tone="op"] { color: #cdd9ff; border-color: #33407a; background: #171d33; }
+  .pill[data-tone="ban"] { color: #ffc9c5; border-color: #4a2529; background: #2b1719; }
+
   /* ---- scheduled tasks ---------------------------------------------------- */
 
   .tasks { display: grid; gap: 10px; }
@@ -722,6 +754,7 @@
       <div class="srv-tabs" role="tablist" aria-label="Server sections">
         <button role="tab" data-pane="console" aria-selected="true">Console</button>
         <button role="tab" data-pane="backups" aria-selected="false">Backups</button>
+        <button role="tab" data-pane="players" aria-selected="false">Players</button>
         <button role="tab" data-pane="scheduler" aria-selected="false">Scheduler</button>
         <button role="tab" data-pane="settings" aria-selected="false">Settings</button>
       </div>
@@ -761,6 +794,10 @@
 
       <div class="pane pane-scroll" id="paneBackups">
         <div class="pane-body wide" id="backupsBody"></div>
+      </div>
+
+      <div class="pane pane-scroll" id="panePlayers">
+        <div class="pane-body wide" id="playersBody"></div>
       </div>
 
       <div class="pane pane-scroll" id="paneScheduler">
@@ -1100,6 +1137,7 @@ function showPane(pane) {
   if (pane === 'settings') renderServerSettings();
   if (pane === 'backups') renderBackups();
   if (pane === 'scheduler') renderScheduler();
+  if (pane === 'players') renderPlayers();
   // Scroll position is not kept while a pre is hidden, so the console has to be put back where it
   // was - and "at the bottom" is where it was for anyone who had not scrolled up.
   if (pane === 'console' && state.atBottom) {
@@ -1511,6 +1549,7 @@ function select(name) {
   $('#settingsBody').dataset.for = '';
   $('#backupsBody').dataset.for = '';
   $('#schedulerBody').dataset.for = '';
+  $('#playersBody').dataset.for = '';
   renderServer(state.rows.find((r) => r.name === name));
   showPane(state.pane);
   renderLog();
@@ -1659,6 +1698,237 @@ $('#bRestart').onclick = act('restart');
  * the core cannot drift about what exists or what a field accepts. The server reads this file once
  * at boot, so anything changed while it is running is announced as taking effect on restart.
  */
+// ---------------------------------------------------------------- players ---
+
+const PLAYER_FILTERS = [
+  { key: 'all', label: 'Everyone', match: () => true },
+  { key: 'operators', label: 'Operators', match: (p) => p.op },
+  { key: 'banned', label: 'Banned', match: (p) => p.banned },
+];
+
+/** Kept across renders so filtering and searching do not lose their place on a refresh. */
+const playerView = { filter: 'all', search: '' };
+
+/**
+ * Everyone this server knows about.
+ *
+ * <p>What each row can do depends on whether the server is running, and the tab says which is
+ * happening rather than leaving it to be discovered: a live server is told through its console, a
+ * stopped one has its files edited. Deleting someone's world data is the one thing that only works
+ * stopped, because a running server would write it straight back.
+ */
+async function renderPlayers(opts) {
+  const force = Boolean(opts && opts.force);
+  const row = state.rows.find((r) => r.name === state.current);
+  const body = $('#playersBody');
+  if (!row) { body.textContent = ''; return; }
+  if (!force && body.dataset.for === row.name && body.childElementCount) return;
+  body.dataset.for = row.name;
+
+  let data;
+  try {
+    data = await api('/instances/' + encodeURIComponent(row.name) + '/players');
+  } catch (e) {
+    body.textContent = '';
+    const bad = document.createElement('div');
+    bad.className = 'bad';
+    bad.textContent = e.message;
+    body.append(bad);
+    body.dataset.for = '';
+    return;
+  }
+  if (body.dataset.for !== row.name) return;
+  body.textContent = '';
+
+  const base = '/instances/' + encodeURIComponent(row.name) + '/players';
+  const again = () => renderPlayers({ force: true });
+
+  // ---- how a change will be made -------------------------------------------
+  const how = document.createElement('div');
+  how.className = 'hint';
+  how.style.marginBottom = '12px';
+  how.textContent = data.running
+    ? 'Changes go through the running server\u2019s console, so they take effect at once.'
+    : 'Changes are written to the server\u2019s files, and take effect the next time it starts.';
+  body.append(how);
+
+  // ---- search and filter ---------------------------------------------------
+  const bar = document.createElement('div');
+  bar.className = 'who-bar';
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.placeholder = 'Search by name or id';
+  search.value = playerView.search;
+  const filters = document.createElement('div');
+  filters.className = 'filters';
+  const counts = {
+    all: data.players.length,
+    operators: data.players.filter((p) => p.op).length,
+    banned: data.players.filter((p) => p.banned).length,
+  };
+  for (const f of PLAYER_FILTERS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = f.label + ' ' + counts[f.key];
+    b.setAttribute('aria-pressed', String(playerView.filter === f.key));
+    b.onclick = () => { playerView.filter = f.key; paint(); };
+    filters.append(b);
+  }
+  bar.append(search, filters);
+  body.append(bar);
+
+  const list = document.createElement('div');
+  body.append(list);
+
+  search.oninput = () => { playerView.search = search.value; paint(); };
+
+  function paint() {
+    for (const b of filters.children) {
+      b.setAttribute('aria-pressed', String(b.textContent.startsWith(
+        PLAYER_FILTERS.find((f) => f.key === playerView.filter).label)));
+    }
+    const term = playerView.search.trim().toLowerCase();
+    const match = PLAYER_FILTERS.find((f) => f.key === playerView.filter).match;
+    const shown = data.players.filter((p) => match(p)
+      && (!term || (p.name || '').toLowerCase().includes(term) || p.uuid.includes(term)));
+
+    list.textContent = '';
+    if (!data.players.length) {
+      const none = document.createElement('div');
+      none.className = 'hint';
+      none.textContent = 'Nobody has joined this server, and nobody is opped, banned or whitelisted. '
+        + 'People appear here the first time the server hears of them.';
+      list.append(none);
+      return;
+    }
+    if (!shown.length) {
+      const none = document.createElement('div');
+      none.className = 'hint';
+      none.textContent = 'Nobody here matches that.';
+      list.append(none);
+      return;
+    }
+    const people = document.createElement('div');
+    people.className = 'people';
+    for (const p of shown) people.append(playerRow(p, data, base, again));
+    list.append(people);
+  }
+  paint();
+}
+
+/** One person, and the three things you can do about them. */
+function playerRow(p, data, base, again) {
+  const el = document.createElement('div');
+  el.className = 'who';
+
+  const name = document.createElement('div');
+  name.className = 'w-name';
+  const who = document.createElement('span');
+  if (p.name) {
+    who.textContent = p.name;
+  } else {
+    who.className = 'unknown';
+    who.textContent = 'name unknown';
+    who.title = 'This server has only ever seen this id, never a name to go with it.';
+  }
+  name.append(who);
+  if (p.op) {
+    const pill = document.createElement('span');
+    pill.className = 'pill';
+    pill.dataset.tone = 'op';
+    pill.textContent = 'Operator';
+    name.append(pill);
+  }
+  if (p.banned) {
+    const pill = document.createElement('span');
+    pill.className = 'pill';
+    pill.dataset.tone = 'ban';
+    pill.textContent = 'Banned';
+    if (p.banReason) pill.title = p.banReason;
+    name.append(pill);
+  }
+  if (p.whitelisted) {
+    const pill = document.createElement('span');
+    pill.className = 'pill';
+    pill.textContent = 'Whitelisted';
+    name.append(pill);
+  }
+
+  const meta = document.createElement('div');
+  meta.className = 'w-meta';
+  const bits = [p.uuid];
+  if (p.lastSeen) bits.push('last seen ' + stamp(p.lastSeen));
+  else if (!p.joined) bits.push('has never joined');
+  if (p.banned && p.banReason) bits.push('banned: ' + p.banReason);
+  meta.textContent = bits.join('  \u00b7  ');
+
+  const acts = document.createElement('div');
+  acts.className = 'w-acts';
+  const opBtn = document.createElement('button');
+  opBtn.textContent = p.op ? 'Remove op' : 'Make op';
+  const banBtn = document.createElement('button');
+  banBtn.className = p.banned ? '' : 'danger';
+  banBtn.textContent = p.banned ? 'Unban' : 'Ban';
+  const wipe = document.createElement('button');
+  wipe.className = 'danger';
+  wipe.textContent = 'Delete data';
+  wipe.disabled = data.running || !p.joined;
+  wipe.title = data.running
+    ? 'Stop the server first - a running one writes this straight back'
+    : p.joined ? 'Remove this player\u2019s inventory, position, stats and advancements'
+      : 'This player has no world data to delete';
+  acts.append(opBtn, banBtn, wipe);
+  el.append(name, meta, acts);
+
+  const label = p.name || p.uuid.slice(0, 8);
+  const busy = (on) => { for (const b of acts.children) b.disabled = on || (b === wipe && (data.running || !p.joined)); };
+
+  const run = async (path, payload, done) => {
+    busy(true);
+    try {
+      const out = await post(base + path, payload);
+      toast(out.reply || done, 'good');
+      await again();
+    } catch (e) {
+      toast(e.message, 'bad');
+      busy(false);
+    }
+  };
+
+  opBtn.onclick = () => run('/op', { uuid: p.uuid, on: !p.op },
+    p.op ? label + ' is no longer an operator.' : label + ' is now an operator.');
+
+  banBtn.onclick = async () => {
+    if (p.banned) return run('/ban', { uuid: p.uuid, on: false }, label + ' is unbanned.');
+    const answer = await ask({
+      title: 'Ban ' + label + '?',
+      text: data.running
+        ? 'They are disconnected straight away and cannot rejoin. The reason is shown to them when they try.'
+        : 'They cannot join once the server starts. The reason is shown to them when they try.',
+      input: { label: 'Why (optional)', value: '', placeholder: 'Griefing' },
+      confirmLabel: 'Ban',
+      danger: true,
+    });
+    if (!answer) return;
+    return run('/ban', { uuid: p.uuid, on: true, reason: answer.text }, label + ' is banned.');
+  };
+
+  wipe.onclick = async () => {
+    const ok = await ask({
+      title: 'Delete ' + label + '\u2019s data?',
+      text: 'Their inventory, position, health, stats and advancements are removed from this world. '
+        + 'They can still join - they arrive as if for the first time. Being opped, banned or '
+        + 'whitelisted is not affected, and this is not undoable without a backup.',
+      confirmLabel: 'Delete data',
+      danger: true,
+      typeToConfirm: p.name || undefined,
+    });
+    if (!ok) return;
+    return run('/forget', { uuid: p.uuid }, 'Deleted ' + label + '\u2019s world data.');
+  };
+  return el;
+}
+
 // -------------------------------------------------------------- scheduler ---
 
 const DAY_NAMES = { MON: 'Monday', TUE: 'Tuesday', WED: 'Wednesday', THU: 'Thursday',
