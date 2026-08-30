@@ -10,8 +10,11 @@ import * as paper from './paper.mjs'
 import * as manage from './manage.mjs'
 import { LAYOUT } from './paths.mjs'
 import * as java from './java.mjs'
+import * as backup from './backup.mjs'
+import * as schedule from './schedule.mjs'
 import { readProps, writeProps } from './props.mjs'
 import { storedPlayers } from './players.mjs'
+import * as settings from './settings.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -178,6 +181,93 @@ async function handleProps(req, res, name) {
 }
 
 /**
+ * Snapshots: what exists, making one, restoring one, throwing one away.
+ *
+ * <p>Restore is the dangerous one - it extracts over a live server's files while the server holds
+ * them open and its own state in memory, which corrupts a world rather than replacing it. The CLI
+ * has always refused on a running server; this refuses for the same reason rather than trusting the
+ * page to have disabled a button.
+ */
+async function handleBackups(req, res, name, seg) {
+  const inst = registry.getInstance(name)
+  const action = seg[4] ?? null
+
+  if (req.method === 'GET') {
+    const auto = schedule.list().find((t) => t.instance === name && t.action.type === 'backup') ?? null
+    return json(res, 200, {
+      snapshots: backup.listSnapshots(name),
+      dir: path.join(LAYOUT.backupsDir, name),
+      root: LAYOUT.backupsDir,
+      scopes: backup.SCOPES,
+      running: supervisor.isRunning(name),
+      auto: auto && {
+        id: auto.id,
+        enabled: auto.enabled,
+        schedule: auto.schedule,
+        keep: auto.action.keep ?? null,
+        state: auto.windows?.state ?? null,
+        lastResult: auto.windows ? schedule.describeResult(auto.windows.lastResult) : null,
+        nextRun: auto.windows?.nextRun ?? null,
+      },
+    })
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+
+  const body = await readBody(req)
+
+  if (!action) {
+    // A snapshot of a running server is legitimate - it is what "back up before I try this" means -
+    // and createSnapshot excludes the one file the server holds locked.
+    const running = supervisor.isRunning(name)
+    const out = await backup.createSnapshot(inst, {
+      scope: backup.SCOPES.includes(body.scope) ? body.scope : 'standard',
+      label: body.label ? String(body.label).slice(0, 40) : 'manual',
+      running,
+    })
+    return json(res, 200, { created: path.basename(out.file), size: out.size, members: out.members })
+  }
+
+  if (action === 'restore') {
+    if (!body.snapshot) return json(res, 400, { error: 'which snapshot?' })
+    if (supervisor.isRunning(name)) {
+      return json(res, 409, {
+        error: `"${name}" is running. Stop it before restoring - extracting over a server that has `
+          + 'those files open corrupts a world rather than replacing it.',
+      })
+    }
+    const snap = backup.resolveSnapshot(name, String(body.snapshot))
+    const out = await backup.restoreSnapshot(inst, snap)
+    return json(res, 200, out)
+  }
+
+  if (action === 'delete') {
+    if (!body.snapshot) return json(res, 400, { error: 'which snapshot?' })
+    return json(res, 200, backup.removeSnapshot(name, String(body.snapshot)))
+  }
+
+  if (action === 'auto') {
+    const existing = schedule.list().find((t) => t.instance === name && t.action.type === 'backup')
+    if (body.enabled === false) {
+      if (existing) schedule.remove(existing.id)
+      return json(res, 200, { auto: null })
+    }
+    // One automatic backup per server. A second would race the first for the same tar and prune
+    // each other's output; if someone wants two rhythms they can add a task in the scheduler.
+    if (existing) schedule.remove(existing.id)
+    const keep = Number(body.keep)
+    const made = schedule.create({
+      instance: name,
+      name: 'Automatic backup',
+      action: { type: 'backup', keep: Number.isInteger(keep) && keep > 0 ? keep : null },
+      schedule: body.schedule ?? { kind: 'daily', at: '03:00' },
+    })
+    return json(res, 200, { auto: { id: made.id, schedule: made.schedule, keep: made.action.keep } })
+  }
+
+  return json(res, 404, { error: 'not found' })
+}
+
+/**
  * An instance as the page is allowed to see it.
  *
  * <p>The RCON password is a credential. The page has never needed it, but only the list route was
@@ -267,8 +357,28 @@ async function route(req, res) {
   }
 
   // ---- where everything lives, for the settings screen ----------------------
-  // Read-only. Changing the data root means re-resolving paths that are fixed at import, so the
-  // panel shows the layout and says how to move it rather than pretending it can move it live.
+  // The data root itself stays read-only here: it is resolved at import, and a process that
+  // created an instance in one directory and looked for it in another would be worse than a
+  // restart. backupsDir is settable because nothing holds a snapshot open across the change - but
+  // it still only takes effect on restart, and the response says so rather than implying otherwise.
+  if (seg[1] === 'settings' && req.method === 'POST') {
+    const body = await readBody(req)
+    if (!Object.hasOwn(body, 'backupsDir')) {
+      return json(res, 400, { error: 'only backupsDir can be set from here' })
+    }
+    const raw = String(body.backupsDir ?? '').trim()
+    if (!raw) {
+      const fallback = path.join(LAYOUT.dataRoot, 'backups')
+      settings.save({ backupsDir: null })
+      return json(res, 200, { backupsDir: fallback, restartRequired: fallback !== LAYOUT.backupsDir })
+    }
+    const dir = path.resolve(raw)
+    const writable = settings.checkWritable(dir)
+    if (!writable.ok) return json(res, 400, { error: `mcctl cannot write to ${dir}: ${writable.error}` })
+    settings.save({ backupsDir: dir })
+    return json(res, 200, { backupsDir: dir, restartRequired: dir !== LAYOUT.backupsDir })
+  }
+
   if (seg[1] === 'settings' && req.method === 'GET') {
     return json(res, 200, {
       dataRoot: LAYOUT.dataRoot,
@@ -416,6 +526,7 @@ async function route(req, res) {
 
   // Reads and writes, so it sits above the gate that allows only POST past this point.
   if (seg[3] === 'props') return handleProps(req, res, name)
+  if (seg[3] === 'backups') return handleBackups(req, res, name, seg)
 
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
 
