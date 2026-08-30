@@ -221,7 +221,10 @@
 
   /* ---- stage ------------------------------------------------------------ */
 
-  .stage { min-height: 0; display: grid; }
+  /* minmax(0, 1fr), not the default auto: an auto track is sized to its content's minimum, so
+     the server header - a flex row of five buttons that do not wrap - made this column wider
+     than the window and pushed "Manage" off the right edge at the app's own minimum size. */
+  .stage { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
   .view { display: none; min-height: 0; }
   .view[data-active] { display: grid; }
 
@@ -326,11 +329,14 @@
     /* head, vitals, notice, tabs, panes. The command bar used to be a sixth row here; it belongs to
        the console rather than to the server, so it moved inside that pane. */
     grid-template-rows: auto auto auto auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r);
   }
-  .srv-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  /* Wraps rather than overflowing. At the app's minimum width there is not room for the name,
+     two badges and five buttons on one line, and the button that fell off the end was Manage. */
+  .srv-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
   .srv-head h1 { margin: 0; font: 600 17px/1.2 var(--ui); letter-spacing: -.01em; }
   .srv-state { font: 12.5px/1 var(--ui); color: var(--ink-2); }
   /* A server anyone can join as any name is a different kind of server, and its logs get bug
@@ -1803,6 +1809,7 @@ async function renderBackups(opts) {
 
   const keepLabel = document.createElement('span');
   keepLabel.className = 'hint';
+  keepLabel.style.whiteSpace = 'nowrap';
   keepLabel.textContent = 'keeping';
   const keep = document.createElement('input');
   keep.type = 'number';
@@ -1812,6 +1819,7 @@ async function renderBackups(opts) {
   keep.style.maxWidth = '68px';
   const keepAfter = document.createElement('span');
   keepAfter.className = 'hint';
+  keepAfter.style.whiteSpace = 'nowrap';
   keepAfter.textContent = 'of them';
 
   const apply = document.createElement('button');
