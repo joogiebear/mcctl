@@ -2,10 +2,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 
-import { INSTANCES_DIR, runDir } from './paths.mjs'
+import { BACKUPS_DIR, INSTANCES_DIR, runDir } from './paths.mjs'
 import { getInstance, hasInstance, putInstance, removeInstance } from './registry.mjs'
 import * as backup from './backup.mjs'
 import * as supervisor from './supervisor.mjs'
+import * as schedule from './schedule.mjs'
 import { UserError, validateName } from './util.mjs'
 
 /**
@@ -46,10 +47,44 @@ export function rename(oldName, newName) {
   assertStopped(oldName, 'renaming it')
 
   const { name: _drop, ...cfg } = inst
+
+  // Snapshots first, while backing out is still free.
+  //
+  // They are keyed by instance name, so a rename that left them behind would empty the Backups tab
+  // of a history that might be the only copy of a world - and nothing would say where it went. This
+  // is also the one step worth refusing the rename over, which is why it happens before anything
+  // else has moved.
+  const oldBackups = path.join(BACKUPS_DIR, oldName)
+  const newBackups = path.join(BACKUPS_DIR, newName)
+  let movedBackups = false
+  if (fs.existsSync(oldBackups)) {
+    try {
+      fs.renameSync(oldBackups, newBackups)
+      movedBackups = true
+    } catch (err) {
+      throw new UserError(
+        `could not move the snapshots from ${oldBackups} to ${newBackups}: ${err.message}\n` +
+          `  "${oldName}" has not been renamed. Close anything reading that folder and try again.`,
+      )
+    }
+  }
+
   const wasDefaultDir = path.resolve(inst.dir) === path.resolve(path.join(INSTANCES_DIR, oldName))
   if (wasDefaultDir) {
     const dest = path.join(INSTANCES_DIR, newName)
-    fs.renameSync(inst.dir, dest)
+    try {
+      fs.renameSync(inst.dir, dest)
+    } catch (err) {
+      // Put the snapshots back rather than leaving them filed under a name nothing else uses.
+      if (movedBackups) {
+        try {
+          fs.renameSync(newBackups, oldBackups)
+        } catch {
+          /* nothing further to try; the message below names both places */
+        }
+      }
+      throw new UserError(`could not move ${inst.dir} to ${dest}: ${err.message}`)
+    }
     cfg.dir = dest
   }
 
@@ -66,7 +101,18 @@ export function rename(oldName, newName) {
 
   removeInstance(oldName)
   putInstance(newName, cfg)
-  return { name: newName, ...cfg, movedDir: wasDefaultDir }
+
+  // Scheduled tasks name the instance they act on. Left behind, they keep firing at a server that
+  // no longer answers to that name - nightly, into a log, failing, with nothing to explain why.
+  // Last, and not allowed to fail the rename: the instance has already moved, and a scheduling
+  // problem is not a reason to leave it half renamed.
+  let tasksMoved = 0
+  try {
+    tasksMoved = schedule.renameInstance(oldName, newName).moved
+  } catch {
+    /* reported through the scheduler screen, where the task will show as not in Windows */
+  }
+  return { name: newName, ...cfg, movedDir: wasDefaultDir, tasksMoved }
 }
 
 /**
@@ -141,7 +187,15 @@ export async function destroy(name, { purge = false, snapshot = true } = {}) {
     }
   }
   removeInstance(name)
-  return { name, purged: purge, snapshot: snapshotFile }
+  // A trigger that outlives its server is the worst kind of leftover: it fires forever, fails every
+  // time, and turns up months later in Task Scheduler with nothing to say what put it there.
+  let tasksRemoved = 0
+  try {
+    tasksRemoved = schedule.removeForInstance(name).removed
+  } catch {
+    /* the instance is gone either way; a stuck task is not a reason to refuse that */
+  }
+  return { name, purged: purge, snapshot: snapshotFile, tasksRemoved }
 }
 
 /** Open an instance's folder in the system file manager. */
