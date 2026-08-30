@@ -22,6 +22,7 @@ import * as ui from './src/ui.mjs'
 import * as manage from './src/manage.mjs'
 import * as settings from './src/settings.mjs'
 import * as java from './src/java.mjs'
+import * as schedule from './src/schedule.mjs'
 import * as paths from './src/paths.mjs'
 import { readProps, writeProps } from './src/props.mjs'
 import { UserError, fail, table, humanBytes, humanDuration, dirSize, isPortFree } from './src/util.mjs'
@@ -713,6 +714,159 @@ function cmdJars(positional, flags) {
 
 // -------------------------------------------------------------------- doctor
 
+/**
+ * Scheduled tasks.
+ *
+ * <p>`task run` is what Windows Task Scheduler actually invokes, through a small batch file, and it
+ * is the only thing a trigger is able to call. What a task DOES comes from its stored definition
+ * rather than from the command line, so a scheduled task can only ever be one of the handful of
+ * things mcctl allows a task to be - not a way to run whatever was written into a trigger.
+ */
+async function cmdTask(positional, flags) {
+  const sub = positional[0] ?? 'list'
+
+  if (sub === 'list') {
+    const tasks = schedule.list()
+    if (!tasks.length) {
+      out('No scheduled tasks.')
+      out('')
+      out('  Add one with: mcctl task add <instance> --do backup --daily 03:00')
+      return
+    }
+    const rows = [['ID', 'INSTANCE', 'DOES', 'WHEN', 'STATE', 'LAST', 'NEXT']]
+    for (const t of tasks) {
+      const w = t.windows
+      rows.push([
+        t.id,
+        t.instance,
+        t.action.type,
+        describeSchedule(t.schedule),
+        t.enabled ? (w ? w.state : 'NOT IN SCHEDULER') : 'disabled',
+        w ? schedule.describeResult(w.lastResult) : '-',
+        w?.nextRun ? String(w.nextRun).replace('T', ' ').slice(0, 16) : '-',
+      ])
+    }
+    out(table(rows))
+    out('')
+    out('Tasks run while you are logged in, including with the screen locked - not after signing out.')
+    return
+  }
+
+  if (sub === 'run') {
+    const id = positional[1]
+    if (!id) fail('usage: mcctl task run <id>')
+    return runTask(id)
+  }
+
+  if (sub === 'add') {
+    const instance = positional[1]
+    if (!instance) fail('usage: mcctl task add <instance> --do <backup|command|restart|stop|start> [when]')
+    getInstance(instance)
+    const type = String(flags.do ?? 'backup')
+    const action = { type }
+    if (type === 'command') {
+      if (!flags.line) fail('--do command needs --line "<what to send>"')
+      action.line = String(flags.line)
+    }
+    const sched = flags.hourly ? { kind: 'hourly', every: Number(flags.hourly) || 1 }
+      : flags.minutes ? { kind: 'minutes', every: Number(flags.minutes) || 30 }
+      : flags.weekly ? { kind: 'weekly', day: String(flags.weekly), at: String(flags.at ?? '03:00') }
+      : flags.onLogon ? { kind: 'onlogon' }
+      : { kind: 'daily', at: String(flags.daily === true ? '03:00' : flags.daily ?? flags.at ?? '03:00') }
+    const made = schedule.create({ instance, name: flags.name ?? null, action, schedule: sched })
+    out(`Created "${made.id}" - ${made.name}, ${describeSchedule(made.schedule)}.`)
+    return
+  }
+
+  if (sub === 'rm') {
+    const id = positional[1]
+    if (!id) fail('usage: mcctl task rm <id>')
+    schedule.remove(id)
+    out(`Removed "${id}".`)
+    return
+  }
+
+  if (sub === 'enable' || sub === 'disable') {
+    const id = positional[1]
+    if (!id) fail(`usage: mcctl task ${sub} <id>`)
+    schedule.setEnabled(id, sub === 'enable')
+    out(`${sub === 'enable' ? 'Enabled' : 'Disabled'} "${id}".`)
+    return
+  }
+
+  fail('usage: mcctl task [list|add|run|rm|enable|disable]')
+}
+
+function describeSchedule(s) {
+  switch (s.kind) {
+    case 'hourly': return s.every > 1 ? `every ${s.every}h` : 'hourly'
+    case 'minutes': return `every ${s.every}m`
+    case 'weekly': return `${s.day} ${s.at}`
+    case 'onlogon': return 'at logon'
+    default: return `daily ${s.at}`
+  }
+}
+
+/**
+ * Perform one scheduled task.
+ *
+ * <p>Runs unattended, so everything it does is written down: Task Scheduler records the exit code,
+ * and stdout goes to the instance's own run directory where the panel can show it next to the task
+ * that produced it. A failure at 3am that leaves no trace is the reason to bother.
+ */
+async function runTask(id) {
+  const all = schedule.load().tasks
+  if (!Object.hasOwn(all, id)) fail(`no scheduled task "${id}"`)
+  const task = all[id]
+  const { instance, action } = task
+  const started = Date.now()
+
+  const record = (ok, detail) => {
+    const line = `${new Date().toISOString()}\t${ok ? 'ok' : 'FAILED'}\t${action.type}\t${detail}`
+    try {
+      const file = path.join(runDir(instance), 'tasks.log')
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.appendFileSync(file, line + '\n')
+    } catch {
+      /* the exit code still reaches Task Scheduler */
+    }
+    out(line)
+  }
+
+  try {
+    const inst = getInstance(instance)
+    const running = sup.isRunning(instance)
+
+    if (action.type === 'backup') {
+      const res = await backup.createSnapshot(inst, { scope: 'standard', label: 'scheduled', running })
+      record(true, `${res.file} (${humanBytes(res.size)})`)
+    } else if (action.type === 'command') {
+      if (!running) return record(false, 'server is not running')
+      await sup.sendConsole(instance, action.line)
+      record(true, action.line)
+    } else if (action.type === 'restart') {
+      if (running) await sup.stop(instance)
+      await sup.start(instance, { wait: false })
+      record(true, 'restarted')
+    } else if (action.type === 'stop') {
+      if (!running) return record(true, 'already stopped')
+      await sup.stop(instance)
+      record(true, 'stopped')
+    } else if (action.type === 'start') {
+      if (running) return record(true, 'already running')
+      await sup.start(instance, { wait: false })
+      record(true, 'started')
+    } else {
+      fail(`unknown action "${action.type}"`)
+    }
+  } catch (err) {
+    record(false, err?.message ?? String(err))
+    process.exitCode = 1
+    return
+  }
+  out(`done in ${Math.round((Date.now() - started) / 1000)}s`)
+}
+
 async function cmdDoctor() {
   const problems = []
   const notes = []
@@ -884,6 +1038,7 @@ const COMMANDS = {
   launchers: cmdLaunchers,
   ui: cmdUi,
   panel: cmdUi,
+  task: cmdTask,
   doctor: cmdDoctor,
   help: cmdHelp,
 }
