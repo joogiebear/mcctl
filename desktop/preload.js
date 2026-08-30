@@ -19,6 +19,12 @@ contextBridge.exposeInMainWorld('mcctlDesktop', {
   /** Current and default locations, for the setup screen. */
   getSetup: () => ipcRenderer.invoke('mcctl:getSetup'),
 
+  /** Whether a usable Java is installed. Asked before anything is downloaded. */
+  checkJava: () => ipcRenderer.invoke('mcctl:checkJava'),
+
+  /** Open an https link in the real browser. Refused for anything else. */
+  openExternal: (url) => ipcRenderer.invoke('mcctl:openExternal', url),
+
   /** Save locations and restart into them. */
   saveSetup: (choice) => ipcRenderer.invoke('mcctl:saveSetup', choice),
 

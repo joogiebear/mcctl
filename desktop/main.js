@@ -1,6 +1,6 @@
 'use strict'
 
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { pathToFileURL } = require('node:url')
@@ -59,11 +59,24 @@ async function startPanel() {
 async function needsSetup() {
   const settings = await loadCore('src/settings.mjs')
   const saved = settings.load()
-  if (saved.dataRoot) return false
+  // A saved root only counts if it is still there. Uninstalling leaves settings.json behind, so a
+  // reinstall - or a data folder that lived on a drive which is no longer plugged in - would
+  // otherwise skip the wizard and open a panel pointed at nothing.
+  if (saved.dataRoot && fs.existsSync(saved.dataRoot)) return false
   // An existing checkout already holding instances.json is a configured install in all but name;
   // asking that person where to put their servers would be asking about servers they already have.
   return !fs.existsSync(path.join(core.dir, 'instances.json'))
 }
+
+/**
+ * The app icon.
+ *
+ * <p>electron-builder stamps build/icon.ico onto the packaged executable and the installer, but an
+ * unpackaged `npm start` gets Electron's own atom - and so does the BrowserWindow unless it is
+ * told. Pointing at the same file keeps development, the taskbar and the installer showing one
+ * icon rather than three.
+ */
+const ICON = path.join(__dirname, 'build', 'icon.ico')
 
 function createWindow(loadUrl) {
   win = new BrowserWindow({
@@ -71,8 +84,13 @@ function createWindow(loadUrl) {
     height: 820,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: '#10131a',
+    backgroundColor: '#0c0e14',
     title: 'mcctl',
+    icon: fs.existsSync(ICON) ? ICON : undefined,
+    // Painting a half-built page is worse than painting nothing. The window is created hidden and
+    // shown once the panel has actually rendered, so the first frame anyone sees is the finished
+    // one rather than a white flash and a jumping layout.
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       // The page is local and trusted, but there is no reason for it to hold Node: everything it
@@ -82,6 +100,12 @@ function createWindow(loadUrl) {
     },
   })
   win.loadURL(loadUrl)
+  win.once('ready-to-show', () => win.show())
+  // A page that fails to load would otherwise leave a hidden window and a process with no UI.
+  win.webContents.on('did-fail-load', (_e, code, desc) => {
+    if (win && !win.isDestroyed()) win.show()
+    dialog.showErrorBox('mcctl could not open its panel', `${desc} (${code})\n\n${loadUrl}`)
+  })
 
   // Links to anywhere else belong in the real browser, not in a chrome-less app window the person
   // cannot navigate back out of.
@@ -102,6 +126,30 @@ ipcMain.handle('mcctl:pickFolder', async (_e, { title } = {}) => {
     properties: ['openDirectory', 'createDirectory'],
   })
   return res.canceled ? null : res.filePaths[0]
+})
+
+/**
+ * Is Java installed?
+ *
+ * <p>Asked by the first-run wizard before anything is downloaded. Java is the one prerequisite
+ * mcctl cannot supply, and finding out at the first press of Start - after setup and a fifty-
+ * megabyte download - is the difference between a missing dependency and a broken application.
+ */
+ipcMain.handle('mcctl:checkJava', async () => {
+  const java = await loadCore('src/java.mjs')
+  return { ...java.probe(), downloadUrl: java.DOWNLOAD_URL }
+})
+
+/**
+ * Open a link in the real browser.
+ *
+ * <p>Allowlisted to https, so a compromised page cannot use this to launch a local executable or
+ * reach a file:// path.
+ */
+ipcMain.handle('mcctl:openExternal', async (_e, url) => {
+  if (typeof url !== 'string' || !url.startsWith('https://')) return { ok: false }
+  await shell.openExternal(url)
+  return { ok: true }
 })
 
 ipcMain.handle('mcctl:getSetup', async () => {
@@ -208,19 +256,66 @@ ipcMain.handle('mcctl:appInfo', async () => ({
 
 // ---- lifecycle ---------------------------------------------------------------
 
-app.whenReady().then(async () => {
-  if (await needsSetup()) {
-    createWindow(pathToFileURL(path.join(__dirname, 'setup.html')).href)
-  } else {
-    panelUrl = await startPanel()
-    createWindow(panelUrl)
-    setupUpdates()
-  }
+/**
+ * Windows groups taskbar buttons, jump lists and notifications by AppUserModelID. Without this
+ * call the running app is a different identity from the shortcut the installer wrote, so it gets
+ * its own taskbar button with the wrong icon and cannot be pinned usefully. It must match the
+ * appId in package.json.
+ */
+if (process.platform === 'win32') app.setAppUserModelId('io.github.joogiebear.mcctl')
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow(panelUrl)
+/**
+ * No menu bar.
+ *
+ * <p>Electron's default menu is File / Edit / View / Window / Help built for a text editor, and on
+ * a control panel it is a strip of items that either do nothing useful or open developer tools.
+ * Copy, paste and select-all keep working - Chromium handles those in the renderer on Windows
+ * without a menu to hang them off.
+ */
+Menu.setApplicationMenu(null)
+
+/**
+ * One instance.
+ *
+ * <p>Not a nicety here: two copies of this process would bind two panels and, worse, two
+ * supervisors could race the same instance's control pipe. A second launch raises the window that
+ * already exists, which is also what someone double-clicking the shortcut again meant.
+ */
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!win || win.isDestroyed()) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
   })
-})
+
+  app.whenReady().then(async () => {
+    if (await needsSetup()) {
+      createWindow(pathToFileURL(path.join(__dirname, 'setup.html')).href)
+    } else {
+      panelUrl = await startPanel()
+      createWindow(panelUrl)
+      setupUpdates()
+    }
+
+    app.on('activate', () => {
+      // panelUrl is still null on the setup branch; reopening into `null` would load about:blank.
+      if (BrowserWindow.getAllWindows().length === 0 && panelUrl) createWindow(panelUrl)
+    })
+  }).catch((err) => {
+    // Without this, a failure in here rejects silently: no window, no message, and an mcctl.exe in
+    // Task Manager that the person can only find by looking for it. Quarantined resources and a
+    // security product blocking the loopback listen both land here, and both are plausible for an
+    // unsigned build on a stranger's machine.
+    dialog.showErrorBox(
+      'mcctl could not start',
+      `${err?.message ?? err}\n\n${err?.stack ?? ''}`.trim(),
+    )
+    app.exit(1)
+  })
+}
 
 app.on('window-all-closed', () => {
   // Closing the window closes the app, but the SERVERS keep running: mcctl starts each one as a
