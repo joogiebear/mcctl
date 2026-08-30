@@ -814,6 +814,11 @@ function describeSchedule(s) {
  * and stdout goes to the instance's own run directory where the panel can show it next to the task
  * that produced it. A failure at 3am that leaves no trace is the reason to bother.
  */
+// How long an unattended start waits for the server to report ready before calling it a failure.
+// Passed explicitly rather than left to the default so the number in the log line cannot drift
+// away from the number actually waited.
+const TASK_START_TIMEOUT = 180000
+
 async function runTask(id) {
   const all = schedule.load().tasks
   if (!Object.hasOwn(all, id)) fail(`no scheduled task "${id}"`)
@@ -821,8 +826,20 @@ async function runTask(id) {
   const { instance, action } = task
   const started = Date.now()
 
-  const record = (ok, detail) => {
-    const line = `${new Date().toISOString()}\t${ok ? 'ok' : 'FAILED'}\t${action.type}\t${detail}`
+  /**
+   * One line per run, and the exit code Windows will see.
+   *
+   * <p>Three outcomes, not two. A command task whose server happens to be down did not fail - there
+   * was simply nothing to send - and calling that a failure every hour teaches you to ignore the
+   * word. It is recorded as skipped and reported to Windows as success, so the two records agree;
+   * they did not before, and a log saying FAILED beside a scheduler saying ok is worse than either.
+   */
+  const record = (status, detail) => {
+    // The id is written down because one instance can have several tasks of the same type -
+    // two backup schedules, say - and a line that only says "backup" cannot say which.
+    // Tabs and newlines are stripped from the detail so one run stays one parseable line.
+    const flat = String(detail).replace(/[\t\r\n]+/g, ' ')
+    const line = `${new Date().toISOString()}\t${id}\t${status}\t${action.type}\t${flat}`
     try {
       const file = path.join(runDir(instance), 'tasks.log')
       fs.mkdirSync(path.dirname(file), { recursive: true })
@@ -831,6 +848,28 @@ async function runTask(id) {
       /* the exit code still reaches Task Scheduler */
     }
     out(line)
+  }
+
+  /**
+   * Start the server, and wait to find out whether it survived.
+   *
+   * <p>This used to pass `wait: false` and record "restarted" the moment the process existed. A
+   * server that died eight seconds later on a broken plugin therefore reported success to Task
+   * Scheduler and wrote "ok" into the log - and the nightly restart that was quietly leaving the
+   * server down looked healthy for as long as anyone cared to check. Nothing is waiting on this
+   * task, so there is no reason to answer before the answer is known.
+   */
+  const startAndReport = async (verb) => {
+    const res = await sup.start(instance, { timeout: TASK_START_TIMEOUT })
+    if (res.failed) {
+      process.exitCode = 1
+      return record('FAILED', `${verb}, but it stopped again: ${res.reason}`)
+    }
+    if (res.timedOut) {
+      process.exitCode = 1
+      return record('FAILED', `${verb}, but it had not finished starting after ${TASK_START_TIMEOUT / 1000}s`)
+    }
+    return record('ok', verb)
   }
 
   try {
@@ -843,31 +882,29 @@ async function runTask(id) {
       // Pruned AFTER the new one exists, never before: trimming first would mean a failed backup
       // leaves you with fewer than you had, which is the opposite of what a retention limit is for.
       if (Number.isInteger(action.keep) && action.keep > 0) {
-        const gone = backup.pruneSnapshots(instance, action.keep)
+        const gone = backup.pruneSnapshots(instance, action.keep, { only: 'scheduled' })
         if (gone.length) pruned = `, pruned ${gone.length} over the limit of ${action.keep}`
       }
-      record(true, `${res.file} (${humanBytes(res.size)})${pruned}`)
+      record('ok', `${res.file} (${humanBytes(res.size)})${pruned}`)
     } else if (action.type === 'command') {
-      if (!running) return record(false, 'server is not running')
+      if (!running) return record('skipped', 'the server was not running, so nothing was sent')
       await sup.sendConsole(instance, action.line)
-      record(true, action.line)
+      record('ok', action.line)
     } else if (action.type === 'restart') {
       if (running) await sup.stop(instance)
-      await sup.start(instance, { wait: false })
-      record(true, 'restarted')
+      return await startAndReport('restarted')
     } else if (action.type === 'stop') {
-      if (!running) return record(true, 'already stopped')
+      if (!running) return record('skipped', 'it was already stopped')
       await sup.stop(instance)
-      record(true, 'stopped')
+      record('ok', 'stopped')
     } else if (action.type === 'start') {
-      if (running) return record(true, 'already running')
-      await sup.start(instance, { wait: false })
-      record(true, 'started')
+      if (running) return record('skipped', 'it was already running')
+      return await startAndReport('started')
     } else {
       fail(`unknown action "${action.type}"`)
     }
   } catch (err) {
-    record(false, err?.message ?? String(err))
+    record('FAILED', err?.message ?? String(err))
     process.exitCode = 1
     return
   }
