@@ -254,15 +254,16 @@ async function handleBackups(req, res, name, seg) {
     // One automatic backup per server - the one this tab owns. A second would race the first for
     // the same tar and prune each other's output. Tasks the user made in the Scheduler tab are not
     // this tab's to touch, and autoBackupTask is what keeps them out of it.
-    if (existing) schedule.remove(existing.id)
+    //
+    // Changed in place rather than removed and remade. The old order deleted a working schedule
+    // first, so a create that then failed - Task Scheduler service stopped, a transient schtasks
+    // error - left the server with no automatic backup at all and a toggle that still read On.
     const keep = Number(body.keep)
-    const made = schedule.create({
-      instance: name,
-      name: 'Automatic backup',
-      action: { type: 'backup', keep: Number.isInteger(keep) && keep > 0 ? keep : null },
-      schedule: body.schedule ?? { kind: 'daily', at: '03:00' },
-      owner: schedule.OWNER_BACKUPS,
-    })
+    const action = { type: 'backup', keep: Number.isInteger(keep) && keep > 0 ? keep : null }
+    const when = body.schedule ?? { kind: 'daily', at: '03:00' }
+    const made = existing
+      ? schedule.update(existing.id, { action, schedule: when, enabled: true, owner: schedule.OWNER_BACKUPS })
+      : schedule.create({ instance: name, name: 'Automatic backup', action, schedule: when, owner: schedule.OWNER_BACKUPS })
     return json(res, 200, { auto: { id: made.id, schedule: made.schedule, keep: made.action.keep } })
   }
 
@@ -332,6 +333,16 @@ async function handleSchedules(req, res, name, seg) {
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
 
   const body = await readBody(req)
+
+  // Reserved, because autoBackupTask still recognises a task by this name when it has no owner
+  // mark - that is how a schedule made before the mark existed is adopted. A task the user named
+  // the same thing would be adopted instead, and the toggle would then delete it.
+  if (body.name !== undefined && String(body.name).trim().toLowerCase() === 'automatic backup') {
+    return json(res, 400, {
+      error: '"Automatic backup" is the name the Backups tab uses for the schedule behind its own '
+        + 'toggle. Pick another so the two cannot be confused.',
+    })
+  }
 
   if (!id) {
     const made = schedule.create({
