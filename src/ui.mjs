@@ -26,6 +26,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 export function serve({ port = 8770, host = '127.0.0.1', open = true } = {}) {
   const server = http.createServer(async (req, res) => {
     try {
+      if (!isLocalRequest(req)) {
+        return json(res, 403, { error: 'this panel only answers requests addressed to localhost' })
+      }
       await route(req, res)
     } catch (err) {
       json(res, 500, { error: err?.message ?? String(err) })
@@ -63,6 +66,45 @@ function jobUpdate(id, patch) {
   for (const send of job.listeners ?? []) send(job)
   // Oldest first: Map preserves insertion order, so this drops the job least likely to be watched.
   while (jobs.size > JOB_LIMIT) jobs.delete(jobs.keys().next().value)
+}
+
+/**
+ * An instance as the page is allowed to see it.
+ *
+ * <p>The RCON password is a credential. The page has never needed it, but only the list route was
+ * stripping it - every start, stop, restart and settings response was handing it back, where it
+ * lands in a browser cache, a screenshot, or a pasted bug report.
+ */
+function safeInstance(row) {
+  const { rcon, ...safe } = row
+  return { ...safe, rconPort: rcon?.port ?? null }
+}
+
+/**
+ * Whether this request was actually addressed to the loopback panel.
+ *
+ * <p>Binding to 127.0.0.1 stops other machines connecting; it does not stop the browser already on
+ * this machine. Any web page can point a script at http://127.0.0.1:8770, and DNS rebinding lets a
+ * page reach it under its own origin. This endpoint can start processes and type into a server
+ * console, so "local" has to mean local, not merely reachable.
+ *
+ * <p>Two checks, both cheap: the Host header must name a loopback address, which defeats rebinding
+ * (the attacker's own hostname is what arrives); and a cross-origin request is refused outright,
+ * which defeats the plain form-post case. Requests with no Origin - the panel's own fetches, curl,
+ * the CLI - are allowed through, because that is what a first-party request looks like.
+ */
+const LOOPBACK_HOST = /^(?:127\.\d+\.\d+\.\d+|\[::1\]|localhost)(?::\d+)?$/i
+
+function isLocalRequest(req) {
+  const host = req.headers.host
+  if (!host || !LOOPBACK_HOST.test(host)) return false
+  const origin = req.headers.origin
+  if (!origin) return true
+  try {
+    return LOOPBACK_HOST.test(new URL(origin).host)
+  } catch {
+    return false
+  }
 }
 
 function json(res, code, body) {
@@ -166,8 +208,7 @@ async function route(req, res) {
       }
       // The page never needs the RCON password, so it never receives it. Local-only or not,
       // a credential that is not sent cannot be read out of a browser cache or a screenshot.
-      const { rcon, ...safe } = row
-      return { ...safe, rconPort: rcon?.port ?? null }
+      return safeInstance(row)
     })
     return json(res, 200, rows)
   }
@@ -185,8 +226,7 @@ async function route(req, res) {
       jar: body.jar ? String(body.jar) : null,
       memory: body.memory ? String(body.memory) : '4G',
     })
-    const { rcon, ...safe } = inst
-    return json(res, 200, safe)
+    return json(res, 200, safeInstance(inst))
   }
 
   if (seg[1] === 'instances' && req.method === 'POST' && seg.length === 2) {
@@ -220,8 +260,7 @@ async function route(req, res) {
         acceptEula: true,
       })
       jobUpdate(jobId, { stage: 'done', percent: 100, message: `Created ${inst.name}`, done: true })
-      const { rcon, ...safe } = inst
-      return json(res, 200, safe)
+      return json(res, 200, safeInstance(inst))
     } catch (err) {
       // The POST answers with the error too; the job carries it as well so a page that is watching
       // the stream shows the failure at the step it happened on rather than a bare rejected fetch.
@@ -258,18 +297,29 @@ async function route(req, res) {
 
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
 
-  if (seg[3] === 'start') {
-    await supervisor.start(name)
-    return json(res, 200, supervisor.statusOf(name))
+  /**
+   * Start, and say so only if it actually started.
+   *
+   * <p>supervisor.start waits for Paper to report ready and returns whether it did. That result was
+   * being thrown away, so a server that died on a bad jar, a taken port or an unaccepted EULA
+   * answered 200 and the panel said "started" over a console full of the reason it had not.
+   */
+  const started = async () => {
+    const out = await supervisor.start(name)
+    const status = safeInstance(supervisor.statusOf(name))
+    if (out.failed) return json(res, 500, { error: `"${name}" started but stopped again: ${out.reason}`, status })
+    if (out.timedOut) return json(res, 504, { error: `"${name}" is taking longer than usual to come up. Watch the console - it may still finish.`, status })
+    return json(res, 200, status)
   }
+
+  if (seg[3] === 'start') return started()
   if (seg[3] === 'stop') {
     await supervisor.stop(name)
-    return json(res, 200, supervisor.statusOf(name))
+    return json(res, 200, safeInstance(supervisor.statusOf(name)))
   }
   if (seg[3] === 'restart') {
     await supervisor.stop(name).catch(() => {})
-    await supervisor.start(name)
-    return json(res, 200, supervisor.statusOf(name))
+    return started()
   }
   if (seg[3] === 'rename') {
     const body = await readBody(req)
@@ -295,16 +345,36 @@ async function route(req, res) {
     // Only the fields the panel offers. An allowlist rather than a merge: a settings endpoint that
     // writes whatever it is handed is how a typo in the page silently rewrites the registry.
     const patch = {}
-    if (body.memory) patch.memory = String(body.memory)
-    if (body.port) patch.port = Number(body.port)
+    if (body.memory) {
+      // parseMemoryGb throws a readable message for anything that is not 4G or 6144M, and it is
+      // the same parser the launcher uses - so what the panel accepts is exactly what will start.
+      const memory = String(body.memory).trim()
+      registry.parseMemoryGb(memory)
+      patch.memory = memory
+    }
+    if (body.port) {
+      const port = Number(body.port)
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        return json(res, 400, { error: `${body.port} is not a port number - use 1 to 65535.` })
+      }
+      // A port already spoken for by another instance would collide the next time both start, and
+      // the failure would show up minutes later as a server that would not boot.
+      const clash = registry.listInstances().find(
+        (i) => i.name !== name && (i.port === port || i.rcon?.port === port),
+      )
+      if (clash) return json(res, 400, { error: `port ${port} is already used by "${clash.name}".` })
+      patch.port = port
+    }
     if (body.jar) patch.jar = String(body.jar)
     if (body.java) patch.java = String(body.java)
     registry.updateInstance(name, patch)
-    return json(res, 200, supervisor.statusOf(name))
+    return json(res, 200, safeInstance(supervisor.statusOf(name)))
   }
   if (seg[3] === 'command') {
     const body = await readBody(req)
-    if (!body.line) return json(res, 400, { error: 'line is required' })
+    if (body.line == null || String(body.line).trim() === '') {
+      return json(res, 400, { error: 'a command is required' })
+    }
     await supervisor.sendConsole(name, String(body.line))
     return json(res, 200, { sent: true })
   }
