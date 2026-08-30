@@ -25,7 +25,7 @@ export function listInstances() {
 export function getInstance(name) {
   validateName(name)
   const reg = loadRegistry()
-  const cfg = reg.instances[name]
+  const cfg = Object.hasOwn(reg.instances, name) ? reg.instances[name] : null
   if (!cfg) {
     const known = Object.keys(reg.instances)
     fail(
@@ -37,7 +37,10 @@ export function getInstance(name) {
 }
 
 export function hasInstance(name) {
-  return Boolean(loadRegistry().instances[name])
+  // Own properties only. `instances` comes straight out of JSON.parse, so it inherits
+  // Object.prototype - and a plain lookup answers true for "constructor" or "toString", which is
+  // enough to get a request past the panel's existence check and into a confusing failure.
+  return Object.hasOwn(loadRegistry().instances, name)
 }
 
 export function putInstance(name, cfg) {
@@ -49,7 +52,7 @@ export function putInstance(name, cfg) {
 
 export function updateInstance(name, patch) {
   const reg = loadRegistry()
-  if (!reg.instances[name]) fail(`no instance named "${name}"`)
+  if (!Object.hasOwn(reg.instances, name)) fail(`no instance named "${name}"`)
   reg.instances[name] = { ...reg.instances[name], ...patch }
   saveRegistry(reg)
   return { name, ...reg.instances[name] }
