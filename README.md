@@ -128,6 +128,39 @@ of a world mid-write.
 
 `restore` refuses without `--yes` and prints what it would overwrite.
 
+### Scheduled work
+
+| Command | Does |
+| --- | --- |
+| `task list` | Every scheduled task, with its next run and last result |
+| `task add <inst> --do <what> [when]` | Create one |
+| `task rm <id>` / `task enable\|disable <id>` | Remove or pause one |
+| `task run <id>` | Run it now — this is also what Windows calls |
+
+`--do` is one of `backup`, `command` (with `--line "<what to send>"`), `restart`,
+`stop`, `start`. When: `--daily 03:00`, `--hourly <n>`, `--minutes <n>`,
+`--weekly SUN --at 03:00`, or `--on-logon`.
+
+Windows Task Scheduler runs these, so they happen whether or not mcctl is open.
+They run **interactive only**: while you are signed in, screen locked included,
+but not after you sign out. Running regardless would mean storing a Windows
+password in the task definition, which is not a thing to do quietly for a nightly
+backup.
+
+mcctl keeps the definitions in its own file and gives Windows only a trigger that
+calls back into `mcctl task run <id>`. Two reasons: what a task *does* stays inside
+mcctl, where it is constrained to the handful of things a task is allowed to be
+rather than an arbitrary command line; and editing a task does not mean recreating
+a Windows task.
+
+Every run writes a line to the instance's run directory recording what it did —
+the filename a backup produced, the command it sent, or why it was skipped. Task
+Scheduler only records an exit code, so `0` is all it can say about a backup.
+
+Runs have three outcomes. A `command` task whose server is down did not fail;
+there was nothing to send, and it reads as skipped. Renaming a server moves its
+tasks with it, and deleting one takes them away.
+
 ### Other
 
 | Command | Does |
@@ -218,9 +251,17 @@ This is built for **localhost and LAN only**.
 - The panel is an **unauthenticated local HTTP server that can start processes and type into a
   server console**. Binding to `127.0.0.1` stops other machines reaching it; it does not stop the
   browser already on this one. So every request must also carry a loopback `Host` — which is what
-  defeats DNS rebinding, since the attacker's own hostname is what arrives in that header — and a
-  cross-origin request is refused outright. Requests with no `Origin` (the panel's own fetches,
-  curl, the CLI) are allowed, because that is what a first-party request looks like.
+  defeats DNS rebinding, since the attacker's own hostname is what arrives in that header — and an
+  `Origin`, when there is one, must match that `Host` exactly, **port included**. Comparing only the
+  hostname was not enough: this machine is full of pages served from loopback, and dynmap, BlueMap
+  and Plan all serve web UIs on their own ports while rendering names and chat that players chose.
+  Requests with no `Origin` (the panel's own fetches, curl, the CLI) are allowed, because that is
+  what a first-party request looks like.
+- **Scheduled tasks are code that runs on a timer**, so what a task may be is an allowlist rather
+  than a command string: back up, send a console command, restart, stop, start. Windows holds only
+  a trigger calling `mcctl task run <id>`; what that id means lives in mcctl's own file, and a value
+  it does not recognise is refused rather than executed. Tasks run as the signed-in user, with no
+  stored password and no elevation.
 - The page never receives an RCON password. Every route that returns an instance strips it first,
   so it cannot end up in a browser cache, a screenshot, or a pasted bug report.
 
@@ -254,28 +295,54 @@ there, and nothing else changes.
 What it does:
 
 - **Servers** — a card each, with a status lamp, the port, the memory and a live uptime that ticks.
-- **Console** — search, filter to warnings or errors, pause, copy, wrap and a bounded scrollback.
-  Log level shows as a coloured rail in the gutter rather than by recolouring the text, so ERROR
-  stands out without becoming harder to read. A stack trace inherits the level of the line above it,
-  which is what makes "filter to errors" show the whole failure instead of its first line.
 - **Adding a server** — either create one, which downloads Paper and reports real progress, or point
   mcctl at a folder you already have. Nothing is moved; existing ports and the RCON password are
   read from that folder's own `server.properties`.
 - **Renaming, resetting and deleting** ask you to type the server's name. That friction is
   deliberate: a dialog that only says "are you sure" gets answered reflexively.
-- **Changing who can join** on a world that already has players warns first. Minecraft derives an
-  offline UUID from the player's name and uses the real Mojang one otherwise, so flipping this
-  hands everybody a different identity — permissions, homes, inventories and anything else a plugin
-  keyed by UUID stay attached to the identity nobody has any more. The panel reads the world's
-  `playerdata` directory, tells the two kinds of UUID apart by version, and says how many players
-  are affected before you decide.
-- **Settings…** edits the part of `server.properties` people actually change — who can join,
-  MOTD, difficulty, game mode, max players, PvP, whitelist, view distance, spawn protection.
-  Everything else stays in the file for `mcctl props` or an editor, and nothing the panel writes
-  disturbs another key or a comment.
+
+A selected server has five tabs.
+
+**Console** — search, filter to warnings or errors, pause, copy, wrap and a bounded scrollback.
+Log level shows as a coloured rail in the gutter rather than by recolouring the text, so ERROR
+stands out without becoming harder to read. A stack trace inherits the level of the line above it,
+which is what makes "filter to errors" show the whole failure instead of its first line.
+
+**Backups** — take one at a chosen scope, see every snapshot with its size, age and coverage, and
+restore or delete any of them. Restoring is refused while the server runs, because extracting over
+files a live server holds open corrupts a world rather than replacing it. Automatic backups run on
+a schedule with a retention limit, and the limit only ever removes snapshots its own schedule
+produced — never one taken by hand or before a reset.
+
+**Players** — everyone the server knows about, gathered from operators, bans, the whitelist, the
+name cache and the world folder, since none of those is a complete list on its own. Search, filter
+to operators or the banned, and op, ban or delete a player's world data. Whoever is connected is
+marked and sorted first, which has to be asked of the server: a player's file is not written until
+they log out, so a screen reading only files says "has never joined" about somebody standing in
+front of you. Changes go through the console while the server runs and into its files when it does
+not — editing a file under a live server is reverted the next time it saves.
+
+**Performance** — processor and memory over the last minute, five minutes, half hour, hour or four
+hours, sampled every ten seconds. Both scales follow the data, because a fixed 0–100% processor
+axis draws every ordinary server as a flat line on the floor.
+
+**Settings** — the part of `server.properties` people actually change: who can join, MOTD,
+difficulty, game mode, max players, PvP, whitelist, view distance, spawn protection. Everything
+else stays in the file for `mcctl props` or an editor, and nothing the panel writes disturbs
+another key or a comment.
+
+**Changing who can join** on a world that already has players warns first. Minecraft derives an
+offline UUID from the player's name and uses the real Mojang one otherwise, so flipping this hands
+everybody a different identity — permissions, homes, inventories and anything else a plugin keyed
+by UUID stay attached to the identity nobody has any more. The panel reads the world's player data,
+tells the two kinds of UUID apart by version, and says how many players are affected before you
+decide.
+
+There is also a **Scheduler** tab, covered under [Scheduled work](#scheduled-work).
 
 The panel is bound to `127.0.0.1` and refuses any request whose `Host` is not a loopback address, or
-whose `Origin` is another site. It can start processes and type into a server console, so "local"
+whose `Origin` is not exactly its own — port included, because this machine is full of other things
+serving web pages on loopback. It can start processes and type into a server console, so "local"
 has to mean local rather than merely reachable — see [Security posture](#security-posture).
 
 ---
