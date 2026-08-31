@@ -426,9 +426,26 @@ function cmdSet(positional) {
         fail(`unknown setting "${key}" - one of: memory, java, jar, port, rcon.port, rcon.password`)
     }
   }
+  // Before the registry, not after. An instance runs the jar in its own directory, and recording a
+  // filename that is not there yet leaves a server that cannot start - which is what used to
+  // happen, discovered at the next start rather than here.
+  if (patch.jar) create.placeJar(inst.dir, patch.jar)
+
   updateInstance(name, patch)
   out(`Updated "${name}":`)
   for (const [k, v] of Object.entries(patch)) out(`  ${k} = ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+
+  if (patch.jar) {
+    // Reported, never deleted. The jar it was running is the way back if the new version turns out
+    // to be wrong, and fifty megabytes is not a good enough reason to take that away from someone.
+    const stray = create.strayJars(inst.dir, patch.jar)
+    if (stray.length) {
+      out('')
+      out(`${stray.length} older jar(s) left in ${inst.dir}:`)
+      for (const j of stray) out(`  ${j.name}  ${humanBytes(j.size)}`)
+      out('Kept on purpose - they are how you go back. Delete them when you are sure.')
+    }
+  }
   if (sup.isRunning(name)) out('Restart the instance for changes to take effect.')
 }
 

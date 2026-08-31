@@ -798,7 +798,13 @@ async function route(req, res) {
       if (clash) return json(res, 400, { error: `port ${port} is already used by "${clash.name}".` })
       patch.port = port
     }
-    if (body.jar) patch.jar = String(body.jar)
+    if (body.jar) {
+      // Placed before it is recorded, for the reason spelled out on placeJar: an instance runs the
+      // jar in its own directory, and a registry entry naming one that is not there is a server
+      // that cannot start. Throws a readable message when the jar is not in the store.
+      patch.jar = String(body.jar)
+      create.placeJar(registry.getInstance(name).dir, patch.jar)
+    }
     if (body.java) patch.java = String(body.java)
     registry.updateInstance(name, patch)
     return json(res, 200, safeInstance(supervisor.statusOf(name)))
