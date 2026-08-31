@@ -464,17 +464,28 @@
   */
   .vitals-bar {
     display: flex; flex-wrap: wrap;
-    gap: 0;
+    /*
+      Dividers drawn by the gap, not by a border on each cell.
+
+      A border-right cleared with :last-child only clears the final cell in the list, not the last
+      cell of each visual ROW - so as soon as the strip wrapped, which it does on a running server
+      once the Java PID cell appears, a hairline was left dangling in mid-air at the end of the
+      first row. Letting the container's colour show through a one-pixel gap draws the line only
+      where two cells actually meet, in either direction. The snapshot and player lists in this
+      file already work this way.
+    */
+    gap: 1px;
     padding: 0;
     border-bottom: 1px solid var(--line);
-    background: var(--sunken);
+    background: var(--line);
   }
   .vitals-bar > div {
     display: grid; gap: 2px;
     padding: 8px 15px;
-    border-right: 1px solid var(--line);
+    background: var(--sunken);
+    /* Fills the rest of the row so the strip does not end in a stripe of divider colour. */
+    flex: 1 0 auto;
   }
-  .vitals-bar > div:last-child { border-right: 0; }
   .vital { display: grid; gap: 1px; }
   .vital dt { font: 600 10px/1.4 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
   .vital dd { margin: 0; font: 12.5px/1.4 var(--mono); color: var(--ink); }
