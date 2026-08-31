@@ -242,6 +242,11 @@ npm version patch                 # bump; the app reports this version
 GH_TOKEN=<token> npm run release  # build + publish installer and latest.yml
 ```
 
+Releases publish live, not as drafts. electron-builder defaults to `draft`, and a draft is invisible
+to `electron-updater` — the release looks published on GitHub while no one is offered the update,
+which is a confusing thing to debug weeks later. `releaseType: release` in the publish config is
+what makes shipping one step instead of two.
+
 Builds are **unsigned**. Auto-update works regardless, but Windows SmartScreen warns on first
 install ("More info → Run anyway"). Signing is a certificate purchase, not a code change; the build
 config is arranged so it can be switched on without rework.
