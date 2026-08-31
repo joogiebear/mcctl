@@ -16,6 +16,7 @@ import { acceptableWebhook, notifyInstance } from './src/notify.mjs'
 import * as plugins from './src/plugins.mjs'
 import * as upgrade from './src/upgrade.mjs'
 import * as fabric from './src/fabric.mjs'
+import * as mrpack from './src/mrpack.mjs'
 import { readState, clearState } from './src/control.mjs'
 import * as sup from './src/supervisor.mjs'
 import { rconExec, stripColors } from './src/rcon.mjs'
@@ -249,6 +250,29 @@ async function cmdConsole(positional) {
 
 async function cmdNew(positional, flags) {
   const name = requireName(positional, 'new')
+
+  // --modpack <slug> is its own creation path: the pack decides the loader, the Minecraft
+  // version, the mods and the config, so the usual flags for those do not apply.
+  if (flags.modpack) {
+    const res = await mrpack.createFromModpack(name, String(flags.modpack), {
+      memory: flags.memory ?? '4G',
+      port: flags.port ? Number(flags.port) : null,
+      onlineMode: !flags.offline,
+      onProgress: ({ message }) => out(`  ${message}`),
+    })
+    out('')
+    out(`Created "${res.name}" from ${res.pack} ${res.packVersion}`)
+    out(table([
+      ['minecraft:', res.mc],
+      ['fabric loader:', res.fabricLoader],
+      ['pack files:', String(res.files) + (res.skippedClientOnly ? ` (${res.skippedClientOnly} client-only skipped)` : '')],
+      ['port:', String(res.port)],
+    ]))
+    out('')
+    out(`Start it with: mcctl start ${name}`)
+    out('Players need the matching client pack to join - the same pack, installed in their launcher.')
+    return
+  }
 
   // --paper <version> makes "spin up a fresh environment on version X" one command instead of
   // three. Downloading first means a failed fetch leaves no half-made instance behind.
@@ -1189,6 +1213,7 @@ INSTANCES
       --jar <file>                   Server jar from the jars/ store
       --paper <version>              Download that Paper version and use it
       --fabric <version>             Download Fabric for that version (mods, not plugins)
+      --modpack <slug>               Build the whole server from a Modrinth modpack
       --template <name>              Start from a saved template
       --memory <4G> --port <n>
       --accept-eula                  Write eula=true (you accept Mojang's EULA)

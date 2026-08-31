@@ -49,6 +49,46 @@ function readEocd(fd, size) {
   return null
 }
 
+/** Walk the central directory, yielding one record per entry. Shared by every reader below. */
+function* zipEntries(fd, size) {
+  const eocd = readEocd(fd, size)
+  if (!eocd || eocd.cdOffset === 0xffffffff) return
+
+  const cd = Buffer.alloc(eocd.cdSize)
+  fs.readSync(fd, cd, 0, eocd.cdSize, eocd.cdOffset)
+
+  let at = 0
+  for (let n = 0; n < eocd.entries && at + 46 <= cd.length; n++) {
+    if (cd.readUInt32LE(at) !== CENTRAL_SIG) break
+    const nameLen = cd.readUInt16LE(at + 28)
+    const extraLen = cd.readUInt16LE(at + 30)
+    const commentLen = cd.readUInt16LE(at + 32)
+    yield {
+      name: cd.toString('utf8', at + 46, at + 46 + nameLen),
+      method: cd.readUInt16LE(at + 10),
+      compressed: cd.readUInt32LE(at + 20),
+      localOffset: cd.readUInt32LE(at + 42),
+    }
+    at += 46 + nameLen + extraLen + commentLen
+  }
+}
+
+/** The bytes of one entry, following its local header. Null for anything unreadable. */
+function readEntryData(fd, entry) {
+  if (entry.compressed === 0xffffffff || entry.localOffset === 0xffffffff) return null
+  // The local header repeats the name and extra field, and the extra field there can differ
+  // in length from the central one - so it is read, not assumed.
+  const local = Buffer.alloc(30)
+  fs.readSync(fd, local, 0, 30, entry.localOffset)
+  if (local.readUInt32LE(0) !== LOCAL_SIG) return null
+  const dataAt = entry.localOffset + 30 + local.readUInt16LE(26) + local.readUInt16LE(28)
+  const data = Buffer.alloc(entry.compressed)
+  fs.readSync(fd, data, 0, entry.compressed, dataAt)
+  if (entry.method === 0) return data
+  if (entry.method === 8) return zlib.inflateRawSync(data)
+  return null
+}
+
 /**
  * Read one named entry from a zip, or null when it is not there.
  *
@@ -59,40 +99,44 @@ export function readZipEntry(file, wanted) {
   const fd = fs.openSync(file, 'r')
   try {
     const size = fs.fstatSync(fd).size
-    const eocd = readEocd(fd, size)
-    if (!eocd || eocd.cdOffset === 0xffffffff) return null
-
-    const cd = Buffer.alloc(eocd.cdSize)
-    fs.readSync(fd, cd, 0, eocd.cdSize, eocd.cdOffset)
-
-    let at = 0
-    for (let n = 0; n < eocd.entries && at + 46 <= cd.length; n++) {
-      if (cd.readUInt32LE(at) !== CENTRAL_SIG) break
-      const method = cd.readUInt16LE(at + 10)
-      const compressed = cd.readUInt32LE(at + 20)
-      const nameLen = cd.readUInt16LE(at + 28)
-      const extraLen = cd.readUInt16LE(at + 30)
-      const commentLen = cd.readUInt16LE(at + 32)
-      const localOffset = cd.readUInt32LE(at + 42)
-      const name = cd.toString('utf8', at + 46, at + 46 + nameLen)
-
-      if (name === wanted) {
-        if (compressed === 0xffffffff || localOffset === 0xffffffff) return null
-        // The local header repeats the name and extra field, and the extra field there can
-        // differ in length from the central one - so it is read, not assumed.
-        const local = Buffer.alloc(30)
-        fs.readSync(fd, local, 0, 30, localOffset)
-        if (local.readUInt32LE(0) !== LOCAL_SIG) return null
-        const dataAt = localOffset + 30 + local.readUInt16LE(26) + local.readUInt16LE(28)
-        const data = Buffer.alloc(compressed)
-        fs.readSync(fd, data, 0, compressed, dataAt)
-        if (method === 0) return data
-        if (method === 8) return zlib.inflateRawSync(data)
-        return null
-      }
-      at += 46 + nameLen + extraLen + commentLen
+    for (const entry of zipEntries(fd, size)) {
+      if (entry.name === wanted) return readEntryData(fd, entry)
     }
     return null
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+/**
+ * Extract a zip's files into a directory, with the caller deciding where each lands.
+ *
+ * <p>`mapPath(name)` returns the destination RELATIVE to dest, or null to skip the entry -
+ * which is how a modpack's `overrides/` prefix is stripped and everything outside it left
+ * behind. Every path is confined to dest before a byte is written: entry names arrive from
+ * the archive, and "../" in one would otherwise turn "extract a pack" into "write anywhere".
+ */
+export function extractZip(file, dest, { mapPath = (n) => n } = {}) {
+  const fd = fs.openSync(file, 'r')
+  const written = []
+  try {
+    const size = fs.fstatSync(fd).size
+    const root = path.resolve(dest)
+    for (const entry of zipEntries(fd, size)) {
+      if (entry.name.endsWith('/')) continue
+      const mapped = mapPath(entry.name)
+      if (mapped == null) continue
+      const target = path.resolve(root, mapped)
+      if (target !== root && !target.startsWith(root + path.sep)) {
+        fail(`the archive tried to write outside its folder ("${entry.name}"); nothing more was extracted`)
+      }
+      const data = readEntryData(fd, entry)
+      if (data == null) fail(`could not read "${entry.name}" out of ${path.basename(file)}`)
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, data)
+      written.push(mapped.replace(/\\/g, '/'))
+    }
+    return written
   } finally {
     fs.closeSync(fd)
   }
@@ -349,6 +393,10 @@ const MODRINTH = 'https://api.modrinth.com/v2'
 // build published for those is as installable as one published for Paper itself.
 export const LOADERS = ['paper', 'spigot', 'bukkit', 'folia']
 
+export async function modrinthRequest(pathname, init) {
+  return modrinth(pathname, init)
+}
+
 async function modrinth(pathname, init) {
   let res
   try {
@@ -391,6 +439,35 @@ export async function searchPlugins(query, { gameVersion = null, limit = 20, loa
     description: h.description,
     downloads: h.downloads,
     icon: h.icon_url || null,
+  }))
+}
+
+/**
+ * Search Modrinth for modpacks a SERVER can be built from: packs whose server side is not
+ * unsupported, on a loader mcctl can run (Fabric, until the NeoForge phase lands). A pack
+ * that is client-only would install fine and then be an empty world with none of its point.
+ */
+export async function searchModpacks(query, { gameVersion = null, limit = 20 } = {}) {
+  const facets = [
+    ['project_type:modpack'],
+    ['server_side:required', 'server_side:optional'],
+    ['categories:fabric'],
+  ]
+  if (gameVersion) facets.push([`versions:${gameVersion}`])
+  const params = new URLSearchParams({
+    query: String(query ?? ''),
+    facets: JSON.stringify(facets),
+    limit: String(limit),
+    index: 'relevance',
+  })
+  const data = await modrinth(`/search?${params}`)
+  return data.hits.map((h) => ({
+    source: 'modrinth',
+    id: h.project_id,
+    slug: h.slug,
+    title: h.title,
+    description: h.description,
+    downloads: h.downloads,
   }))
 }
 
@@ -599,8 +676,10 @@ export async function checkUpdates(inst, { gameVersion = null } = {}) {
   const dir = pluginsDir(inst)
   const updates = []
 
-  // Modrinth-installed jars go by hash, in one batch.
-  const modrinthRows = rows.filter((p) => p.source !== 'hangar')
+  // Modrinth-installed jars go by hash, in one batch. Pack-owned jars are deliberately not
+  // asked about at all: the pack governs their versions, and offering one mod an individual
+  // update out from under its pack is how packs break.
+  const modrinthRows = rows.filter((p) => p.source !== 'hangar' && p.source !== 'modpack')
   if (modrinthRows.length) {
     const byHash = new Map()
     for (const p of modrinthRows) {
@@ -668,6 +747,9 @@ export async function updatePlugin(inst, file, { gameVersion = null } = {}) {
   const entry = readManaged(inst).managed[file]
   if (!entry) {
     fail('mcctl did not install this jar, so it will not touch it - custom and premium plugins are yours to update')
+  }
+  if (entry.source === 'modpack') {
+    fail('this mod belongs to the modpack, which governs its version - update the pack, not the mod')
   }
 
   if (entry.source === 'hangar') {

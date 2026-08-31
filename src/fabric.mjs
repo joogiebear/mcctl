@@ -55,12 +55,13 @@ export function launcherName(game, loader, installer) {
 /**
  * Download the Fabric server launcher for a game version into the jars store.
  *
- * <p>The triple is resolved to the newest stable loader and installer at call time - pinning
- * those is a modpack concern (the pack's index names its loader), not a plain-server one.
+ * <p>The loader defaults to the newest stable, but a modpack pins the one its mods were
+ * built against - its index names it, and `loader` passes it through. The installer is
+ * always the newest stable; it only bootstraps.
  */
-export async function fetchLauncher(game, { force = false, onProgress = null } = {}) {
+export async function fetchLauncher(game, { loader: pinned = null, force = false, onProgress = null } = {}) {
   const [loader, installer] = await Promise.all([
-    latestStable('/versions/loader', 'loader'),
+    pinned ?? latestStable('/versions/loader', 'loader'),
     latestStable('/versions/installer', 'installer'),
   ])
   const name = launcherName(game, loader, installer)

@@ -32,10 +32,12 @@ user accounts, a remote web panel - stay off it on purpose.
 
 ## Later
 
-- **Fabric / NeoForge, and Modrinth modpacks** *(0.6.x; Phase 1 — Fabric servers with
-  a Mods tab — shipped; phases 2-4 in docs/modpacks-plan.md)* — install a `.mrpack` as
-  a server in one click next, then NeoForge - the biggest audience this tool does not
-  serve yet.
+- **Fabric servers and Modrinth modpacks** *(0.6.x)* — Fabric as a first-class loader
+  with a Mods tab, and "From a modpack" in Add-a-server: every server-side file the
+  pack lists downloaded and checksummed before the instance exists, the pack's loader
+  pinned, overrides applied, pack-owned mods held to the pack's versions, and the
+  client-pack link shown for joining players. Remaining (docs/modpacks-plan.md):
+  pack updates, and NeoForge.
 - **A Share screen.** The honest answer to "how do my friends join?": the LAN address
   plainly, UPnP as an explicit opt-in, and real guidance for Tailscale / playit.gg for
   play over the internet. Exposure stays a deliberate user decision; this makes it an

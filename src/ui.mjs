@@ -20,6 +20,7 @@ import * as settings from './settings.mjs'
 import * as plugins from './plugins.mjs'
 import * as upgrade from './upgrade.mjs'
 import * as fabric from './fabric.mjs'
+import * as mrpack from './mrpack.mjs'
 import { acceptableWebhook } from './notify.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -388,6 +389,7 @@ async function handlePlugins(req, res, name, seg, url) {
   const kind = plugins.contentKindFor(inst)
 
   if (req.method === 'GET' && !verb) {
+    const pack = mrpack.packOf(inst)
     return json(res, 200, {
       plugins: plugins.listPlugins(inst),
       running: supervisor.isRunning(name),
@@ -395,6 +397,8 @@ async function handlePlugins(req, res, name, seg, url) {
       kind: kind.kind,
       word: kind.word,
       hangar: kind.hangar,
+      // Enough for the page to say what built this server and what a joining player needs.
+      pack: pack ? { name: pack.name, version: pack.versionNumber, project: pack.project } : null,
     })
   }
   if (req.method === 'GET' && verb === 'search') {
@@ -761,6 +765,10 @@ async function route(req, res) {
   if (seg[1] === 'fabric' && seg[2] === 'versions' && req.method === 'GET') {
     return json(res, 200, await fabric.versions())
   }
+  if (seg[1] === 'modpacks' && seg[2] === 'search' && req.method === 'GET') {
+    const q = String(url.searchParams.get('q') || '').trim()
+    return json(res, 200, { results: q ? await plugins.searchModpacks(q) : [] })
+  }
 
   // ---- instances -----------------------------------------------------------
   if (seg[1] === 'instances' && seg.length === 2 && req.method === 'GET') {
@@ -800,6 +808,18 @@ async function route(req, res) {
     const jobId = body.jobId ? String(body.jobId) : null
     try {
       let jar = body.jar || null
+      // A modpack is a whole different creation path: the pack decides the loader, the
+      // Minecraft version, the mods and the config; the person decides the name and memory.
+      if (body.modpack) {
+        const result = await mrpack.createFromModpack(String(body.name), String(body.modpack), {
+          memory: body.memory || '4G',
+          port: body.port ? Number(body.port) : null,
+          onlineMode: body.onlineMode !== false,
+          onProgress: ({ message, percent }) => jobUpdate(jobId, { stage: 'pack', message, percent: percent ?? null }),
+        })
+        jobUpdate(jobId, { stage: 'done', percent: 100, message: `Created ${result.name}`, done: true })
+        return json(res, 200, { ...safeInstance(supervisor.statusOf(String(body.name))), pack: result })
+      }
       const loader = body.loader === 'fabric' ? 'fabric' : 'paper'
       const onProgress = ({ received, total, cached }) => {
         if (cached) return jobUpdate(jobId, { stage: 'cached', percent: 100, message: 'Server jar already downloaded' })

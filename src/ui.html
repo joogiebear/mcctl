@@ -1371,6 +1371,7 @@
       </div>
       <div class="tabs" role="tablist">
         <button role="tab" data-tab="new" aria-selected="true">Create a new one</button>
+        <button role="tab" data-tab="pack" aria-selected="false">From a modpack</button>
         <button role="tab" data-tab="adopt" aria-selected="false">Add one I already have</button>
       </div>
 
@@ -1432,6 +1433,45 @@
         <div class="row">
           <button type="submit" class="primary" id="bCreate">Create server</button>
           <span class="hint" id="newHint">Accepts the Minecraft EULA on your behalf, as the operator of this machine.</span>
+        </div>
+      </form>
+
+      <form class="sheet-body" id="formPack" hidden>
+        <div class="field">
+          <label for="pSearch">Modpack</label>
+          <div class="row">
+            <input id="pSearch" type="search" placeholder="Search Modrinth — server-ready Fabric packs" autocomplete="off">
+            <button type="button" id="bPackSearch">Search</button>
+          </div>
+          <div class="hint">The pack decides the Minecraft version, the loader and the mods. You pick a name and how much memory it gets.</div>
+        </div>
+        <div id="packResults"></div>
+        <div id="packChosenWrap" hidden>
+          <div class="field">
+            <label>Chosen pack</label>
+            <div class="hint" id="packChosen" style="font-size:13px;color:var(--ink)"></div>
+          </div>
+          <div class="row" style="align-items:flex-start;margin-top:12px">
+            <div class="field" style="flex:2">
+              <label for="pName">Name</label>
+              <input id="pName" autocomplete="off" spellcheck="false">
+              <div class="bad" id="pNameBad"></div>
+            </div>
+            <div class="field" style="flex:1">
+              <label for="pMem">Memory</label>
+              <input id="pMem" value="4G" class="mono" autocomplete="off">
+              <div class="hint">Modded servers want 4G or more.</div>
+              <div class="bad" id="pMemBad"></div>
+            </div>
+          </div>
+          <div class="prog" id="packProg" hidden style="margin-top:12px">
+            <div class="track"><div class="bar" id="packBar"></div></div>
+            <div class="msg" id="packMsg"></div>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <button type="submit" class="primary" id="bPackCreate">Create server from this pack</button>
+            <span class="hint">Downloads every server-side file the pack lists, checksummed, before the server exists.</span>
+          </div>
         </div>
       </form>
 
@@ -2963,6 +3003,33 @@ async function renderPlugins(opts) {
     + (data.gameVersion ? ' Only builds for ' + data.gameVersion + ' are offered.' : '');
   body.append(how);
 
+  // A server a pack built says so, because the answer to "how do my friends join" is the
+  // matching client pack - the single most-asked question about a modded server.
+  if (data.pack) {
+    const packLine = document.createElement('div');
+    packLine.className = 'hint';
+    const link = 'https://modrinth.com/project/' + encodeURIComponent(data.pack.project);
+    packLine.textContent = 'Built from the modpack ' + data.pack.name + ' ' + (data.pack.version || '')
+      + '. Players join with the matching client pack, installed in their own launcher: ';
+    if (desktop) {
+      const open = document.createElement('button');
+      open.className = 'ghost';
+      open.style.cssText = 'padding:2px 8px;font-size:12px';
+      open.textContent = 'Open on Modrinth';
+      open.onclick = () => desktop.openExternal(link);
+      packLine.append(open);
+    } else {
+      const a = document.createElement('a');
+      a.href = link;
+      a.target = '_blank';
+      a.rel = 'noreferrer';
+      a.style.color = 'inherit';
+      a.textContent = link;
+      packLine.append(a);
+    }
+    body.append(packLine);
+  }
+
   // ---- add from Modrinth -----------------------------------------------------
   const add = document.createElement('div');
   add.className = 'section';
@@ -3160,7 +3227,7 @@ async function renderPlugins(opts) {
     if (p.source) {
       const pill = document.createElement('span');
       pill.className = 'pill';
-      pill.textContent = p.source === 'hangar' ? 'Hangar' : 'Modrinth';
+      pill.textContent = p.source === 'hangar' ? 'Hangar' : p.source === 'modpack' ? 'Modpack' : 'Modrinth';
       nm.append(pill);
     }
     if (!p.enabled) {
@@ -4717,13 +4784,14 @@ function checkMemory(input, out) {
 function selectTab(tab) {
   for (const b of $$('.tabs [data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
   $('#formNew').hidden = tab !== 'new';
+  $('#formPack').hidden = tab !== 'pack';
   $('#formAdopt').hidden = tab !== 'adopt';
 }
 
 function openAdd(tab) {
   show('add');
   selectTab(tab);
-  setTimeout(() => $(tab === 'adopt' ? '#aDir' : '#nName').focus(), 0);
+  setTimeout(() => $(tab === 'adopt' ? '#aDir' : tab === 'pack' ? '#pSearch' : '#nName').focus(), 0);
 }
 
 for (const b of $$('.tabs [data-tab]')) b.onclick = () => selectTab(b.dataset.tab);
@@ -4834,6 +4902,137 @@ $('#formAdopt').onsubmit = async (e) => {
     toast(err.message, 'bad');
   } finally {
     $('#bAdopt').disabled = false;
+  }
+};
+
+// ------------------------------------------------------------ from a modpack -
+
+/**
+ * The pack decides everything but the name and the memory. Search happens first because a
+ * pack is a choice, not a text field - and only server-installable Fabric packs are shown,
+ * so everything offered actually works.
+ */
+const packView = { chosen: null };
+
+async function packSearch() {
+  const term = $('#pSearch').value.trim();
+  if (!term) return;
+  const results = $('#packResults');
+  $('#bPackSearch').disabled = true;
+  results.textContent = '';
+  const looking = document.createElement('div');
+  looking.className = 'hint';
+  looking.textContent = 'Asking Modrinth…';
+  results.append(looking);
+  let found;
+  try {
+    found = await api('/modpacks/search?q=' + encodeURIComponent(term));
+  } catch (e) {
+    looking.remove();
+    const bad = document.createElement('div');
+    bad.className = 'bad';
+    bad.textContent = e.message;
+    results.append(bad);
+    $('#bPackSearch').disabled = false;
+    return;
+  }
+  $('#bPackSearch').disabled = false;
+  results.textContent = '';
+  if (!found.results.length) {
+    const none = document.createElement('div');
+    none.className = 'hint';
+    none.textContent = 'No server-ready Fabric packs match that.';
+    results.append(none);
+    return;
+  }
+  const list = document.createElement('div');
+  list.className = 'people';
+  for (const hit of found.results) {
+    const el = document.createElement('div');
+    el.className = 'who';
+    const mark = document.createElement('div');
+    mark.className = 'face face-mark';
+    mark.append(icon('archive'));
+    const nm = document.createElement('div');
+    nm.className = 'w-name';
+    nm.textContent = hit.title;
+    const meta = document.createElement('div');
+    meta.className = 'w-meta';
+    meta.textContent = (hit.downloads ? hit.downloads.toLocaleString() + ' downloads  ·  ' : '') + (hit.description || '');
+    const acts = document.createElement('div');
+    acts.className = 'w-acts';
+    const use = document.createElement('button');
+    use.className = 'primary';
+    use.textContent = 'Use this pack';
+    acts.append(use);
+    el.append(mark, nm, meta, acts);
+    list.append(el);
+    use.onclick = () => {
+      packView.chosen = hit;
+      $('#packChosen').textContent = hit.title;
+      $('#packChosenWrap').hidden = false;
+      if (!$('#pName').value.trim()) {
+        $('#pName').value = (hit.slug || hit.title).toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 32);
+        checkName($('#pName'), $('#pNameBad'));
+      }
+      $('#pName').focus();
+    };
+  }
+  results.append(list);
+}
+$('#bPackSearch').onclick = packSearch;
+$('#pSearch').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); packSearch(); } };
+$('#pName').oninput = () => checkName($('#pName'), $('#pNameBad'));
+$('#pMem').oninput = () => checkMemory($('#pMem'), $('#pMemBad'));
+
+$('#formPack').onsubmit = async (e) => {
+  e.preventDefault();
+  if (!packView.chosen) return;
+  if (!checkName($('#pName'), $('#pNameBad'))) { $('#pName').focus(); return; }
+  if (!checkMemory($('#pMem'), $('#pMemBad'))) { $('#pMem').focus(); return; }
+
+  const jobId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'job-' + Date.now();
+  const bar = $('#packBar');
+  const msg = $('#packMsg');
+  $('#packProg').hidden = false;
+  bar.style.width = '0';
+  bar.classList.add('indet');
+  msg.textContent = 'Starting…';
+  $('#bPackCreate').disabled = true;
+
+  const jobs = new EventSource('/api/jobs/' + jobId + '/stream');
+  jobs.onmessage = (ev) => {
+    let job;
+    try { job = JSON.parse(ev.data); } catch { return; }
+    if (job.message) msg.textContent = job.message;
+    if (typeof job.percent === 'number') {
+      bar.classList.remove('indet');
+      bar.style.width = job.percent + '%';
+    } else {
+      bar.classList.add('indet');
+    }
+  };
+
+  try {
+    const inst = await post('/instances', {
+      name: $('#pName').value.trim(),
+      modpack: packView.chosen.id,
+      memory: $('#pMem').value.trim() || '4G',
+      jobId: jobId,
+    });
+    jobs.close();
+    $('#packProg').hidden = true;
+    $('#bPackCreate').disabled = false;
+    await refresh();
+    select(inst.name);
+    toast('Created ' + inst.name + ' from ' + packView.chosen.title + '.', 'good');
+  } catch (err) {
+    jobs.close();
+    bar.classList.remove('indet');
+    bar.style.width = '0';
+    msg.textContent = err.message;
+    $('#bPackCreate').disabled = false;
+    toast(err.message, 'bad');
   }
 };
 

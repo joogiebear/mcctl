@@ -1,7 +1,11 @@
 # Plan: modded servers and Modrinth modpacks
 
-Status: **Phase 1 (Fabric) shipped 2026-08-31**; Phases 2–4 planned. Ships on the
-0.6.x line — it extends the same content-installing area the plugin manager lives in.
+Status: **Phases 1 and 2 (Fabric servers, .mrpack install) shipped 2026-08-31**;
+Phase 3 largely collapsed into them (the Mods tab shipped with Phase 1; pack-owned mods
+are distinct from mcctl-added and hand-dropped ones). Remaining: **pack updates**
+(the provenance record for them is already written at install) and **Phase 4, NeoForge**.
+Ships on the 0.6.x line — it extends the same content-installing area the plugin
+manager lives in.
 
 Phase 1 turned out smaller than planned in the best way: Fabric's bundled launcher jar
 runs with a plain `-jar` like Paper, so the daemon needed no new launch machinery at
