@@ -579,8 +579,19 @@
   .pane[data-active] { display: grid; }
   .pane-console { grid-template-rows: auto minmax(0, 1fr) auto; }
   .pane-scroll { overflow: auto; align-content: start; }
-  .pane-body { padding: 18px; display: grid; gap: 16px; max-width: 580px; }
+  .pane-body {
+    padding: 18px; display: grid; gap: 16px; max-width: 580px;
+    /*
+      Rows inside a pane size themselves against the PANE, not the window. The section column takes
+      172px out of the content area, so a 900px window leaves a 369px pane - and a row that reads
+      fine in a 1180px window has to know that without being told the window width.
+    */
+    container-type: inline-size;
+    container-name: pane;
+  }
   .pane-body.wide { max-width: 860px; }
+  /* .row wraps rather than crushing its controls when the pane is narrow. */
+  .row { flex-wrap: wrap; }
 
   /* ---- snapshot history --------------------------------------------------- */
 
@@ -740,6 +751,14 @@
   input.switch:checked { background: var(--lapis-dim); border-color: var(--lapis); }
   input.switch:checked::after { transform: translateX(14px); background: #eaf0ff; }
   input.switch:disabled { opacity: .45; cursor: default; }
+  /*
+    Stated explicitly because this control loses the ring twice over: `input:focus { outline: none }`
+    outranks the global :focus-visible rule, and the switch's own `border` shorthand outranks the
+    border colour that was standing in for it. Every other input escapes because nothing redeclares
+    its border - this is the only one that hits both, and it left a keyboard user with no way to
+    tell where they were.
+  */
+  input.switch:focus-visible { outline: 2px solid var(--lapis); outline-offset: 2px; }
 
   /* ---- what a section is, said once at the top of it ------------------------ */
 
@@ -749,6 +768,12 @@
     have to work out. The mark is the same glyph the nav uses, so the two agree.
   */
   .pane-head {
+    /* Sticks. The Settings pane is three times the height of its viewport at 900x600, so the title
+       that names the screen was visible for under a third of the scroll. .pane-scroll is the
+       scroller, so this resolves against it with nothing else to change. */
+    position: sticky;
+    top: 0;
+    z-index: 1;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     gap: 2px 12px;
@@ -1034,6 +1059,42 @@
     }
     .lamp::after { opacity: .45; }
   }
+  /* ---- narrow panes, last so these actually win ------------------------------ */
+
+  /*
+    Placed at the end of the sheet deliberately. A @container block adds no specificity of its own,
+    so `.who` inside one and `.who` outside it are the same weight and source order decides - which
+    is how this was written once already, sitting above the rules it was meant to override and
+    doing nothing at all.
+  */
+  /*
+    Narrow panes stack their actions under the content.
+
+    A grid track sized `auto` is filled to its max-content before a minmax(0,1fr) track gets
+    anything at all, so three buttons that refuse to wrap took 230px and left the name and id
+    column 14.5px - which does not overflow, it just renders a UUID one character per line. The
+    snapshot rows were worse: their date and filename column resolved to literally zero.
+
+    Below this width the buttons get their own row and the text gets the whole pane.
+  */
+  @container pane (max-width: 470px) {
+    .who {
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-areas: "face name" "face meta" "acts acts";
+    }
+    .who .w-acts { justify-content: flex-start; margin-top: 6px; }
+
+    .snap {
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: "when size" "what tag" "actions actions";
+    }
+    .snap .snap-actions { justify-content: flex-start; margin-top: 6px; }
+
+    /* The automatic-backup line is a flex row of six controls; without this the interval select
+       squeezed to 30px and stopped being able to show "Daily at 03:00". */
+    .gauge .row, .section .row { flex-wrap: wrap; }
+  }
+
 </style>
 
 <!--
@@ -1159,7 +1220,7 @@
       </nav>
 
       <div class="panes">
-      <div class="pane pane-console" id="paneConsole" role="tabpanel" aria-labelledby="tabConsole" data-active>
+      <div class="pane pane-console" id="paneConsole" role="tabpanel" tabindex="0" aria-labelledby="tabConsole" data-active>
         <div class="con-bar">
           <span class="con-search">
             <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
@@ -1189,23 +1250,23 @@
         </div>
       </div>
 
-      <div class="pane pane-scroll" id="paneBackups" role="tabpanel" aria-labelledby="tabBackups">
+      <div class="pane pane-scroll" id="paneBackups" role="tabpanel" tabindex="0" aria-labelledby="tabBackups">
         <div class="pane-body wide" id="backupsBody"></div>
       </div>
 
-      <div class="pane pane-scroll" id="panePlayers" role="tabpanel" aria-labelledby="tabPlayers">
+      <div class="pane pane-scroll" id="panePlayers" role="tabpanel" tabindex="0" aria-labelledby="tabPlayers">
         <div class="pane-body wide" id="playersBody"></div>
       </div>
 
-      <div class="pane pane-scroll" id="panePerformance" role="tabpanel" aria-labelledby="tabPerformance">
+      <div class="pane pane-scroll" id="panePerformance" role="tabpanel" tabindex="0" aria-labelledby="tabPerformance">
         <div class="pane-body wide" id="performanceBody"></div>
       </div>
 
-      <div class="pane pane-scroll" id="paneScheduler" role="tabpanel" aria-labelledby="tabScheduler">
+      <div class="pane pane-scroll" id="paneScheduler" role="tabpanel" tabindex="0" aria-labelledby="tabScheduler">
         <div class="pane-body wide" id="schedulerBody"></div>
       </div>
 
-      <div class="pane pane-scroll" id="paneSettings" role="tabpanel" aria-labelledby="tabSettings">
+      <div class="pane pane-scroll" id="paneSettings" role="tabpanel" tabindex="0" aria-labelledby="tabSettings">
         <div class="pane-body" id="settingsBody"></div>
       </div>
       </div>
@@ -2194,6 +2255,11 @@ function emptyState(name, text) {
  * is the difference between recognising a screen and working it out. Built here rather than in the
  * markup because every pane's body is cleared and rebuilt on each render.
  */
+/** Drop whatever title is showing. Every path that empties a pane has to do this too. */
+function clearPaneHead(bodyEl) {
+  bodyEl.parentElement.querySelector(':scope > .pane-head')?.remove();
+}
+
 function paneHead(bodyEl, name, title, subtitle) {
   // A sibling of the body, not a child of it: the body is width-limited and padded for reading,
   // and a title indented to match a text column does not read as the title of the pane.
@@ -2326,9 +2392,12 @@ async function renderPerformance(opts) {
   const row = state.rows.find((r) => r.name === state.current);
   const body = $('#performanceBody');
   if (!row) { body.textContent = ''; stopPerfPolling(); return; }
-  if (!force && body.dataset.for === row.name && body.childElementCount) return;
+  // Not the usual cache guard. Leaving this tab stops the timer, so returning has to start it
+  // again even when the drawing is still good - otherwise the chart sits frozen at whatever it last
+  // showed and only a server change ever clears it.
+  const drawn = !force && body.dataset.for === row.name && body.childElementCount;
   body.dataset.for = row.name;
-  await paintPerformance(row.name);
+  if (!drawn) await paintPerformance(row.name);
 
   stopPerfPolling();
   // Matched to how often the daemon samples. Polling faster would redraw the same points.
@@ -2475,7 +2544,7 @@ async function renderPlayers(opts) {
   const force = Boolean(opts && opts.force);
   const row = state.rows.find((r) => r.name === state.current);
   const body = $('#playersBody');
-  if (!row) { body.textContent = ''; return; }
+  if (!row) { body.textContent = ''; clearPaneHead(body); return; }
   if (!force && body.dataset.for === row.name && body.childElementCount) return;
   body.dataset.for = row.name;
 
@@ -2935,7 +3004,7 @@ async function renderScheduler(opts) {
   const force = Boolean(opts && opts.force);
   const row = state.rows.find((r) => r.name === state.current);
   const body = $('#schedulerBody');
-  if (!row) { body.textContent = ''; return; }
+  if (!row) { body.textContent = ''; clearPaneHead(body); return; }
   if (!force && body.dataset.for === row.name && body.childElementCount) return;
   body.dataset.for = row.name;
 
@@ -3306,7 +3375,7 @@ async function renderBackups(opts) {
   const force = Boolean(opts && opts.force);
   const row = state.rows.find((r) => r.name === state.current);
   const body = $('#backupsBody');
-  if (!row) { body.textContent = ''; return; }
+  if (!row) { body.textContent = ''; clearPaneHead(body); return; }
   if (!force && body.dataset.for === row.name && body.childElementCount) return;
   body.dataset.for = row.name;
 
@@ -3557,7 +3626,7 @@ async function renderBackups(opts) {
 async function renderServerSettings() {
   const row = state.rows.find((r) => r.name === state.current);
   const body = $('#settingsBody');
-  if (!row) { body.textContent = ''; return; }
+  if (!row) { body.textContent = ''; clearPaneHead(body); return; }
 
   // Re-rendering under someone mid-edit would silently discard what they had typed.
   if (body.dataset.for === row.name && body.childElementCount) return;
