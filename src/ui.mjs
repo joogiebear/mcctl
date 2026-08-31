@@ -18,6 +18,7 @@ import * as players from './players.mjs'
 import * as metrics from './metrics.mjs'
 import * as settings from './settings.mjs'
 import * as plugins from './plugins.mjs'
+import * as upgrade from './upgrade.mjs'
 import { acceptableWebhook } from './notify.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -346,6 +347,28 @@ function handleMetrics(req, res, name, url) {
     startedAt: status.startedAt ?? null,
     memory: status.memory ?? null,
   })
+}
+
+/**
+ * The server software itself: what Paper offers, and moving to it.
+ *
+ * <p>GET asks PaperMC what exists - on demand only, so the panel stays off the network until
+ * the person clicks. POST with no version is a routine build update; POST naming a version
+ * crosses Minecraft versions, which the page has already made someone confirm, and
+ * applyUpgrade takes a standard snapshot before anything is swapped.
+ */
+async function handleUpgrade(req, res, name) {
+  const inst = registry.getInstance(name)
+  if (req.method === 'GET') {
+    return json(res, 200, await upgrade.checkUpgrade(inst))
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+  const body = await readBody(req)
+  const result = await upgrade.applyUpgrade(name, {
+    version: body.version ? String(body.version) : null,
+    running: supervisor.isRunning(name),
+  })
+  return json(res, 200, { ...result, running: supervisor.isRunning(name) })
 }
 
 /**
@@ -811,6 +834,7 @@ async function route(req, res) {
   if (seg[3] === 'schedules') return handleSchedules(req, res, name, seg)
   if (seg[3] === 'players') return handlePlayers(req, res, name, seg)
   if (seg[3] === 'plugins') return handlePlugins(req, res, name, seg, url)
+  if (seg[3] === 'upgrade') return handleUpgrade(req, res, name)
   if (seg[3] === 'metrics') return handleMetrics(req, res, name, url)
 
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })

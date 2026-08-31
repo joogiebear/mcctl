@@ -104,6 +104,7 @@ RCON refuses to carry.
 | `set <name> key=value` | `memory`, `java`, `jar`, `port`, `rcon.port`, `rcon.password`, `auto-restart=on\|off`, `webhook=<url>\|off` |
 | `props <name> [key=value]` | Read or edit `server.properties` |
 | `plugins <name> [enable\|disable <x>]` | List a server's plugins, flip one on or off |
+| `upgrade <name> [--check]` | Newest Paper build for its version; `--version <v> --yes` crosses Minecraft versions |
 | `rm <name> [--purge --yes]` | Unregister, optionally deleting the files |
 
 `clone` gives fresh worlds by default; pass `--with-worlds` to copy world data

@@ -16,11 +16,13 @@ user accounts, a remote web panel - stay off it on purpose.
   filtered to compatible builds, hash-based update check, one-click update with a
   plugins snapshot first, enable/disable by renaming in place.
 
+- **Server updates** — `mcctl upgrade` and a "Server software" card in Settings: a
+  routine one-click move to the newest Paper build (old jar kept as the way back), and
+  a deliberately harder, confirmed, snapshot-first path for crossing Minecraft
+  versions, because worlds migrate one-way.
+
 ## Next
 
-- **Server updates.** "Paper build N is available → Update" on the server header:
-  snapshot, swap the jar, restart. Louder version for Minecraft version upgrades.
-  `paper.mjs` already lists and fetches builds; this is the missing button.
 - **Hangar as a second plugin source**, for the Paper-ecosystem plugins that never
   publish to Modrinth.
 
