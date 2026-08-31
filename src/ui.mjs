@@ -17,6 +17,7 @@ import { storedPlayers } from './players.mjs'
 import * as players from './players.mjs'
 import * as metrics from './metrics.mjs'
 import * as settings from './settings.mjs'
+import * as plugins from './plugins.mjs'
 import { acceptableWebhook } from './notify.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -345,6 +346,57 @@ function handleMetrics(req, res, name, url) {
     startedAt: status.startedAt ?? null,
     memory: status.memory ?? null,
   })
+}
+
+/**
+ * Plugins: what the server loads, and what Modrinth can add to it.
+ *
+ * <p>The installed list needs no network and always answers. Search, install and the update
+ * check reach Modrinth and fail with a readable message when they cannot - the panel offline
+ * still manages what is already on disk.
+ */
+async function handlePlugins(req, res, name, seg, url) {
+  const inst = registry.getInstance(name)
+  const verb = seg[4] ?? null
+  const gameVersion = plugins.mcVersionOf(inst)
+
+  if (req.method === 'GET' && !verb) {
+    return json(res, 200, {
+      plugins: plugins.listPlugins(inst),
+      running: supervisor.isRunning(name),
+      gameVersion,
+    })
+  }
+  if (req.method === 'GET' && verb === 'search') {
+    const q = String(url.searchParams.get('q') || '').trim()
+    if (!q) return json(res, 200, { results: [] })
+    return json(res, 200, { results: await plugins.searchPlugins(q, { gameVersion }) })
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+  const body = await readBody(req)
+
+  if (verb === 'toggle') {
+    return json(res, 200, plugins.setPluginEnabled(inst, String(body.file), body.enabled === true))
+  }
+  if (verb === 'delete') {
+    return json(res, 200, plugins.removePlugin(inst, String(body.file)))
+  }
+  if (verb === 'install') {
+    if (!body.projectId) return json(res, 400, { error: 'projectId is required' })
+    return json(res, 200, await plugins.installPlugin(inst, String(body.projectId), { gameVersion }))
+  }
+  if (verb === 'updates') {
+    return json(res, 200, { updates: await plugins.checkUpdates(inst, { gameVersion }) })
+  }
+  if (verb === 'update') {
+    // A snapshot of the plugins alone before anything is replaced: small, fast, and the way
+    // back when the new build turns out to be the wrong one.
+    await backup.createSnapshot(inst, {
+      scope: 'plugins', label: 'pre-update', running: supervisor.isRunning(name),
+    })
+    return json(res, 200, await plugins.updatePlugin(inst, String(body.file), { gameVersion }))
+  }
+  return json(res, 404, { error: 'not found' })
 }
 
 /**
@@ -758,6 +810,7 @@ async function route(req, res) {
   if (seg[3] === 'backups') return handleBackups(req, res, name, seg)
   if (seg[3] === 'schedules') return handleSchedules(req, res, name, seg)
   if (seg[3] === 'players') return handlePlayers(req, res, name, seg)
+  if (seg[3] === 'plugins') return handlePlugins(req, res, name, seg, url)
   if (seg[3] === 'metrics') return handleMetrics(req, res, name, url)
 
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })

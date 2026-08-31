@@ -743,6 +743,9 @@
     border: 1px solid var(--line);
   }
   .who[data-online] .face { border-color: #22503a; }
+  /* A plugin row borrows the player row's layout; this box stands in for the face. */
+  .face-mark { display: grid; place-items: center; width: 34px; height: 34px; color: var(--ink-3); background: var(--raised); }
+  .who[data-off] .w-name, .who[data-off] .face-mark { opacity: .55; }
   .who:hover { background-color: var(--raised); }
   .who .w-name { grid-area: name; display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; font: 600 13.5px/1.3 var(--ui); color: var(--ink); }
   .who .w-name .unknown { font-weight: 400; font-style: italic; color: var(--ink-3); }
@@ -1197,6 +1200,7 @@
   <symbol id="i-clock" viewBox="0 0 16 16"><path d="M3 3h10v10H3z"/><path d="M8 5.5V8h2.5"/></symbol>
   <symbol id="i-server" viewBox="0 0 16 16"><path d="M2 3h12v4H2zM2 9h12v4H2z"/><path d="M4.5 5h.5M4.5 11h.5"/></symbol>
   <symbol id="i-sliders" viewBox="0 0 16 16"><path d="M2 4.5h12M2 11.5h12"/><path d="M5 3v3M11 10v3"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 16 16"><path d="M5 2v3.5M11 2v3.5"/><path d="M3.5 5.5h9V9a4.5 4.5 0 0 1-9 0z"/><path d="M8 13.5V15"/></symbol>
 
   <symbol id="i-play" viewBox="0 0 16 16"><path d="M4.5 3l8 5-8 5z"/></symbol>
   <symbol id="i-stop" viewBox="0 0 16 16"><path d="M4 4h8v8H4z"/></symbol>
@@ -1292,6 +1296,7 @@
       <div class="srv-body">
       <nav class="srv-nav" role="tablist" aria-orientation="vertical" aria-label="Server sections">
         <button role="tab" id="tabConsole" aria-controls="paneConsole" data-pane="console" aria-selected="true"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-terminal"/></svg>Console</button>
+        <button role="tab" id="tabPlugins" aria-controls="panePlugins" data-pane="plugins" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-plug"/></svg>Plugins</button>
         <button role="tab" id="tabBackups" aria-controls="paneBackups" data-pane="backups" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-archive"/></svg>Backups</button>
         <button role="tab" id="tabPlayers" aria-controls="panePlayers" data-pane="players" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-user"/></svg>Players</button>
         <button role="tab" id="tabPerformance" aria-controls="panePerformance" data-pane="performance" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-pulse"/></svg>Performance</button>
@@ -1328,6 +1333,10 @@
           <input id="cmd" placeholder="Send a server command — try list" autocomplete="off" aria-label="Server command">
           <button id="bSend">Send</button>
         </div>
+      </div>
+
+      <div class="pane pane-scroll" id="panePlugins" role="tabpanel" tabindex="0" aria-labelledby="tabPlugins">
+        <div class="pane-body wide" id="pluginsBody"></div>
       </div>
 
       <div class="pane pane-scroll" id="paneBackups" role="tabpanel" tabindex="0" aria-labelledby="tabBackups">
@@ -1688,6 +1697,7 @@ function showPane(pane) {
   if (pane === 'backups') renderBackups();
   if (pane === 'scheduler') renderScheduler();
   if (pane === 'players') renderPlayers();
+  if (pane === 'plugins') renderPlugins();
   if (pane === 'performance') renderPerformance();
   // Only the visible tab polls. A graph nobody is looking at is a request every ten seconds
   // for as long as the app is open.
@@ -2131,6 +2141,7 @@ function select(name) {
   $('#backupsBody').dataset.for = '';
   $('#schedulerBody').dataset.for = '';
   $('#playersBody').dataset.for = '';
+  $('#pluginsBody').dataset.for = '';
   $('#performanceBody').dataset.for = '';
   renderServer(state.rows.find((r) => r.name === name));
   showPane(state.pane);
@@ -2886,6 +2897,306 @@ function playerRow(p, data, base, again) {
     return run('/forget', { uuid: p.uuid }, 'Deleted ' + label + '\u2019s world data.');
   };
   return el;
+}
+
+// ---------------------------------------------------------------- plugins ---
+
+/** Update results are kept until the server changes, so leaving the tab does not lose them. */
+const pluginView = { updates: null, for: null };
+
+/**
+ * What this server loads, and what Modrinth can add to it.
+ *
+ * <p>The installed list works with no network at all; search, install and the update check
+ * reach Modrinth and fail with a message rather than an empty screen. Every change here is a
+ * file rename or a download - the server picks them up at its next start, and the pane says
+ * so once at the top instead of on every row.
+ */
+async function renderPlugins(opts) {
+  const force = Boolean(opts && opts.force);
+  const row = state.rows.find((r) => r.name === state.current);
+  const body = $('#pluginsBody');
+  if (!row) { body.textContent = ''; clearPaneHead(body); return; }
+  if (!force && body.dataset.for === row.name && body.childElementCount) return;
+  if (pluginView.for !== row.name) { pluginView.updates = null; pluginView.for = row.name; }
+  body.dataset.for = row.name;
+
+  let data;
+  try {
+    data = await api('/instances/' + encodeURIComponent(row.name) + '/plugins');
+  } catch (e) {
+    body.textContent = '';
+    const bad = document.createElement('div');
+    bad.className = 'bad';
+    bad.textContent = e.message;
+    body.append(bad);
+    body.dataset.for = '';
+    return;
+  }
+  if (body.dataset.for !== row.name) return;
+  body.textContent = '';
+  paneHead(body, 'plug', 'Plugins', 'What this server loads, and what Modrinth can add to it.');
+
+  const base = '/instances/' + encodeURIComponent(row.name) + '/plugins';
+  const again = () => renderPlugins({ force: true });
+
+  const how = document.createElement('div');
+  how.className = 'hint';
+  how.textContent = (data.running
+    ? 'The server is running, so everything here takes effect the next time it starts.'
+    : 'Applies the next time the server starts.')
+    + (data.gameVersion ? ' Only builds for ' + data.gameVersion + ' are offered.' : '');
+  body.append(how);
+
+  // ---- add from Modrinth -----------------------------------------------------
+  const add = document.createElement('div');
+  add.className = 'section';
+  const addTitle = document.createElement('h3');
+  addTitle.textContent = 'Add from Modrinth';
+  const addRow = document.createElement('div');
+  addRow.className = 'row';
+  const q = document.createElement('input');
+  q.type = 'search';
+  q.placeholder = 'Search plugins — try WorldEdit, spark, EssentialsX';
+  q.style.flex = '1 1 240px';
+  const go = iconButton('search', 'Search');
+  addRow.append(q, go);
+  const results = document.createElement('div');
+  add.append(addTitle, addRow, results);
+  body.append(add);
+
+  const doSearch = async () => {
+    const term = q.value.trim();
+    if (!term) return;
+    go.disabled = true;
+    results.textContent = '';
+    const looking = document.createElement('div');
+    looking.className = 'hint';
+    looking.textContent = 'Asking Modrinth…';
+    results.append(looking);
+    let found;
+    try {
+      found = await api(base + '/search?q=' + encodeURIComponent(term));
+    } catch (e) {
+      looking.remove();
+      const bad = document.createElement('div');
+      bad.className = 'bad';
+      bad.textContent = e.message;
+      results.append(bad);
+      go.disabled = false;
+      return;
+    }
+    go.disabled = false;
+    results.textContent = '';
+    if (!found.results.length) {
+      const none = document.createElement('div');
+      none.className = 'hint';
+      none.textContent = 'Nothing on Modrinth matches that'
+        + (data.gameVersion ? ' for ' + data.gameVersion + '.' : '.');
+      results.append(none);
+      return;
+    }
+    const list = document.createElement('div');
+    list.className = 'people';
+    const installedNames = new Set(data.plugins.map((p) => p.name.toLowerCase()));
+    for (const hit of found.results) {
+      const el = document.createElement('div');
+      el.className = 'who';
+      const mark = document.createElement('div');
+      mark.className = 'face face-mark';
+      mark.append(icon('plug'));
+      const nm = document.createElement('div');
+      nm.className = 'w-name';
+      nm.textContent = hit.title;
+      const meta = document.createElement('div');
+      meta.className = 'w-meta';
+      meta.textContent = (hit.downloads ? hit.downloads.toLocaleString() + ' downloads  ·  ' : '')
+        + (hit.description || '');
+      const acts = document.createElement('div');
+      acts.className = 'w-acts';
+      const install = document.createElement('button');
+      const have = installedNames.has(hit.title.toLowerCase());
+      install.textContent = have ? 'Installed' : 'Install';
+      install.disabled = have;
+      if (!have) install.className = 'primary';
+      acts.append(install);
+      el.append(mark, nm, meta, acts);
+      list.append(el);
+
+      install.onclick = async () => {
+        install.disabled = true;
+        install.textContent = 'Downloading…';
+        try {
+          const out = await post(base + '/install', { projectId: hit.id });
+          toast('Installed ' + out.installed + ' (' + out.version + ').', 'good');
+          await again();
+        } catch (e) {
+          toast(e.message, 'bad');
+          install.disabled = false;
+          install.textContent = 'Install';
+        }
+      };
+    }
+    results.append(list);
+  };
+  go.onclick = doSearch;
+  q.onkeydown = (e) => { if (e.key === 'Enter') doSearch(); };
+
+  // ---- what is installed -----------------------------------------------------
+  const listTitle = document.createElement('h3');
+  listTitle.className = 'hist-title';
+  listTitle.textContent = 'Installed (' + data.plugins.length + ')';
+  const head = document.createElement('div');
+  head.className = 'row where';
+  const check = iconButton('restore', 'Check for updates');
+  const checkNote = document.createElement('span');
+  checkNote.className = 'hint';
+  head.append(check, checkNote);
+  body.append(listTitle, head);
+
+  check.onclick = async () => {
+    check.disabled = true;
+    checkNote.textContent = 'Asking Modrinth about every enabled jar…';
+    try {
+      const out = await post(base + '/updates');
+      pluginView.updates = {};
+      for (const u of out.updates) pluginView.updates[u.file] = u;
+      checkNote.textContent = out.updates.length
+        ? out.updates.length + ' update' + (out.updates.length === 1 ? '' : 's') + ' available.'
+        : 'Everything Modrinth recognises is already the newest build.';
+      paint();
+    } catch (e) {
+      checkNote.textContent = '';
+      toast(e.message, 'bad');
+    } finally {
+      check.disabled = false;
+    }
+  };
+
+  const listWrap = document.createElement('div');
+  body.append(listWrap);
+
+  const paint = () => {
+    listWrap.textContent = '';
+    if (!data.plugins.length) {
+      listWrap.append(emptyState('plug', 'No plugins yet. Search Modrinth above and they land '
+        + 'in this server’s plugins folder.'));
+      return;
+    }
+    const list = document.createElement('div');
+    list.className = 'people';
+    for (const p of data.plugins) list.append(pluginRow(p));
+    listWrap.append(list);
+  };
+
+  function pluginRow(p) {
+    const el = document.createElement('div');
+    el.className = 'who';
+    if (!p.enabled) el.setAttribute('data-off', '');
+    const mark = document.createElement('div');
+    mark.className = 'face face-mark';
+    mark.append(icon('plug'));
+
+    const nm = document.createElement('div');
+    nm.className = 'w-name';
+    const who = document.createElement('span');
+    who.textContent = p.name;
+    nm.append(who);
+    if (p.version) {
+      const pill = document.createElement('span');
+      pill.className = 'pill';
+      pill.textContent = p.version;
+      nm.append(pill);
+    }
+    if (!p.enabled) {
+      const pill = document.createElement('span');
+      pill.className = 'pill';
+      pill.textContent = 'Disabled';
+      nm.append(pill);
+    }
+    const update = pluginView.updates && pluginView.updates[p.file];
+    if (update) {
+      const pill = document.createElement('span');
+      pill.className = 'pill';
+      pill.dataset.tone = 'op';
+      pill.textContent = update.latestVersion + ' available';
+      nm.append(pill);
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'w-meta';
+    const bits = [];
+    if (p.description) bits.push(p.description);
+    bits.push(p.file + '  ·  ' + (p.size / 1024 / 1024).toFixed(1) + ' MB');
+    if (p.authors.length) bits.push('by ' + p.authors.join(', '));
+    meta.textContent = bits.join('  ·  ');
+
+    const acts = document.createElement('div');
+    acts.className = 'w-acts';
+    const upBtn = update ? iconButton('restore', 'Update', 'primary') : null;
+    const toggle = document.createElement('button');
+    toggle.textContent = p.enabled ? 'Disable' : 'Enable';
+    const drop = iconButton('trash', 'Delete', 'danger');
+    if (upBtn) acts.append(upBtn);
+    acts.append(toggle, drop);
+    el.append(mark, nm, meta, acts);
+
+    const busy = (on) => { for (const b of acts.children) b.disabled = on; };
+
+    if (upBtn) {
+      upBtn.onclick = async () => {
+        busy(true);
+        upBtn.textContent = 'Updating…';
+        try {
+          const out = await post(base + '/update', { file: p.file });
+          delete pluginView.updates[p.file];
+          toast(out.alreadyLatest
+            ? p.name + ' is already the newest build.'
+            : 'Updated ' + p.name + ' to ' + out.version + '. A plugins snapshot was taken first.', 'good');
+          await again();
+        } catch (e) {
+          toast(e.message, 'bad');
+          busy(false);
+          upBtn.textContent = 'Update';
+        }
+      };
+    }
+
+    toggle.onclick = async () => {
+      busy(true);
+      try {
+        await post(base + '/toggle', { file: p.file, enabled: !p.enabled });
+        toast(p.name + (p.enabled ? ' disabled.' : ' enabled.') + ' Takes effect on the next start.', 'good');
+        await again();
+      } catch (e) {
+        toast(e.message, 'bad');
+        busy(false);
+      }
+    };
+
+    drop.onclick = async () => {
+      const ok = await ask({
+        title: 'Delete ' + p.name + '?',
+        text: p.file + ' is removed from the plugins folder. Its config folder stays, so '
+          + 'installing it again picks up where it left off.',
+        confirmLabel: 'Delete plugin',
+        danger: true,
+      });
+      if (!ok) return;
+      busy(true);
+      try {
+        await post(base + '/delete', { file: p.file });
+        toast('Deleted ' + p.file + '.', 'good');
+        await again();
+      } catch (e) {
+        toast(e.message, 'bad');
+        busy(false);
+      }
+    };
+    return el;
+  }
+
+  paint();
 }
 
 // -------------------------------------------------------------- scheduler ---

@@ -11,16 +11,18 @@ user accounts, a remote web panel - stay off it on purpose.
 - **Reliability** *(v0.6 line)* — crash auto-restart with a crash-loop stop, scheduled
   restarts that warn the players first, Discord webhook notifications for the events
   nobody is watching for, and `mcctl verify` to prove snapshots actually restore.
+- **Plugin manager** — a Plugins tab and `mcctl plugins`: installed jars read from
+  their own manifests (zero-dependency zip reader), Modrinth search and install
+  filtered to compatible builds, hash-based update check, one-click update with a
+  plugins snapshot first, enable/disable by renaming in place.
 
 ## Next
 
-- **Plugin manager.** A Plugins tab: list installed jars (from each `plugin.yml`),
-  search and install from Modrinth and Hangar, one-click update with a pre-update
-  snapshot, enable/disable via a `_disabled/` folder. Modrinth's version metadata means
-  "this build does not support your Minecraft version" is caught before the download.
 - **Server updates.** "Paper build N is available → Update" on the server header:
   snapshot, swap the jar, restart. Louder version for Minecraft version upgrades.
   `paper.mjs` already lists and fetches builds; this is the missing button.
+- **Hangar as a second plugin source**, for the Paper-ecosystem plugins that never
+  publish to Modrinth.
 
 ## Later
 

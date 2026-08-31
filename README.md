@@ -103,6 +103,7 @@ RCON refuses to carry.
 | `clone <src> <new>` | Copy plugins and config into a new instance on a free port |
 | `set <name> key=value` | `memory`, `java`, `jar`, `port`, `rcon.port`, `rcon.password`, `auto-restart=on\|off`, `webhook=<url>\|off` |
 | `props <name> [key=value]` | Read or edit `server.properties` |
+| `plugins <name> [enable\|disable <x>]` | List a server's plugins, flip one on or off |
 | `rm <name> [--purge --yes]` | Unregister, optionally deleting the files |
 
 `clone` gives fresh worlds by default; pass `--with-worlds` to copy world data
@@ -327,6 +328,14 @@ A selected server has five tabs.
 Log level shows as a coloured rail in the gutter rather than by recolouring the text, so ERROR
 stands out without becoming harder to read. A stack trace inherits the level of the line above it,
 which is what makes "filter to errors" show the whole failure instead of its first line.
+
+**Plugins** — everything in the plugins folder with what its own manifest says about it
+(read straight out of each jar, no network needed), search and install from Modrinth
+filtered to builds that support this server's version, a hash-based update check that
+maps each jar to the newest build of whatever project it belongs to, one-click update
+with a plugins-scope snapshot taken first, and enable/disable by renaming the jar in
+place — the server only loads `*.jar`, so a disabled plugin keeps its spot and its
+config.
 
 **Backups** — take one at a chosen scope, see every snapshot with its size, age and coverage, and
 restore or delete any of them. Restoring is refused while the server runs, because extracting over

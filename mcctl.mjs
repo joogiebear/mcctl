@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process'
 import { ensureDirs, ROOT, runDir } from './src/paths.mjs'
 import { listInstances, getInstance, removeInstance, updateInstance, serverJarPath } from './src/registry.mjs'
 import { acceptableWebhook, notifyInstance } from './src/notify.mjs'
+import * as plugins from './src/plugins.mjs'
 import { readState, clearState } from './src/control.mjs'
 import * as sup from './src/supervisor.mjs'
 import { rconExec, stripColors } from './src/rcon.mjs'
@@ -682,6 +683,34 @@ function cmdReveal(positional) {
   out(`Opening ${manage.reveal(name)}`)
 }
 
+/** List a server's plugins, or flip one on or off. The panel's Plugins tab, for a terminal. */
+function cmdPlugins(positional) {
+  const name = requireName(positional, 'plugins')
+  const inst = getInstance(name)
+  const sub = positional[1]
+
+  if (sub === 'enable' || sub === 'disable') {
+    const ref = positional[2]
+    if (!ref) fail(`usage: mcctl plugins <name> ${sub} <plugin>`)
+    const rows = plugins.listPlugins(inst)
+    const hit = rows.find((p) => p.file === ref || p.name.toLowerCase() === String(ref).toLowerCase())
+    if (!hit) fail(`no plugin "${ref}" on "${name}". See: mcctl plugins ${name}`)
+    const res = plugins.setPluginEnabled(inst, hit.file, sub === 'enable')
+    out(`${hit.name} is now ${res.enabled ? 'enabled' : 'disabled'}. Takes effect on the next start.`)
+    return
+  }
+  if (sub) fail('usage: mcctl plugins <name> [enable|disable <plugin>]')
+
+  const rows = plugins.listPlugins(inst)
+  if (!rows.length) {
+    out(`No plugins in ${path.join(inst.dir, 'plugins')}. The panel's Plugins tab installs from Modrinth.`)
+    return
+  }
+  const t = [['NAME', 'VERSION', 'STATE', 'FILE', 'SIZE']]
+  for (const p of rows) t.push([p.name, p.version ?? '-', p.enabled ? 'on' : 'off', p.file, humanBytes(p.size)])
+  out(table(t))
+}
+
 
 function cmdLaunchers(positional) {
   // Backfills instances made before launchers existed, and repairs them if mcctl moves on disk -
@@ -1100,6 +1129,7 @@ INSTANCES
   mcctl set <name> key=value...      memory, java, jar, port, rcon.port, rcon.password,
                                      auto-restart=on|off, webhook=<url>|off
   mcctl props <name> [key=value...]  Read or edit server.properties
+  mcctl plugins <name>               List plugins; flip one with: plugins <name> disable <x>
   mcctl rm <name> [--purge --yes]    Unregister (and optionally delete files)
 
 SNAPSHOTS
@@ -1170,6 +1200,7 @@ const COMMANDS = {
   rebuild: cmdRebuild,
   reveal: cmdReveal,
   open: cmdReveal,
+  plugins: cmdPlugins,
   launchers: cmdLaunchers,
   ui: cmdUi,
   panel: cmdUi,
