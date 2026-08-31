@@ -755,8 +755,14 @@ function cmdPlugins(positional) {
     out(`No plugins in ${path.join(inst.dir, 'plugins')}. The panel's Plugins tab installs from Modrinth.`)
     return
   }
-  const t = [['NAME', 'VERSION', 'STATE', 'FILE', 'SIZE']]
-  for (const p of rows) t.push([p.name, p.version ?? '-', p.enabled ? 'on' : 'off', p.file, humanBytes(p.size)])
+  // The CLI is an inventory, so it lists everything - but SOURCE says which jars are mcctl's
+  // to update ("modrinth") and which are the person's own ("manual"). The panel lists only
+  // the former.
+  const t = [['NAME', 'VERSION', 'STATE', 'SOURCE', 'FILE', 'SIZE']]
+  for (const p of rows) {
+    t.push([p.name, p.version ?? '-', p.enabled ? 'on' : 'off',
+      p.managed ? (p.source ?? 'mcctl') : 'manual', p.file, humanBytes(p.size)])
+  }
   out(table(t))
 }
 

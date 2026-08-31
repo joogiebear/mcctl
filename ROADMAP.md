@@ -11,10 +11,11 @@ user accounts, a remote web panel - stay off it on purpose.
 - **Reliability** *(v0.6 line)* — crash auto-restart with a crash-loop stop, scheduled
   restarts that warn the players first, Discord webhook notifications for the events
   nobody is watching for, and `mcctl verify` to prove snapshots actually restore.
-- **Plugin manager** — a Plugins tab and `mcctl plugins`: installed jars read from
-  their own manifests (zero-dependency zip reader), Modrinth search and install
+- **Plugin manager** — a Plugins tab and `mcctl plugins`: Modrinth search and install
   filtered to compatible builds, hash-based update check, one-click update with a
-  plugins snapshot first, enable/disable by renaming in place.
+  plugins snapshot first, enable/disable by renaming in place. Manages only what it
+  installed (provenance recorded beside the jars); hand-dropped custom and premium
+  plugins are left alone and never hashed to anyone.
 
 - **Server updates** — `mcctl upgrade` and a "Server software" card in Settings: a
   routine one-click move to the newest Paper build (old jar kept as the way back), and

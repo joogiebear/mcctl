@@ -7,7 +7,7 @@ import zlib from 'node:zlib'
 
 import {
   readZipEntry, parsePluginYml, mcVersionOf, listPlugins, setPluginEnabled, removePlugin,
-  pickVersion, primaryFile, LOADERS,
+  pickVersion, primaryFile, LOADERS, readManaged, recordManaged,
 } from '../src/plugins.mjs'
 import { UserError } from '../src/util.mjs'
 
@@ -161,6 +161,38 @@ test('disable renames in place and enable renames it back', () => {
   const on = setPluginEnabled(inst, 'Alpha.jar.disabled', true)
   assert.equal(on.file, 'Alpha.jar')
   assert.ok(fs.existsSync(path.join(inst.dir, 'plugins', 'Alpha.jar')))
+})
+
+test('a hand-dropped jar is not managed; one mcctl recorded is', () => {
+  const inst = fakeInstance()
+  writeJar(path.join(inst.dir, 'plugins'), 'Premium.jar', 'name: Premium\n')
+  writeJar(path.join(inst.dir, 'plugins'), 'FromModrinth.jar', 'name: FromModrinth\n')
+  recordManaged(inst, 'FromModrinth.jar', { source: 'modrinth', project: 'abc', version: '1.0' })
+  const rows = listPlugins(inst)
+  assert.deepEqual(rows.map((r) => [r.name, r.managed]),
+    [['FromModrinth', true], ['Premium', false]])
+  assert.equal(rows[0].source, 'modrinth')
+})
+
+test('the provenance record follows a rename and dies with a delete', () => {
+  const inst = fakeInstance()
+  writeJar(path.join(inst.dir, 'plugins'), 'Tracked.jar', 'name: Tracked\n')
+  recordManaged(inst, 'Tracked.jar', { source: 'modrinth', project: 'abc' })
+
+  setPluginEnabled(inst, 'Tracked.jar', false)
+  assert.deepEqual(Object.keys(readManaged(inst).managed), ['Tracked.jar.disabled'])
+  setPluginEnabled(inst, 'Tracked.jar.disabled', true)
+  assert.deepEqual(Object.keys(readManaged(inst).managed), ['Tracked.jar'])
+
+  removePlugin(inst, 'Tracked.jar')
+  assert.deepEqual(readManaged(inst).managed, {})
+})
+
+test('the provenance file itself never shows up as a plugin', () => {
+  const inst = fakeInstance()
+  writeJar(path.join(inst.dir, 'plugins'), 'Alpha.jar', 'name: Alpha\n')
+  recordManaged(inst, 'Alpha.jar', { source: 'modrinth' })
+  assert.deepEqual(listPlugins(inst).map((r) => r.name), ['Alpha'])
 })
 
 test('a path that walks out of the plugins folder is refused', () => {

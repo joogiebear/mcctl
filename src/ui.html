@@ -2935,7 +2935,8 @@ async function renderPlugins(opts) {
   }
   if (body.dataset.for !== row.name) return;
   body.textContent = '';
-  paneHead(body, 'plug', 'Plugins', 'What this server loads, and what Modrinth can add to it.');
+  paneHead(body, 'plug', 'Plugins',
+    'Install from Modrinth and keep it updated. Plugins you added by hand are left alone.');
 
   const base = '/instances/' + encodeURIComponent(row.name) + '/plugins';
   const again = () => renderPlugins({ force: true });
@@ -3042,10 +3043,15 @@ async function renderPlugins(opts) {
   go.onclick = doSearch;
   q.onkeydown = (e) => { if (e.key === 'Enter') doSearch(); };
 
-  // ---- what is installed -----------------------------------------------------
+  // ---- what mcctl installed --------------------------------------------------
+  // Only jars mcctl put there. A custom or premium plugin somebody dropped into the folder by
+  // hand is theirs: it would never show an update, and this page claims no say over it.
+  const managed = data.plugins.filter((p) => p.managed);
+  const manualCount = data.plugins.length - managed.length;
+
   const listTitle = document.createElement('h3');
   listTitle.className = 'hist-title';
-  listTitle.textContent = 'Installed (' + data.plugins.length + ')';
+  listTitle.textContent = 'Installed through mcctl (' + managed.length + ')';
   const head = document.createElement('div');
   head.className = 'row where';
   const check = iconButton('restore', 'Check for updates');
@@ -3078,15 +3084,27 @@ async function renderPlugins(opts) {
 
   const paint = () => {
     listWrap.textContent = '';
-    if (!data.plugins.length) {
-      listWrap.append(emptyState('plug', 'No plugins yet. Search Modrinth above and they land '
-        + 'in this server’s plugins folder.'));
-      return;
+    if (!managed.length) {
+      listWrap.append(emptyState('plug', manualCount
+        ? 'Nothing installed through mcctl yet. Anything installed from the search above shows '
+          + 'up here with one-click updates.'
+        : 'No plugins yet. Search Modrinth above and they land in this server’s plugins folder.'));
+    } else {
+      const list = document.createElement('div');
+      list.className = 'people';
+      for (const p of managed) list.append(pluginRow(p));
+      listWrap.append(list);
     }
-    const list = document.createElement('div');
-    list.className = 'people';
-    for (const p of data.plugins) list.append(pluginRow(p));
-    listWrap.append(list);
+    if (manualCount) {
+      const own = document.createElement('div');
+      own.className = 'hint';
+      own.style.marginTop = '4px';
+      own.textContent = manualCount + (manualCount === 1 ? ' jar' : ' jars')
+        + ' in the plugins folder ' + (manualCount === 1 ? 'was' : 'were')
+        + ' added by hand — custom or premium plugins mcctl leaves alone. '
+        + (manualCount === 1 ? 'It loads' : 'They load') + ' as normal.';
+      listWrap.append(own);
+    }
   };
 
   function pluginRow(p) {

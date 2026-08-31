@@ -330,13 +330,14 @@ Log level shows as a coloured rail in the gutter rather than by recolouring the 
 stands out without becoming harder to read. A stack trace inherits the level of the line above it,
 which is what makes "filter to errors" show the whole failure instead of its first line.
 
-**Plugins** — everything in the plugins folder with what its own manifest says about it
-(read straight out of each jar, no network needed), search and install from Modrinth
-filtered to builds that support this server's version, a hash-based update check that
-maps each jar to the newest build of whatever project it belongs to, one-click update
-with a plugins-scope snapshot taken first, and enable/disable by renaming the jar in
-place — the server only loads `*.jar`, so a disabled plugin keeps its spot and its
-config.
+**Plugins** — search and install from Modrinth, filtered to builds that support this
+server's version, with a hash-based update check and one-click updates (a plugins-scope
+snapshot is taken first). The page manages **only what mcctl installed** — it records
+provenance in the plugins folder — so a custom or premium plugin dropped in by hand is
+never listed there, never offered a meaningless update, and never has its hash sent to
+anyone. `mcctl plugins <name>` lists the full inventory, manual jars included, with a
+SOURCE column saying which is which. Enable/disable renames the jar in place, so a
+disabled plugin keeps its spot and its config.
 
 **Backups** — take one at a chosen scope, see every snapshot with its size, age and coverage, and
 restore or delete any of them. Restoring is refused while the server runs, because extracting over

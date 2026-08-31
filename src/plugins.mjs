@@ -20,7 +20,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import zlib from 'node:zlib'
-import { fail, UserError } from './util.mjs'
+import { fail, UserError, readJson, writeJson } from './util.mjs'
 
 // ---- reading one entry out of a zip -----------------------------------------
 
@@ -158,6 +158,56 @@ function pluginsDir(inst) {
   return path.join(inst.dir, 'plugins')
 }
 
+// ---- what mcctl itself installed --------------------------------------------
+
+/**
+ * Provenance: which jars in this folder mcctl put there, and from where.
+ *
+ * <p>The distinction carries the whole feature. A jar somebody dropped in by hand - a custom
+ * build, a premium plugin bought elsewhere - is theirs: it would never show an update, its
+ * hash must not be sent to Modrinth to ask, and a manager that lists it anyway is claiming
+ * jurisdiction it does not have. So mcctl manages exactly what it installed, records that
+ * here, and leaves everything else alone.
+ *
+ * <p>The record lives IN the plugins folder (the server ignores non-jar files), so a
+ * plugins-scope snapshot carries it and a restore keeps the managed set consistent with the
+ * jars beside it.
+ */
+const STORE = '.mcctl-plugins.json'
+
+export function readManaged(inst) {
+  const store = readJson(path.join(pluginsDir(inst), STORE), null)
+  return store && typeof store.managed === 'object' && store.managed ? store : { version: 1, managed: {} }
+}
+
+function writeManaged(inst, store) {
+  writeJson(path.join(pluginsDir(inst), STORE), store)
+}
+
+export function recordManaged(inst, file, meta) {
+  const store = readManaged(inst)
+  store.managed[file] = meta
+  writeManaged(inst, store)
+}
+
+export function forgetManaged(inst, file) {
+  const store = readManaged(inst)
+  if (Object.hasOwn(store.managed, file)) {
+    delete store.managed[file]
+    writeManaged(inst, store)
+  }
+}
+
+/** A rename (enable/disable, or an update that changed the filename) moves the record along. */
+function moveManaged(inst, from, to) {
+  const store = readManaged(inst)
+  if (Object.hasOwn(store.managed, from)) {
+    store.managed[to] = store.managed[from]
+    delete store.managed[from]
+    writeManaged(inst, store)
+  }
+}
+
 /** The Minecraft version this server runs, read from its jar's filename; null when unclear. */
 export function mcVersionOf(inst) {
   const m = /^(?:paper|purpur|folia|spigot|craftbukkit)-(\d+\.\d+(?:\.\d+)?)/i.exec(inst.jar || '')
@@ -180,6 +230,7 @@ export function listPlugins(inst) {
     if (err.code === 'ENOENT') return []
     throw err
   }
+  const store = readManaged(inst)
   const rows = []
   for (const file of entries) {
     const enabled = file.endsWith('.jar')
@@ -193,9 +244,15 @@ export function listPlugins(inst) {
       /* an unreadable jar is still listed by filename */
     }
     const st = fs.statSync(full)
+    const record = store.managed[file] ?? null
     rows.push({
       file,
       enabled,
+      // Managed means mcctl installed it and may update it. A jar dropped in by hand is the
+      // person's own - listed here for the CLI's inventory, but never offered management.
+      managed: Boolean(record),
+      source: record?.source ?? null,
+      project: record?.project ?? null,
       name: meta.name || file.replace(/\.jar(\.disabled)?$/, ''),
       version: meta.version || null,
       description: meta.description || null,
@@ -217,12 +274,14 @@ export function setPluginEnabled(inst, file, enabled) {
   if (isOn === Boolean(enabled)) return { file, enabled: isOn }
   const next = enabled ? file.slice(0, -DISABLED.length) : `${file}${DISABLED}`
   fs.renameSync(current, path.join(dir, next))
+  moveManaged(inst, file, next)
   return { file: next, enabled: Boolean(enabled) }
 }
 
 export function removePlugin(inst, file) {
   const dir = pluginsDir(inst)
   fs.rmSync(safePluginPath(dir, file), { force: true })
+  forgetManaged(inst, file)
   return { removed: file }
 }
 
@@ -349,19 +408,30 @@ export async function installPlugin(inst, projectId, { gameVersion = null } = {}
   const name = path.basename(String(file.filename || `${projectId}.jar`))
   if (!/^[^\\/]+\.jar$/.test(name)) fail(`Modrinth offered a file named "${name}", which is not a plugin jar`)
   fs.writeFileSync(path.join(dir, name), bytes)
+  // Recorded as mcctl's to manage. Only jars with a record here are ever listed by the panel,
+  // offered updates, or have their hashes sent anywhere.
+  recordManaged(inst, name, {
+    source: 'modrinth',
+    project: String(version.project_id ?? projectId),
+    version: version.version_number,
+    installedAt: new Date().toISOString(),
+  })
   return { installed: name, version: version.version_number, size: bytes.length }
 }
 
 /**
- * Which installed jars have a newer build, asked by hash.
+ * Which of the jars MCCTL INSTALLED have a newer build, asked by hash.
  *
  * <p>Hashes rather than names, because a jar knows nothing reliable about where it came
  * from - Modrinth's version_files/update endpoint maps a file's sha1 straight to the latest
- * version of whatever project it belongs to. A jar Modrinth has never seen simply is not in
- * the answer, which is the honest result for a hand-built or privately downloaded plugin.
+ * version of whatever project it belongs to.
+ *
+ * <p>Only managed jars are asked about, and that is a boundary, not an optimisation: a
+ * custom or premium plugin somebody dropped in by hand is not mcctl's to update, and its
+ * hash is not mcctl's to send to anyone.
  */
 export async function checkUpdates(inst, { gameVersion = null } = {}) {
-  const rows = listPlugins(inst).filter((p) => p.enabled)
+  const rows = listPlugins(inst).filter((p) => p.enabled && p.managed)
   if (!rows.length) return []
   const dir = pluginsDir(inst)
   const byHash = new Map()
@@ -407,6 +477,9 @@ function sha1File(file) {
 export async function updatePlugin(inst, file, { gameVersion = null } = {}) {
   const dir = pluginsDir(inst)
   const current = safePluginPath(dir, file)
+  if (!Object.hasOwn(readManaged(inst).managed, file)) {
+    fail('mcctl did not install this jar, so it will not touch it - custom and premium plugins are yours to update')
+  }
   const sha = sha1File(current)
   const body = {
     hashes: [sha],
@@ -422,6 +495,9 @@ export async function updatePlugin(inst, file, { gameVersion = null } = {}) {
   if (newFile.hashes?.sha1 === sha) return { alreadyLatest: true, version: version.version_number }
 
   const res = await installPlugin(inst, version.project_id, { gameVersion })
-  if (res.installed !== file) fs.rmSync(current, { force: true })
+  if (res.installed !== file) {
+    fs.rmSync(current, { force: true })
+    forgetManaged(inst, file)
+  }
   return { updated: res.installed, from: file, version: res.version }
 }
