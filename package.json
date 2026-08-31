@@ -4,6 +4,9 @@
   "private": true,
   "description": "Local Minecraft server control plane - multi-instance supervisor with console capture, RCON, and snapshots",
   "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
   "bin": {
     "mcctl": "./mcctl.mjs"
   },
