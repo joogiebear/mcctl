@@ -374,6 +374,35 @@ async function handleUpgrade(req, res, name) {
 }
 
 /**
+ * A modpack server's pack: what release it runs, whether a newer one exists, and moving to
+ * it. The update refuses a running server in the core - files must not change under a live
+ * JVM - and narrates through the same job stream creation uses, because it is the same
+ * dozens-of-downloads shape.
+ */
+async function handlePack(req, res, name) {
+  const inst = registry.getInstance(name)
+  if (req.method === 'GET') {
+    return json(res, 200, {
+      ...(await mrpack.checkPackUpdate(inst)),
+      running: supervisor.isRunning(name),
+    })
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+  const body = await readBody(req)
+  const jobId = body.jobId ? String(body.jobId) : null
+  try {
+    const result = await mrpack.updatePack(name, {
+      onProgress: ({ message, percent }) => jobUpdate(jobId, { stage: 'pack', message, percent: percent ?? null }),
+    })
+    jobUpdate(jobId, { stage: 'done', percent: 100, message: 'Pack updated', done: true })
+    return json(res, 200, result)
+  } catch (err) {
+    jobUpdate(jobId, { stage: 'error', message: err?.message ?? String(err), done: true })
+    throw err
+  }
+}
+
+/**
  * Plugins: what the server loads, and what Modrinth can add to it.
  *
  * <p>The installed list needs no network and always answers. Search, install and the update
@@ -894,6 +923,7 @@ async function route(req, res) {
   if (seg[3] === 'players') return handlePlayers(req, res, name, seg)
   if (seg[3] === 'plugins') return handlePlugins(req, res, name, seg, url)
   if (seg[3] === 'upgrade') return handleUpgrade(req, res, name)
+  if (seg[3] === 'pack') return handlePack(req, res, name)
   if (seg[3] === 'metrics') return handleMetrics(req, res, name, url)
 
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })

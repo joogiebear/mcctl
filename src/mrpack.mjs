@@ -17,10 +17,13 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import os from 'node:os'
 
-import { modrinthRequest, pickVersion, primaryFile, extractZip, recordManaged, readZipEntry } from './plugins.mjs'
+import { modrinthRequest, pickVersion, primaryFile, extractZip, recordManaged, readManaged, forgetManaged, readZipEntry } from './plugins.mjs'
 import * as fabric from './fabric.mjs'
 import * as create from './create.mjs'
-import { removeInstance } from './registry.mjs'
+import { getInstance, removeInstance, updateInstance } from './registry.mjs'
+import { createSnapshot } from './backup.mjs'
+import { readState } from './control.mjs'
+import { readProps, worldDirs } from './props.mjs'
 import { fail, UserError, writeJson } from './util.mjs'
 
 /** The provenance record for a whole pack, written into the instance root. */
@@ -81,23 +84,18 @@ async function download(url, { timeoutMs = 180000 } = {}) {
   return Buffer.from(await res.arrayBuffer())
 }
 
-/**
- * Build a new server from a Modrinth modpack, end to end.
- *
- * <p>Progress lands on `onProgress({ message, percent })` - a pack is dozens of downloads,
- * and dozens of downloads with no narration reads as a hang.
- */
-export async function createFromModpack(name, projectId, {
-  memory = '4G', port = null, onlineMode = true, onProgress = () => {},
-} = {}) {
-  // ---- resolve and fetch the pack itself, before anything exists ------------
-  onProgress({ message: 'Finding the pack on Modrinth', percent: null })
+/** The newest installable release of a pack, or a readable refusal. */
+async function resolvePackVersion(projectId) {
   const versions = await modrinthRequest(`/project/${encodeURIComponent(projectId)}/version?${new URLSearchParams({ loaders: JSON.stringify(['fabric']) })}`)
   const version = pickVersion(versions, { loaders: ['fabric'] })
   if (!version) fail('that pack has no Fabric release mcctl can install')
   const packFile = primaryFile(version)
   if (!packFile) fail('that pack version has no downloadable file')
+  return { version, packFile }
+}
 
+/** Download one pack archive into a scratch dir, checksummed, and read its index. */
+async function fetchPackArchive(packFile, onProgress) {
   onProgress({ message: `Downloading ${packFile.filename}`, percent: null })
   const packBytes = await download(packFile.url)
   if (packFile.hashes?.sha1) {
@@ -111,11 +109,11 @@ export async function createFromModpack(name, projectId, {
   const rawIndex = readZipEntry(mrpack, 'modrinth.index.json')
   if (!rawIndex) fail('the pack has no modrinth.index.json - it is not an mrpack')
   const index = parseIndex(JSON.parse(rawIndex.toString('utf8')))
+  return { tmp, mrpack, index }
+}
 
-  // ---- everything the pack needs, downloaded and verified up front ----------
-  onProgress({ message: `Fetching Fabric ${index.fabricLoader} for ${index.mc}`, percent: null })
-  const launcher = await fabric.fetchLauncher(index.mc, { loader: index.fabricLoader })
-
+/** Every server-side file the index lists, downloaded and checksummed into memory. */
+async function stagePackFiles(index, onProgress) {
   const staged = []
   for (let i = 0; i < index.files.length; i++) {
     const f = index.files[i]
@@ -130,6 +128,28 @@ export async function createFromModpack(name, projectId, {
     }
     staged.push({ ...f, bytes })
   }
+  return staged
+}
+
+/**
+ * Build a new server from a Modrinth modpack, end to end.
+ *
+ * <p>Progress lands on `onProgress({ message, percent })` - a pack is dozens of downloads,
+ * and dozens of downloads with no narration reads as a hang.
+ */
+export async function createFromModpack(name, projectId, {
+  memory = '4G', port = null, onlineMode = true, onProgress = () => {},
+} = {}) {
+  // ---- resolve and fetch the pack itself, before anything exists ------------
+  onProgress({ message: 'Finding the pack on Modrinth', percent: null })
+  const { version, packFile } = await resolvePackVersion(projectId)
+  const { tmp, mrpack, index } = await fetchPackArchive(packFile, onProgress)
+
+  // ---- everything the pack needs, downloaded and verified up front ----------
+  onProgress({ message: `Fetching Fabric ${index.fabricLoader} for ${index.mc}`, percent: null })
+  const launcher = await fabric.fetchLauncher(index.mc, { loader: index.fabricLoader })
+
+  const staged = await stagePackFiles(index, onProgress)
 
   // ---- only now does the instance exist -------------------------------------
   onProgress({ message: 'Creating the server', percent: null })
@@ -209,4 +229,148 @@ export function packOf(inst) {
   } catch {
     return null
   }
+}
+
+// ---- updating an installed pack --------------------------------------------
+
+/**
+ * What an update may DELETE: files the old pack owned that the new one does not - and
+ * nothing else, ever. Exported pure, because this list is the entire safety argument of a
+ * pack update and it deserves tests that need no pack.
+ *
+ * <p>`protect` guards what must survive even a confused record: the worlds (a pack that
+ * shipped one has long since had it overwritten by real play), the server's own root files,
+ * and mcctl's provenance. A path is matched exactly or as a directory prefix.
+ */
+export function planRemovals(oldFiles = [], newFiles = [], { protect = [] } = {}) {
+  const keep = new Set(newFiles.map((p) => String(p).replace(/\\/g, '/')))
+  const guarded = (p) => protect.some((g) => p === g || p.startsWith(`${g}/`))
+  return [...new Set(oldFiles.map((p) => String(p).replace(/\\/g, '/')))]
+    .filter((p) => !keep.has(p) && !guarded(p) && !p.split('/').includes('..') && !p.startsWith('/'))
+}
+
+function protectedPaths(inst) {
+  const props = readProps(path.join(inst.dir, 'server.properties'))
+  return [
+    ...worldDirs(props),
+    'server.properties', 'eula.txt', 'ops.json', 'whitelist.json',
+    'banned-players.json', 'banned-ips.json', 'usercache.json',
+    PACK_FILE, 'mods/.mcctl-plugins.json', 'plugins/.mcctl-plugins.json',
+  ]
+}
+
+/** Whether a newer installable release of this server's pack exists. */
+export async function checkPackUpdate(inst) {
+  const pack = packOf(inst)
+  if (!pack) fail(`"${inst.name}" was not built from a modpack`)
+  const { version } = await resolvePackVersion(pack.project)
+  return {
+    pack: { name: pack.name, version: pack.versionNumber, project: pack.project, mc: pack.mc },
+    latest: { version: version.version_number, id: version.id },
+    updateAvailable: version.version_number !== pack.versionNumber,
+  }
+}
+
+/**
+ * Move an installed pack server to the pack's newest release.
+ *
+ * <p>The order is the whole design. Everything new is downloaded and checksummed FIRST, so
+ * a dead URL costs nothing; a standard snapshot is taken next, so the way back exists before
+ * anything changes; only then are new files laid in, and only files the OLD record owned and
+ * the new pack dropped are deleted - the worlds and everything the person added are not the
+ * pack's to touch. The provenance record and managed-mod store are rewritten to match.
+ */
+export async function updatePack(name, { onProgress = () => {} } = {}) {
+  const inst = getInstance(name)
+  const { status } = readState(name)
+  if (status === 'running' || status === 'stopping') {
+    fail(`"${name}" is running - stop it before updating its pack, or its own files change under it`)
+  }
+  const pack = packOf(inst)
+  if (!pack) fail(`"${name}" was not built from a modpack`)
+
+  onProgress({ message: 'Finding the pack on Modrinth', percent: null })
+  const { version, packFile } = await resolvePackVersion(pack.project)
+  if (version.version_number === pack.versionNumber) {
+    return { alreadyLatest: true, version: pack.versionNumber }
+  }
+
+  const { tmp, mrpack, index } = await fetchPackArchive(packFile, onProgress)
+  try {
+    onProgress({ message: `Fetching Fabric ${index.fabricLoader} for ${index.mc}`, percent: null })
+    const launcher = await fabric.fetchLauncher(index.mc, { loader: index.fabricLoader })
+    const staged = await stagePackFiles(index, onProgress)
+
+    onProgress({ message: 'Snapshotting before anything changes', percent: null })
+    const snap = await createSnapshot(inst, { scope: 'standard', label: 'pre-pack-update', running: false })
+
+    // ---- lay the new pack in ------------------------------------------------
+    onProgress({ message: 'Applying the new pack', percent: null })
+    for (const f of staged) {
+      const target = path.join(inst.dir, ...f.path.split('/'))
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, f.bytes)
+    }
+    const strip = (prefix) => (entryName) =>
+      entryName.startsWith(prefix) ? entryName.slice(prefix.length) : null
+    const laid = extractZip(mrpack, inst.dir, { mapPath: strip('overrides/') })
+    const laidServer = extractZip(mrpack, inst.dir, { mapPath: strip('server-overrides/') })
+    const newOwned = [...index.files.map((f) => f.path), ...laid, ...laidServer]
+
+    // ---- retire what the old pack owned and the new one dropped -------------
+    const removals = planRemovals(pack.files, newOwned, { protect: protectedPaths(inst) })
+    for (const p of removals) {
+      fs.rmSync(path.join(inst.dir, ...p.split('/')), { force: true })
+    }
+
+    // ---- the launcher, the registry, and the records ------------------------
+    if (launcher.name !== inst.jar) {
+      create.placeJar(inst.dir, launcher.name)
+      updateInstance(name, { jar: launcher.name })
+    }
+    for (const [file, entry] of Object.entries(readManaged(inst).managed)) {
+      if (entry.source === 'modpack' && !fs.existsSync(path.join(inst.dir, contentPathFor(inst, file)))) {
+        forgetManaged(inst, file)
+      }
+    }
+    for (const f of index.files) {
+      if (f.path.startsWith('mods/') && f.path.endsWith('.jar') && !f.path.slice(5).includes('/')) {
+        recordManaged(inst, path.posix.basename(f.path), {
+          source: 'modpack',
+          project: pack.project,
+          version: version.version_number,
+          installedAt: new Date().toISOString(),
+        })
+      }
+    }
+    writeJson(path.join(inst.dir, PACK_FILE), {
+      project: pack.project,
+      versionId: index.versionId,
+      versionNumber: version.version_number,
+      name: index.name,
+      mc: index.mc,
+      fabricLoader: index.fabricLoader,
+      installedAt: new Date().toISOString(),
+      files: newOwned,
+      skippedClientOnly: index.skipped,
+    })
+
+    return {
+      from: pack.versionNumber,
+      to: version.version_number,
+      mc: index.mc,
+      mcChanged: index.mc !== pack.mc,
+      fabricLoader: index.fabricLoader,
+      files: index.files.length,
+      removed: removals.length,
+      snapshot: snap.file,
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+}
+
+/** Where a managed-store filename actually lives for this instance's content kind. */
+function contentPathFor(inst, file) {
+  return path.join(inst.loader === 'fabric' ? 'mods' : 'plugins', file)
 }

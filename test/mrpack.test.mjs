@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import zlib from 'node:zlib'
 
-import { parseIndex } from '../src/mrpack.mjs'
+import { parseIndex, planRemovals } from '../src/mrpack.mjs'
 import { extractZip } from '../src/plugins.mjs'
 import { UserError } from '../src/util.mjs'
 
@@ -87,6 +87,37 @@ test('a pack file path that escapes the instance folder poisons the whole pack',
     const evil = { ...INDEX, files: [{ path: bad, hashes: {}, downloads: ['https://cdn/x'] }] }
     assert.throws(() => parseIndex(evil), UserError, `accepted "${bad}"`)
   }
+})
+
+// ---- what a pack update may delete ------------------------------------------
+
+test('an update deletes only what the old pack owned and the new one dropped', () => {
+  const old = ['mods/a-1.0.jar', 'mods/b-1.0.jar', 'config/a.toml']
+  const now = ['mods/a-2.0.jar', 'mods/b-1.0.jar', 'config/a.toml']
+  assert.deepEqual(planRemovals(old, now), ['mods/a-1.0.jar'])
+})
+
+test('what the person added is never a removal candidate, because it was never owned', () => {
+  const old = ['mods/pack-mod.jar']
+  // hand-added.jar is on disk but not in either record - it simply never appears here.
+  assert.deepEqual(planRemovals(old, []), ['mods/pack-mod.jar'])
+})
+
+test('protected paths survive even a confused record', () => {
+  const old = ['world/level.dat', 'world_nether/level.dat', 'server.properties', 'mods/old.jar', 'eula.txt']
+  const removals = planRemovals(old, [], { protect: ['world', 'world_nether', 'server.properties', 'eula.txt'] })
+  assert.deepEqual(removals, ['mods/old.jar'])
+})
+
+test('a protected prefix guards the directory, not every name that starts with it', () => {
+  const removals = planRemovals(['worldedit/config.yml', 'world/level.dat'], [], { protect: ['world'] })
+  assert.deepEqual(removals, ['worldedit/config.yml'])
+})
+
+test('path tricks in a record never become deletions', () => {
+  const old = ['../outside.jar', '/absolute.jar', 'mods/../../up.jar', 'mods\\windows-style.jar']
+  const removals = planRemovals(old, [])
+  assert.deepEqual(removals, ['mods/windows-style.jar'], 'backslashes normalise; escapes are dropped')
 })
 
 // ---- extraction -------------------------------------------------------------

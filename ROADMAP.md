@@ -36,8 +36,8 @@ user accounts, a remote web panel - stay off it on purpose.
   with a Mods tab, and "From a modpack" in Add-a-server: every server-side file the
   pack lists downloaded and checksummed before the instance exists, the pack's loader
   pinned, overrides applied, pack-owned mods held to the pack's versions, and the
-  client-pack link shown for joining players. Remaining (docs/modpacks-plan.md):
-  pack updates, and NeoForge.
+  client-pack link shown for joining players, and pack updates that may only touch what
+  the old pack owned. Remaining (docs/modpacks-plan.md): NeoForge.
 - **A Share screen.** The honest answer to "how do my friends join?": the LAN address
   plainly, UPnP as an explicit opt-in, and real guidance for Tailscale / playit.gg for
   play over the internet. Exposure stays a deliberate user decision; this makes it an

@@ -3006,10 +3006,14 @@ async function renderPlugins(opts) {
   // A server a pack built says so, because the answer to "how do my friends join" is the
   // matching client pack - the single most-asked question about a modded server.
   if (data.pack) {
+    const packBox = document.createElement('div');
+    packBox.className = 'section';
+    const packTitle = document.createElement('h3');
+    packTitle.textContent = 'Modpack';
     const packLine = document.createElement('div');
     packLine.className = 'hint';
     const link = 'https://modrinth.com/project/' + encodeURIComponent(data.pack.project);
-    packLine.textContent = 'Built from the modpack ' + data.pack.name + ' ' + (data.pack.version || '')
+    packLine.textContent = data.pack.name + ' ' + (data.pack.version || '')
       + '. Players join with the matching client pack, installed in their own launcher: ';
     if (desktop) {
       const open = document.createElement('button');
@@ -3027,7 +3031,74 @@ async function renderPlugins(opts) {
       a.textContent = link;
       packLine.append(a);
     }
-    body.append(packLine);
+    const packRow = document.createElement('div');
+    packRow.className = 'row';
+    const packCheck = iconButton('restore', 'Check for a newer release');
+    packRow.append(packCheck);
+    const packOut = document.createElement('div');
+    packOut.className = 'hint';
+    packBox.append(packTitle, packLine, packRow, packOut);
+    body.append(packBox);
+
+    packCheck.onclick = async () => {
+      packCheck.disabled = true;
+      packOut.textContent = 'Asking Modrinth…';
+      let info;
+      try {
+        info = await api('/instances/' + encodeURIComponent(row.name) + '/pack');
+      } catch (e) {
+        packOut.textContent = '';
+        toast(e.message, 'bad');
+        packCheck.disabled = false;
+        return;
+      }
+      packCheck.disabled = false;
+      if (!info.updateAvailable) {
+        packOut.textContent = 'This is the newest release of the pack.';
+        return;
+      }
+      packOut.textContent = 'Release ' + info.latest.version + ' is out.';
+      const go = document.createElement('button');
+      go.className = 'primary';
+      go.style.marginLeft = '8px';
+      go.textContent = 'Update pack to ' + info.latest.version;
+      packOut.append(go);
+      go.onclick = async () => {
+        const ok = await ask({
+          title: 'Update ' + data.pack.name + ' to ' + info.latest.version + '?',
+          text: 'The server must be stopped. A standard snapshot is taken first; only files the '
+            + 'old pack owned and the new one dropped are removed - the worlds and anything you '
+            + 'added by hand are never touched. Players will need the matching new client pack.',
+          confirmLabel: 'Update pack',
+          danger: true,
+        });
+        if (!ok) return;
+        go.disabled = true;
+        const jobId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'job-' + Date.now();
+        const jobs = new EventSource('/api/jobs/' + jobId + '/stream');
+        jobs.onmessage = (ev) => {
+          let job;
+          try { job = JSON.parse(ev.data); } catch { return; }
+          if (job.message) packOut.textContent = job.message;
+        };
+        try {
+          const out = await post('/instances/' + encodeURIComponent(row.name) + '/pack', { jobId: jobId });
+          jobs.close();
+          toast(out.alreadyLatest
+            ? 'Already on the newest release.'
+            : 'Updated to ' + out.to + '. Snapshot taken first; ' + out.removed + ' old pack file'
+              + (out.removed === 1 ? '' : 's') + ' retired.'
+              + (out.mcChanged ? ' Minecraft moved to ' + out.mc + ' - the worlds migrate on the next start.' : ''), 'good');
+          await refresh();
+          await again();
+        } catch (e) {
+          jobs.close();
+          packOut.textContent = '';
+          toast(e.message, 'bad');
+          go.disabled = false;
+        }
+      };
+    };
   }
 
   // ---- add from Modrinth -----------------------------------------------------

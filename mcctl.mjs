@@ -770,6 +770,50 @@ async function cmdUpgrade(positional, flags) {
     : '  Takes effect at the next start.')
 }
 
+/**
+ * A modpack server's pack: what it runs, whether a newer release exists, and moving to it.
+ * The update takes a standard snapshot first and only ever deletes files the old pack owned
+ * that the new one dropped - the worlds and anything hand-added are not the pack's to touch.
+ */
+async function cmdPack(positional, flags) {
+  const name = requireName(positional, 'pack')
+  const inst = getInstance(name)
+  const sub = positional[1] ?? 'status'
+
+  if (sub === 'status' || sub === 'check') {
+    const pack = mrpack.packOf(inst)
+    if (!pack) fail(`"${name}" was not built from a modpack`)
+    out(`${name} runs ${pack.name} ${pack.versionNumber} (minecraft ${pack.mc}, fabric loader ${pack.fabricLoader})`)
+    const info = await mrpack.checkPackUpdate(inst)
+    out(info.updateAvailable
+      ? `Release ${info.latest.version} is out. Apply with: mcctl pack ${name} update --yes`
+      : 'That is the newest release.')
+    return
+  }
+
+  if (sub === 'update') {
+    if (!flags.yes) {
+      fail(`updating replaces the pack's own files. A standard snapshot is taken first, the worlds
+  and anything you added by hand are never touched, and players will need the matching new
+  client pack. The server must be stopped. Re-run with --yes.`)
+    }
+    const res = await mrpack.updatePack(name, { onProgress: ({ message }) => out(`  ${message}`) })
+    if (res.alreadyLatest) {
+      out(`Already on the newest release (${res.version}).`)
+      return
+    }
+    out('')
+    out(`Updated to ${res.to} (from ${res.from}).`)
+    out(`  Snapshot: ${res.snapshot}`)
+    out(`  ${res.files} pack files laid in, ${res.removed} old pack file(s) retired.`)
+    if (res.mcChanged) out(`  Minecraft moved to ${res.mc} - the worlds migrate on the next start.`)
+    out('Players need the matching new client pack to join.')
+    return
+  }
+
+  fail('usage: mcctl pack <name> [update --yes]')
+}
+
 /** List a server's plugins, or flip one on or off. The panel's Plugins tab, for a terminal. */
 function cmdPlugins(positional) {
   const name = requireName(positional, 'plugins')
@@ -1244,6 +1288,8 @@ OTHER
   mcctl paper fetch <version>        Download a Paper build into the jar store
   mcctl upgrade <name> [--check]     Move to the newest Paper build for its version;
                                      --version <v> --yes crosses Minecraft versions
+  mcctl pack <name> [update --yes]   A modpack server's pack: show, check, update
+                                     (snapshot first; worlds and hand-added files untouched)
   mcctl config                       Show where servers, jars and backups live
   mcctl config set-root <path>       Move the data root (new servers only)
   mcctl config set-instances <path>  Put servers on a different drive
@@ -1299,6 +1345,7 @@ const COMMANDS = {
   open: cmdReveal,
   plugins: cmdPlugins,
   upgrade: cmdUpgrade,
+  pack: cmdPack,
   launchers: cmdLaunchers,
   ui: cmdUi,
   panel: cmdUi,

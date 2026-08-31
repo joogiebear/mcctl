@@ -1,9 +1,11 @@
 # Plan: modded servers and Modrinth modpacks
 
-Status: **Phases 1 and 2 (Fabric servers, .mrpack install) shipped 2026-08-31**;
-Phase 3 largely collapsed into them (the Mods tab shipped with Phase 1; pack-owned mods
-are distinct from mcctl-added and hand-dropped ones). Remaining: **pack updates**
-(the provenance record for them is already written at install) and **Phase 4, NeoForge**.
+Status: **Phases 1–3 shipped 2026-08-31** — Fabric servers, .mrpack install, the Mods
+tab with pack-owned/mcctl-added/hand-dropped kept distinct, and **pack updates**
+(`mcctl pack <name> update`, and the Modpack card in the Mods tab): everything new
+downloaded and checksummed first, a standard snapshot next, and deletions limited to
+files the old record owned that the new pack dropped, with worlds and the server's root
+files protected even against a confused record. Remaining: **Phase 4, NeoForge**.
 Ships on the 0.6.x line — it extends the same content-installing area the plugin
 manager lives in.
 
