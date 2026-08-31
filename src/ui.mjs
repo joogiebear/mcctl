@@ -7,6 +7,7 @@ import * as supervisor from './supervisor.mjs'
 import * as registry from './registry.mjs'
 import * as create from './create.mjs'
 import * as paper from './paper.mjs'
+import * as manage from './manage.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -67,6 +68,10 @@ async function route(req, res) {
   }
 
   if (seg[0] !== 'api') return json(res, 404, { error: 'not found' })
+
+  if (seg[1] === 'jars' && req.method === 'GET') {
+    return json(res, 200, create.listJars().map((j) => ({ name: j.name, size: j.sizeHuman })))
+  }
 
   // ---- paper versions, for the create form's dropdown -----------------------
   if (seg[1] === 'paper' && seg[2] === 'versions' && req.method === 'GET') {
@@ -149,6 +154,37 @@ async function route(req, res) {
   if (seg[3] === 'restart') {
     await supervisor.stop(name).catch(() => {})
     await supervisor.start(name)
+    return json(res, 200, supervisor.statusOf(name))
+  }
+  if (seg[3] === 'rename') {
+    const body = await readBody(req)
+    if (!body.to) return json(res, 400, { error: 'new name is required' })
+    return json(res, 200, manage.rename(name, String(body.to)))
+  }
+  if (seg[3] === 'rebuild') {
+    const body = await readBody(req)
+    return json(res, 200, await manage.rebuild(name, {
+      keepPlugins: body.keepPlugins !== false,
+      snapshot: body.snapshot !== false,
+    }))
+  }
+  if (seg[3] === 'delete') {
+    const body = await readBody(req)
+    return json(res, 200, await manage.destroy(name, { purge: body.purge === true }))
+  }
+  if (seg[3] === 'reveal') {
+    return json(res, 200, { dir: manage.reveal(name) })
+  }
+  if (seg[3] === 'settings') {
+    const body = await readBody(req)
+    // Only the fields the panel offers. An allowlist rather than a merge: a settings endpoint that
+    // writes whatever it is handed is how a typo in the page silently rewrites the registry.
+    const patch = {}
+    if (body.memory) patch.memory = String(body.memory)
+    if (body.port) patch.port = Number(body.port)
+    if (body.jar) patch.jar = String(body.jar)
+    if (body.java) patch.java = String(body.java)
+    registry.updateInstance(name, patch)
     return json(res, 200, supervisor.statusOf(name))
   }
   if (seg[3] === 'command') {

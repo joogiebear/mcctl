@@ -19,6 +19,7 @@ import * as backup from './src/backup.mjs'
 import * as create from './src/create.mjs'
 import * as paper from './src/paper.mjs'
 import * as ui from './src/ui.mjs'
+import * as manage from './src/manage.mjs'
 import { readProps, writeProps } from './src/props.mjs'
 import { UserError, fail, table, humanBytes, humanDuration, dirSize, isPortFree } from './src/util.mjs'
 
@@ -540,6 +541,37 @@ function cmdTemplates(positional, flags) {
   out(table(rows))
 }
 
+function cmdRename(positional) {
+  const from = positional[0]
+  const to = positional[1]
+  if (!from || !to) fail('usage: mcctl rename <old-name> <new-name>')
+  const res = manage.rename(from, to)
+  out(`Renamed "${from}" -> "${to}"`)
+  if (res.movedDir) out(`  directory moved to ${res.dir}`)
+  create.writeLaunchers(res)
+}
+
+async function cmdRebuild(positional, flags) {
+  const name = requireName(positional, 'rebuild')
+  if (!flags.yes) {
+    fail(`rebuild deletes the worlds in "${name}". Re-run with --yes to confirm.
+` +
+      `  Add --wipe-plugins to reset plugins too. A snapshot is taken first unless --no-snapshot.`)
+  }
+  const res = await manage.rebuild(name, {
+    keepPlugins: !flags.wipePlugins,
+    snapshot: !flags.noSnapshot,
+  })
+  if (res.snapshot) out(`Snapshot: ${res.snapshot}`)
+  out(`Rebuilt "${name}" — removed: ${res.removed.join(', ') || '(nothing to remove)'}`)
+  out(res.keptPlugins ? 'Plugins kept.' : 'Plugins wiped.')
+}
+
+function cmdReveal(positional) {
+  const name = requireName(positional, 'reveal')
+  out(`Opening ${manage.reveal(name)}`)
+}
+
 function cmdLaunchers(positional) {
   // Backfills instances made before launchers existed, and repairs them if mcctl moves on disk -
   // the .bat files hold an absolute path to the CLI.
@@ -735,6 +767,9 @@ OTHER
   mcctl ui                           Open the local control panel in a browser
   mcctl paper versions               Paper versions available to download
   mcctl paper fetch <version>        Download a Paper build into the jar store
+  mcctl rename <old> <new>           Rename an instance (and its folder)
+  mcctl rebuild <name> --yes         Reset worlds; keeps plugins unless --wipe-plugins
+  mcctl reveal <name>                Open the instance folder in Explorer
   mcctl launchers [name]             Write start/console/stop .bat files
   mcctl jars                         List stored server jars
   mcctl jars import <path> [--as x]  Add a server jar to the store
@@ -776,6 +811,10 @@ const COMMANDS = {
   template: cmdTemplates,
   jars: cmdJars,
   paper: cmdPaper,
+  rename: cmdRename,
+  rebuild: cmdRebuild,
+  reveal: cmdReveal,
+  open: cmdReveal,
   launchers: cmdLaunchers,
   ui: cmdUi,
   panel: cmdUi,

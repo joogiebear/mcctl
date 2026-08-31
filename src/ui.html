@@ -42,6 +42,8 @@
   form.new input, form.new select { background: #0d1017; color: var(--ink); border: 1px solid var(--line);
                                     border-radius: 6px; padding: 7px 9px; font: inherit; width: 100%; }
   form.new label { color: var(--dim); font-size: 12px; }
+  .mini { width: 116px; background: #0d1017; color: var(--ink); border: 1px solid var(--line);
+          border-radius: 6px; padding: 5px 8px; font: inherit; }
   .note { color: var(--dim); font-size: 12px; padding: 0 14px 12px; }
 </style>
 
@@ -78,6 +80,17 @@
       <button class="stop" id="bStop">Stop</button>
       <button id="bRestart">Restart</button>
     </div>
+    <div class="bar" id="manageBar">
+      <button id="bFolder" title="Open this instance's folder">Open folder</button>
+      <span style="flex:1"></span>
+      <input id="edName" class="mini" placeholder="rename to..." autocomplete="off">
+      <button id="bRename">Rename</button>
+      <input id="edMem" class="mini" placeholder="RAM e.g. 4G" autocomplete="off">
+      <input id="edPort" class="mini" type="number" placeholder="port">
+      <button id="bSave">Save</button>
+      <button id="bRebuild" title="Reset worlds; snapshots first">Rebuild</button>
+      <button class="stop" id="bDelete">Delete</button>
+    </div>
     <pre id="log"></pre>
     <div class="cmd">
       <input id="cmd" placeholder="Type a server command and press Enter - e.g. list" autocomplete="off">
@@ -113,6 +126,12 @@ async function refresh() {
   $('#bStart').disabled = !cur || cur.status === 'running';
   $('#bStop').disabled = !cur || cur.status !== 'running';
   $('#bRestart').disabled = !cur;
+  // Rename, rebuild and delete all require a stopped server; the core refuses otherwise, and a
+  // button that is going to be refused should look refused.
+  const live = !cur || cur.status === 'running';
+  for (const b of ['#bRename', '#bRebuild', '#bDelete']) $(b).disabled = live;
+  $('#bFolder').disabled = !cur;
+  $('#bSave').disabled = live;
 }
 
 function select(name) {
@@ -149,6 +168,74 @@ const act = (what) => async () => {
 $('#bStart').onclick = act('start');
 $('#bStop').onclick = act('stop');
 $('#bRestart').onclick = act('restart');
+
+// Destructive actions confirm by name. A dialog that only says "are you sure" is answered
+// reflexively; typing the name is a moment of actually reading which server this is.
+function confirmNamed(action, name) {
+  const typed = prompt(action + ' "' + name + '"?\n\nType the server name to confirm:');
+  return typed === name;
+}
+
+$('#bFolder').onclick = async () => {
+  if (!current) return;
+  try { await api('/instances/' + current + '/reveal', { method: 'POST' }); }
+  catch (e) { alert(e.message); }
+};
+
+$('#bRename').onclick = async () => {
+  const to = $('#edName').value.trim();
+  if (!current || !to) return;
+  try {
+    await api('/instances/' + current + '/rename', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ to }) });
+    $('#edName').value = '';
+    await refresh();
+    select(to);
+  } catch (e) { alert(e.message); }
+};
+
+$('#bSave').onclick = async () => {
+  if (!current) return;
+  const body = {};
+  if ($('#edMem').value.trim()) body.memory = $('#edMem').value.trim();
+  if ($('#edPort').value.trim()) body.port = $('#edPort').value.trim();
+  if (!Object.keys(body).length) return;
+  try {
+    await api('/instances/' + current + '/settings', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body) });
+    $('#edMem').value = ''; $('#edPort').value = '';
+    refresh();
+  } catch (e) { alert(e.message); }
+};
+
+$('#bRebuild').onclick = async () => {
+  if (!current || !confirmNamed('Reset the worlds of', current)) return;
+  const keepPlugins = confirm('Keep plugins?\n\nOK = keep plugins (reset world only)\nCancel = wipe plugins too');
+  try {
+    const r = await api('/instances/' + current + '/rebuild', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ keepPlugins }) });
+    alert('Rebuilt. Snapshot taken first:\n' + (r.snapshot || '(none)'));
+    refresh();
+  } catch (e) { alert(e.message); }
+};
+
+$('#bDelete').onclick = async () => {
+  if (!current || !confirmNamed('Delete', current)) return;
+  const purge = confirm('Delete the files too?\n\nOK = delete files (snapshot taken first)\nCancel = keep files, remove from mcctl');
+  try {
+    await api('/instances/' + current + '/delete', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ purge }) });
+    current = null;
+    $('#curName').textContent = '—';
+    $('#log').textContent = '';
+    if (stream) stream.close();
+    refresh();
+  } catch (e) { alert(e.message); }
+};
 
 async function send() {
   const box = $('#cmd');
