@@ -230,6 +230,30 @@ function requireName(who, verb) {
   )
 }
 
+/**
+ * Who is connected right now.
+ *
+ * <p>Nothing on disk answers this. Minecraft writes a player's .dat when they log out or when the
+ * world saves, so someone who joined a minute ago has left no trace in the world folder at all -
+ * and a screen that reads only files says "has never joined" about the person currently standing
+ * in front of you.
+ *
+ * <p>So the server is asked. Failure is not an error: the list still means something without it,
+ * and the alternative is a page that shows nothing because one extra question went unanswered.
+ */
+export async function onlineNow(inst) {
+  if (!supervisor.isRunning(inst.name)) return []
+  try {
+    const [reply] = await rconExec(inst, ['list'])
+    // "There are 1 of a max of 10 players online: Wunga_" - and with nobody on, the same sentence
+    // ending in a colon and nothing after it.
+    const after = stripColors(reply || '').split(':').slice(1).join(':')
+    return after.split(',').map((n) => n.trim()).filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
 export async function setOp(inst, uuid, on) {
   const who = findPlayer(inst, uuid)
   if (supervisor.isRunning(inst.name)) {
