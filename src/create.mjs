@@ -8,6 +8,56 @@ import { fail, findFreePort, randomPassword, validateName, humanBytes } from './
 const DEFAULT_PORT = 25565
 const DEFAULT_RCON_PORT = 25575
 
+/**
+ * Put a server jar where the instance expects to find it.
+ *
+ * <p>An instance runs the jar sitting in its own directory - serverJarPath is just
+ * `<dir>/<inst.jar>` - while the jar store is a separate place jars are downloaded and kept. The
+ * two are connected only by something copying between them, and only creation was doing it.
+ * Changing an existing server's jar therefore recorded a filename that pointed at nothing, and the
+ * next start failed with a path that had never existed.
+ *
+ * <p>Idempotent: a jar already in place is left alone rather than recopied, so this is safe to call
+ * on every change whether or not the jar is new.
+ */
+export function placeJar(dir, chosenJar) {
+  const base = path.basename(chosenJar)
+  const inInstance = path.join(dir, base)
+  if (fs.existsSync(inInstance)) return { path: inInstance, copied: false }
+
+  const fromStore = path.join(JARS_DIR, base)
+  const abs = path.isAbsolute(chosenJar) ? chosenJar : null
+  const src = fs.existsSync(fromStore) ? fromStore : abs && fs.existsSync(abs) ? abs : null
+  if (!src) {
+    const have = listJars().map((j) => j.name).join(', ')
+    fail([
+      `server jar "${chosenJar}" is not in ${JARS_DIR}.`,
+      have ? `  Stored jars: ${have}` : '  The jar store is empty.',
+      '  Download one with "mcctl paper fetch <version>" or add one with "mcctl jars import <path>".',
+    ].join(String.fromCharCode(10)))
+  }
+  fs.copyFileSync(src, inInstance)
+  return { path: inInstance, copied: true }
+}
+
+/**
+ * Jars in an instance's directory that it is not the one being run.
+ *
+ * <p>Changing version leaves the old one behind - fifty megabytes each, and they accumulate quietly.
+ * Reported rather than deleted: the old jar is the way back if the new version turns out to be
+ * wrong, and that is not a decision to make on somebody's behalf.
+ */
+export function strayJars(dir, currentJar) {
+  const keep = path.basename(currentJar || '')
+  try {
+    return fs.readdirSync(dir)
+      .filter((f) => f.toLowerCase().endsWith('.jar') && f !== keep)
+      .map((f) => ({ name: f, size: fs.statSync(path.join(dir, f)).size }))
+  } catch {
+    return []
+  }
+}
+
 export function listJars() {
   fs.mkdirSync(JARS_DIR, { recursive: true })
   return fs
@@ -197,19 +247,7 @@ export async function newInstance(
         `  Pick one with --jar <file>. Available: ${listJars().map((j) => j.name).join(', ') || '(none - use "mcctl jars import <path>")'}`,
     )
   }
-  const jarInInstance = path.join(dir, path.basename(chosenJar))
-  if (!fs.existsSync(jarInInstance)) {
-    const fromStore = path.join(JARS_DIR, path.basename(chosenJar))
-    const abs = path.isAbsolute(chosenJar) ? chosenJar : null
-    const src = fs.existsSync(fromStore) ? fromStore : abs && fs.existsSync(abs) ? abs : null
-    if (!src) {
-      fail(
-        `server jar "${chosenJar}" not found in ${JARS_DIR}.\n` +
-          `  Import one with: mcctl jars import <path-to-jar>`,
-      )
-    }
-    fs.copyFileSync(src, jarInInstance)
-  }
+  placeJar(dir, chosenJar)
 
   const { port: finalPort, rconPort: finalRcon } = await allocatePorts({ port, rconPort })
   const rconPassword = randomPassword()
