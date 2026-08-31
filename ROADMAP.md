@@ -22,7 +22,7 @@ user accounts, a remote web panel - stay off it on purpose.
   a deliberately harder, confirmed, snapshot-first path for crossing Minecraft
   versions, because worlds migrate one-way.
 
-- **Hangar as a second plugin source** *(v0.7 line)* — searched alongside Modrinth with
+- **Hangar as a second plugin source** *(v0.6.2)* — searched alongside Modrinth with
   the source named on every result, sha256-verified installs, and version-name update
   checks against the provenance record. External-download projects (premium and
   elsewhere-hosted) are linked to rather than pretended at; a sparse version claim is
