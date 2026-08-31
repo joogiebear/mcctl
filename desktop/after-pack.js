@@ -72,12 +72,20 @@ function buildInfo() {
   }
   const commit = git(['rev-parse', 'HEAD'])
   // A build from a dirty tree is not reproducible from any commit, and saying so is the whole point.
-  const dirty = commit ? git(['status', '--porcelain']) !== '' : null
+  const status = commit ? git(['status', '--porcelain']) : null
+  const dirty = status === null ? null : status !== ''
+  // What was dirty, not just that something was. v0.3.0 shipped flagged because of one untracked
+  // file that is not in the packaged set - true, and useless without knowing which file it was.
+  // Ten is enough to tell "a stray script" from "half the source".
+  const changed = status
+    ? status.split(/\r?\n/).filter(Boolean).map((l) => l.trim()).slice(0, 10)
+    : []
   return {
     version: require('./package.json').version,
     commit,
     shortCommit: commit ? commit.slice(0, 12) : null,
     dirty,
+    changed,
     builtAt: new Date().toISOString(),
   }
 }

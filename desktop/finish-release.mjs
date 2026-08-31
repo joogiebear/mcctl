@@ -96,6 +96,19 @@ process.stdout.write(`  ok   latest.yml describes ${version} and matches the ins
 // The source repository is private and this one holds only binaries, so without this nothing
 // connects the installer to the code. Read from what the BUILD wrote, not from git now: a draft can
 // sit for days while the branch moves on, and the commit that matters is the one that made the file.
+/**
+ * How a dirty build describes itself.
+ *
+ * <p>"plus uncommitted changes" on its own sends whoever reads it six months later
+ * looking for a difference that may have been one stray untracked script - which is
+ * exactly what it was on v0.3.0. Naming the files makes it a fact rather than a worry.
+ */
+function dirtyDetail(info) {
+  const changed = Array.isArray(info.changed) ? info.changed : []
+  if (!changed.length) return ' **plus uncommitted changes**'
+  return ' **plus uncommitted changes**: ' + changed.join(', ')
+}
+
 let footer = ''
 try {
   const info = JSON.parse(fs.readFileSync(path.join(HERE, 'dist', 'build-info.json'), 'utf8'))
@@ -105,7 +118,7 @@ try {
   }
   if (info.commit) {
     footer = `\n\n---\nBuilt from \`${info.shortCommit}\`` +
-      (info.dirty ? ' **plus uncommitted changes**' : '') +
+      (info.dirty ? dirtyDetail(info) : '') +
       ` on ${info.builtAt}.`
     process.stdout.write(`  ok   built from ${info.shortCommit}${info.dirty ? ' (dirty tree)' : ''}\n`)
   }
