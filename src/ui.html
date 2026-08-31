@@ -50,6 +50,9 @@
 <header>
   <h1>mcctl</h1>
   <span>local control panel &mdash; bound to 127.0.0.1 only</span>
+  <span style="flex:1"></span>
+  <span class="meta" id="appver"></span>
+  <button id="bUpdate" hidden>Check for updates</button>
 </header>
 
 <main>
@@ -278,6 +281,46 @@ api('/paper/versions').then((vs) => {
 }).catch(() => {
   $('#versions').innerHTML = '<option value="">(offline - Paper API unreachable)</option>';
 });
+
+// ---- desktop-only: version + updates ----------------------------------------
+// The same page runs in a plain browser, where window.mcctlDesktop does not exist. Everything here
+// is additive and silent when it is absent.
+const desktop = window.mcctlDesktop;
+if (desktop) {
+  desktop.appInfo().then((info) => {
+    $('#appver').textContent = 'v' + info.version + (info.packaged ? '' : ' (' + info.coreMode + ')');
+    $('#bUpdate').hidden = false;
+  });
+
+  let pending = null;
+  desktop.onUpdate((kind, data) => {
+    const b = $('#bUpdate');
+    if (kind === 'available') { pending = data.version; b.textContent = 'Download ' + data.version; b.disabled = false; }
+    else if (kind === 'none') { b.textContent = 'Up to date'; b.disabled = true;
+                                setTimeout(() => { b.textContent = 'Check for updates'; b.disabled = false; }, 4000); }
+    else if (kind === 'progress') { b.textContent = 'Downloading ' + data.percent + '%'; b.disabled = true; }
+    else if (kind === 'ready') { b.textContent = 'Restart to install ' + data.version; b.disabled = false; pending = 'ready'; }
+    else if (kind === 'error') { b.textContent = 'Update failed'; b.disabled = false; alert('Update error:\n' + data.error); }
+  });
+
+  $('#bUpdate').onclick = async () => {
+    const b = $('#bUpdate');
+    if (pending === 'ready') {
+      // Servers survive the restart - they are detached daemons - but saying so beats letting
+      // someone guess whether updating will drop their running world.
+      if (!confirm('Restart to install?\n\nRunning servers keep running; only this window restarts.')) return;
+      await desktop.installUpdate();
+      return;
+    }
+    if (pending) { await desktop.downloadUpdate(); return; }
+    b.textContent = 'Checking...'; b.disabled = true;
+    const res = await desktop.checkUpdate();
+    if (!res.ok) {
+      b.textContent = 'Check for updates'; b.disabled = false;
+      alert(res.message || 'Could not check for updates.');
+    }
+  };
+}
 
 refresh();
 setInterval(refresh, 4000);

@@ -4,6 +4,7 @@ const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { pathToFileURL } = require('node:url')
+const { autoUpdater } = require('electron-updater')
 
 /**
  * mcctl desktop.
@@ -137,6 +138,74 @@ ipcMain.handle('mcctl:saveSetup', async (_e, { dataRoot, instancesDir, separate 
   return { ok: true }
 })
 
+
+// ---- updates -----------------------------------------------------------------
+
+/**
+ * Update checking against the published GitHub release feed.
+ *
+ * <p>Only ever runs from a packaged build. In development the version is whatever package.json says
+ * and there is no installer to replace, so a check would either do nothing or try to overwrite a
+ * checkout — the guard is not politeness, it is what stops the updater touching source.
+ *
+ * <p>Downloads are not automatic. An update that installs itself while someone is mid-session on a
+ * running server is a surprise, and this app exists to sit next to long-lived processes.
+ */
+function setupUpdates() {
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.logger = null
+
+  autoUpdater.on('update-available', (info) => send('update:available', { version: info.version }))
+  autoUpdater.on('update-not-available', () => send('update:none', {}))
+  autoUpdater.on('error', (err) => send('update:error', { error: String(err?.message ?? err) }))
+  autoUpdater.on('download-progress', (p) => send('update:progress', { percent: Math.round(p.percent) }))
+  autoUpdater.on('update-downloaded', (info) => send('update:ready', { version: info.version }))
+}
+
+function send(channel, payload) {
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
+}
+
+ipcMain.handle('mcctl:checkUpdate', async () => {
+  if (!app.isPackaged) {
+    return { ok: false, reason: 'dev', message: 'Updates only apply to an installed build.' }
+  }
+  try {
+    const res = await autoUpdater.checkForUpdates()
+    return { ok: true, version: res?.updateInfo?.version ?? null, current: app.getVersion() }
+  } catch (err) {
+    return { ok: false, reason: 'error', message: String(err?.message ?? err) }
+  }
+})
+
+ipcMain.handle('mcctl:downloadUpdate', async () => {
+  try {
+    await autoUpdater.downloadUpdate()
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, message: String(err?.message ?? err) }
+  }
+})
+
+/**
+ * Install now, by quitting and running the installer.
+ *
+ * <p>The caller is expected to have warned about running servers first. Servers survive this — they
+ * are detached daemons — but the panel disappears mid-restart, and being told that beforehand is the
+ * difference between an update and a glitch.
+ */
+ipcMain.handle('mcctl:installUpdate', async () => {
+  autoUpdater.quitAndInstall()
+  return { ok: true }
+})
+
+ipcMain.handle('mcctl:appInfo', async () => ({
+  version: app.getVersion(),
+  packaged: app.isPackaged,
+  coreMode: core.mode,
+}))
+
 // ---- lifecycle ---------------------------------------------------------------
 
 app.whenReady().then(async () => {
@@ -145,6 +214,7 @@ app.whenReady().then(async () => {
   } else {
     panelUrl = await startPanel()
     createWindow(panelUrl)
+    setupUpdates()
   }
 
   app.on('activate', () => {

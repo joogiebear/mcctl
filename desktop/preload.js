@@ -21,4 +21,32 @@ contextBridge.exposeInMainWorld('mcctlDesktop', {
 
   /** Save locations and restart into them. */
   saveSetup: (choice) => ipcRenderer.invoke('mcctl:saveSetup', choice),
+
+  /** Version and how this copy is running, for the About/Updates area. */
+  appInfo: () => ipcRenderer.invoke('mcctl:appInfo'),
+
+  /** Ask GitHub whether a newer release exists. Never downloads by itself. */
+  checkUpdate: () => ipcRenderer.invoke('mcctl:checkUpdate'),
+
+  /** Fetch the update the last check found. */
+  downloadUpdate: () => ipcRenderer.invoke('mcctl:downloadUpdate'),
+
+  /** Quit and run the installer. Warn about running servers before calling this. */
+  installUpdate: () => ipcRenderer.invoke('mcctl:installUpdate'),
+
+  /**
+   * Subscribe to update progress. Returns an unsubscribe function.
+   *
+   * Named events only, and the listener never receives the raw IPC event object - a page that can
+   * see `sender` can reach back into the main process.
+   */
+  onUpdate: (handler) => {
+    const channels = ['update:available', 'update:none', 'update:error', 'update:progress', 'update:ready']
+    const wrapped = channels.map((c) => {
+      const fn = (_e, payload) => handler(c.replace('update:', ''), payload)
+      ipcRenderer.on(c, fn)
+      return () => ipcRenderer.removeListener(c, fn)
+    })
+    return () => wrapped.forEach((off) => off())
+  },
 })
