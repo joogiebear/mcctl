@@ -32,9 +32,10 @@ user accounts, a remote web panel - stay off it on purpose.
 
 ## Later
 
-- **Fabric / NeoForge, and Modrinth modpacks.** Support loader jars beyond Paper, then
-  install a `.mrpack` as a server in one click - the biggest audience this tool does not
-  serve yet.
+- **Fabric / NeoForge, and Modrinth modpacks** *(0.6.x; planned in
+  docs/modpacks-plan.md, building after the v0.6.2 test pass)* — support loader jars
+  beyond Paper, then install a `.mrpack` as a server in one click - the biggest
+  audience this tool does not serve yet.
 - **A Share screen.** The honest answer to "how do my friends join?": the LAN address
   plainly, UPnP as an explicit opt-in, and real guidance for Tailscale / playit.gg for
   play over the internet. Exposure stays a deliberate user decision; this makes it an
