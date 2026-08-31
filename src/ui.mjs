@@ -327,8 +327,16 @@ async function handlePlayers(req, res, name, seg) {
   const verb = seg[4] ?? null
 
   if (req.method === 'GET') {
+    const here = new Set((await players.onlineNow(inst)).map((n) => n.toLowerCase()))
+    const rows = players.listPlayers(inst).map((p) => ({
+      ...p,
+      online: Boolean(p.name && here.has(p.name.toLowerCase())),
+      // Somebody standing in the world has joined it, whatever the files say - the .dat is not
+      // written until they log out or the world saves.
+      joined: p.joined || Boolean(p.name && here.has(p.name.toLowerCase())),
+    }))
     return json(res, 200, {
-      players: players.listPlayers(inst),
+      players: rows,
       running: supervisor.isRunning(name),
       // Whether a name can be recovered at all depends on this, and the tab explains the
       // difference rather than leaving an id where a name should be.
