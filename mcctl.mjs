@@ -18,6 +18,7 @@ import { rconExec, stripColors } from './src/rcon.mjs'
 import * as backup from './src/backup.mjs'
 import * as create from './src/create.mjs'
 import * as paper from './src/paper.mjs'
+import * as ui from './src/ui.mjs'
 import { readProps, writeProps } from './src/props.mjs'
 import { UserError, fail, table, humanBytes, humanDuration, dirSize, isPortFree } from './src/util.mjs'
 
@@ -539,6 +540,28 @@ function cmdTemplates(positional, flags) {
   out(table(rows))
 }
 
+function cmdLaunchers(positional) {
+  // Backfills instances made before launchers existed, and repairs them if mcctl moves on disk -
+  // the .bat files hold an absolute path to the CLI.
+  const targets = positional.length ? positional.map(getInstance) : listInstances()
+  for (const inst of targets) {
+    const files = create.writeLaunchers(inst)
+    out(`${inst.name}: ${files.join(', ')}`)
+  }
+  out('')
+  out('Double-click start.bat in an instance folder to run it with a console attached.')
+}
+
+async function cmdUi(positional, flags) {
+  const { url } = await ui.serve({
+    port: Number(flags.port ?? 8770),
+    open: !flags.noOpen,
+  })
+  out(`mcctl panel: ${url}`)
+  out('Bound to 127.0.0.1 only — it can start servers and type console commands, so it is')
+  out('for this machine, not the network. Ctrl+C to stop the panel (servers keep running).')
+}
+
 async function cmdPaper(positional, flags) {
   const sub = positional[0] ?? 'versions'
 
@@ -688,6 +711,7 @@ INSTANCES
       --jar <file> --memory <4G>
   mcctl new <name> [options]         Create a fresh instance
       --jar <file>                   Server jar from the jars/ store
+      --paper <version>              Download that Paper version and use it
       --template <name>              Start from a saved template
       --memory <4G> --port <n>
       --accept-eula                  Write eula=true (you accept Mojang's EULA)
@@ -708,6 +732,10 @@ SNAPSHOTS
 OTHER
   mcctl templates                    List templates
   mcctl templates save <inst> <tpl>  Save an instance's plugins+config as a template
+  mcctl ui                           Open the local control panel in a browser
+  mcctl paper versions               Paper versions available to download
+  mcctl paper fetch <version>        Download a Paper build into the jar store
+  mcctl launchers [name]             Write start/console/stop .bat files
   mcctl jars                         List stored server jars
   mcctl jars import <path> [--as x]  Add a server jar to the store
   mcctl doctor                       Check environment, ports, EULA, disk, stale state
@@ -748,6 +776,9 @@ const COMMANDS = {
   template: cmdTemplates,
   jars: cmdJars,
   paper: cmdPaper,
+  launchers: cmdLaunchers,
+  ui: cmdUi,
+  panel: cmdUi,
   doctor: cmdDoctor,
   help: cmdHelp,
 }

@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { JARS_DIR, TEMPLATES_DIR, INSTANCES_DIR } from './paths.mjs'
+import { JARS_DIR, TEMPLATES_DIR, INSTANCES_DIR, ROOT } from './paths.mjs'
 import { getInstance, hasInstance, putInstance, usedPorts, defaultDir } from './registry.mjs'
 import { readProps, writeProps } from './props.mjs'
 import { fail, findFreePort, randomPassword, validateName, humanBytes } from './util.mjs'
@@ -26,6 +26,44 @@ export function importJar(src, { as = null } = {}) {
   const dest = path.join(JARS_DIR, as || path.basename(src))
   fs.copyFileSync(src, dest)
   return dest
+}
+
+/**
+ * Double-clickable launchers, written into each instance directory.
+ *
+ * <p>Not everything wants a terminal and a remembered command. These make an instance startable and
+ * watchable from Explorer, which is also what makes a second machine or a second person able to run
+ * one of these servers without learning the CLI first.
+ *
+ * <p>They shell out to mcctl by absolute path rather than duplicating any logic, so a launcher can
+ * never drift from what the CLI actually does - it IS the CLI.
+ */
+export function writeLaunchers(inst) {
+  const cli = path.join(ROOT, 'mcctl.mjs')
+  const files = {
+    // Starts, then attaches - so a double-click gives you a running server AND its console, which is
+    // what "start the server" means to anyone not thinking about daemons.
+    'start.bat': `@echo off
+title ${inst.name} - mcctl
+node "${cli}" start ${inst.name}
+if errorlevel 1 (echo.& echo Failed to start. & pause & exit /b 1)
+node "${cli}" console ${inst.name}
+`,
+    'console.bat': `@echo off
+title ${inst.name} console - mcctl
+node "${cli}" console ${inst.name}
+pause
+`,
+    'stop.bat': `@echo off
+title ${inst.name} - mcctl
+node "${cli}" stop ${inst.name}
+pause
+`,
+  }
+  for (const [file, body] of Object.entries(files)) {
+    fs.writeFileSync(path.join(inst.dir, file), body)
+  }
+  return Object.keys(files)
 }
 
 export function listTemplates() {
@@ -182,6 +220,7 @@ export async function newInstance(
     origin: from ? { clonedFrom: from, withWorlds } : template ? { template } : { scratch: true },
   }
   putInstance(name, cfg)
+  writeLaunchers({ name, dir: cfg.dir })
   return { name, ...cfg, eulaAccepted: acceptEula }
 }
 
@@ -228,6 +267,7 @@ export async function adoptInstance(name, dir, { jar = null, memory = '4G', java
     origin: { adopted: abs },
   }
   putInstance(name, cfg)
+  writeLaunchers({ name, dir: cfg.dir })
   return { name, ...cfg }
 }
 

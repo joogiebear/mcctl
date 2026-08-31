@@ -1,0 +1,197 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>mcctl</title>
+<style>
+  :root {
+    --bg: #10131a; --panel: #171b24; --line: #262c39; --ink: #e6e9ef; --dim: #8b94a7;
+    --accent: #5aa9e6; --ok: #57c07d; --warn: #e0a75e; --bad: #e06c75;
+    --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .3px; }
+  header span { color: var(--dim); font-size: 12px; }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 16px; padding: 16px 20px; align-items: start; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--dim);
+              margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .inst { padding: 12px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .inst:last-child { border-bottom: 0; }
+  .inst.sel { background: #1e2431; box-shadow: inset 3px 0 0 var(--accent); }
+  .inst .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .meta { color: var(--dim); font-size: 12px; font-family: var(--mono); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .running .dot { background: var(--ok); } .stopped .dot { background: var(--dim); }
+  .stale .dot, .orphaned .dot { background: var(--warn); } .unknown .dot { background: var(--bad); }
+  .bar { display: flex; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; align-items: center; }
+  button { background: #222836; color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+           padding: 6px 12px; font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.go { background: #1d3b2a; border-color: #2c5b40; }
+  button.stop { background: #3b1f22; border-color: #5b2c31; }
+  #log { margin: 0; padding: 12px 14px; height: calc(100vh - 230px); overflow-y: auto; white-space: pre-wrap;
+         word-break: break-word; font-family: var(--mono); font-size: 12.5px; color: #cdd3de; }
+  #log .err { color: var(--bad); }
+  #log .warn { color: var(--warn); }
+  .cmd { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
+  .cmd input { flex: 1; background: #0d1017; color: var(--ink); border: 1px solid var(--line);
+               border-radius: 6px; padding: 8px 10px; font-family: var(--mono); }
+  form.new { padding: 12px 14px; display: grid; gap: 8px; }
+  form.new input, form.new select { background: #0d1017; color: var(--ink); border: 1px solid var(--line);
+                                    border-radius: 6px; padding: 7px 9px; font: inherit; width: 100%; }
+  form.new label { color: var(--dim); font-size: 12px; }
+  .note { color: var(--dim); font-size: 12px; padding: 0 14px 12px; }
+</style>
+
+<header>
+  <h1>mcctl</h1>
+  <span>local control panel &mdash; bound to 127.0.0.1 only</span>
+</header>
+
+<main>
+  <div>
+    <div class="panel" style="margin-bottom:16px">
+      <h2>Servers</h2>
+      <div id="list"></div>
+    </div>
+    <div class="panel">
+      <h2>New server</h2>
+      <form class="new" id="newForm">
+        <div><label>Name</label><input name="name" required pattern="[A-Za-z0-9_-]+" placeholder="testbed"></div>
+        <div><label>Paper version</label><select name="paperVersion" id="versions"><option>loading...</option></select></div>
+        <div><label>Memory</label><input name="memory" value="4G"></div>
+        <div><label>Port</label><input name="port" type="number" placeholder="auto"></div>
+        <button type="submit">Create</button>
+      </form>
+      <div class="note" id="newNote">Downloads the newest stable build of the chosen version.</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="bar">
+      <b id="curName">&mdash;</b>
+      <span class="meta" id="curMeta"></span>
+      <span style="flex:1"></span>
+      <button class="go" id="bStart">Start</button>
+      <button class="stop" id="bStop">Stop</button>
+      <button id="bRestart">Restart</button>
+    </div>
+    <pre id="log"></pre>
+    <div class="cmd">
+      <input id="cmd" placeholder="Type a server command and press Enter - e.g. list" autocomplete="off">
+      <button id="bSend">Send</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let current = null, stream = null;
+
+const api = async (p, opt) => {
+  const r = await fetch('/api' + p, opt);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  return r.json();
+};
+
+async function refresh() {
+  const rows = await api('/instances');
+  $('#list').innerHTML = rows.map((i) =>
+    '<div class="inst ' + i.status + (i.name === current ? ' sel' : '') + '" data-n="' + i.name + '">' +
+      '<div class="row"><b><span class="dot"></span>' + i.name + '</b>' +
+      '<span class="meta">' + i.status + '</span></div>' +
+      '<div class="meta">:' + (i.port || '?') + ' &middot; ' + (i.memory || '') + ' &middot; ' + (i.jar || '') + '</div>' +
+    '</div>').join('') || '<div class="note">No servers yet.</div>';
+
+  for (const el of document.querySelectorAll('.inst')) {
+    el.onclick = () => select(el.dataset.n);
+  }
+  const cur = rows.find((r) => r.name === current);
+  $('#curMeta').textContent = cur ? cur.status + ' · :' + cur.port + ' · ' + (cur.jar || '') : '';
+  $('#bStart').disabled = !cur || cur.status === 'running';
+  $('#bStop').disabled = !cur || cur.status !== 'running';
+  $('#bRestart').disabled = !cur;
+}
+
+function select(name) {
+  current = name;
+  $('#curName').textContent = name;
+  $('#log').textContent = '';
+  if (stream) stream.close();
+  // Server-Sent Events rather than polling: the console is a stream by nature, and the browser
+  // reconnects on its own if the panel is left open while a server restarts.
+  stream = new EventSource('/api/instances/' + name + '/stream');
+  stream.onmessage = (e) => {
+    const line = JSON.parse(e.data);
+    const div = document.createElement('div');
+    if (/ ERROR\]/.test(line)) div.className = 'err';
+    else if (/ WARN\]/.test(line)) div.className = 'warn';
+    div.textContent = line;
+    const log = $('#log');
+    // Only auto-scroll when already at the bottom, so reading back through history is not yanked
+    // away every time a new line arrives.
+    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    log.appendChild(div);
+    if (atBottom) log.scrollTop = log.scrollHeight;
+  };
+  refresh();
+}
+
+const act = (what) => async () => {
+  if (!current) return;
+  for (const b of ['#bStart', '#bStop', '#bRestart']) $(b).disabled = true;
+  try { await api('/instances/' + current + '/' + what, { method: 'POST' }); }
+  catch (e) { alert(e.message); }
+  refresh();
+};
+$('#bStart').onclick = act('start');
+$('#bStop').onclick = act('stop');
+$('#bRestart').onclick = act('restart');
+
+async function send() {
+  const box = $('#cmd');
+  if (!current || !box.value.trim()) return;
+  try {
+    await api('/instances/' + current + '/command', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ line: box.value }),
+    });
+  } catch (e) { alert(e.message); }
+  box.value = '';
+}
+$('#bSend').onclick = send;
+$('#cmd').onkeydown = (e) => { if (e.key === 'Enter') send(); };
+
+$('#newForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  $('#newNote').textContent = 'Creating - downloading the server jar if needed...';
+  try {
+    const inst = await api('/instances', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    $('#newNote').textContent = 'Created ' + inst.name + '.';
+    e.target.reset();
+    await refresh();
+    select(inst.name);
+  } catch (err) {
+    $('#newNote').textContent = 'Failed: ' + err.message;
+  }
+};
+
+api('/paper/versions').then((vs) => {
+  $('#versions').innerHTML = vs.map((v, i) =>
+    '<option value="' + v + '"' + (i === 0 ? ' selected' : '') + '>' + v + (i === 0 ? ' (newest)' : '') + '</option>'
+  ).join('');
+}).catch(() => {
+  $('#versions').innerHTML = '<option value="">(offline - Paper API unreachable)</option>';
+});
+
+refresh();
+setInterval(refresh, 4000);
+</script>
