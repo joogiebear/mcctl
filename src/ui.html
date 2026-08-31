@@ -1382,10 +1382,18 @@
           <div class="bad" id="nNameBad"></div>
         </div>
         <div class="row" style="align-items:flex-start">
+          <div class="field" style="flex:1">
+            <label for="nLoader">Software</label>
+            <select id="nLoader" name="loader">
+              <option value="paper" selected>Paper</option>
+              <option value="fabric">Fabric</option>
+            </select>
+            <div class="hint" id="nLoaderHint">Runs plugins</div>
+          </div>
           <div class="field" style="flex:2">
             <label for="nVersion">Minecraft version</label>
-            <select id="nVersion" name="paperVersion"><option value="">Loading versions…</option></select>
-            <div class="hint">Downloads the newest stable Paper build.</div>
+            <select id="nVersion" name="version"><option value="">Loading versions…</option></select>
+            <div class="hint" id="nVersionHint">Downloads the newest stable Paper build.</div>
           </div>
           <div class="field" style="flex:1">
             <label for="nMem">Memory</label>
@@ -1860,6 +1868,9 @@ function renderServer(row) {
   if (!row) return;
   $('#vServer').dataset.status = row.status;
   $('#srvName').textContent = row.name;
+  // The same tab manages plugins/ on a Paper server and mods/ on a Fabric one; its name
+  // follows, because "Plugins" on a server that cannot load any would be a small lie.
+  $('#tabPlugins').lastChild.nodeValue = (row.loader === 'fabric') ? 'Mods' : 'Plugins';
 
   const st = $('#srvState');
   if (row.status === 'running' && row.startedAt) {
@@ -2935,8 +2946,11 @@ async function renderPlugins(opts) {
   }
   if (body.dataset.for !== row.name) return;
   body.textContent = '';
-  paneHead(body, 'plug', 'Plugins',
-    'Install from Modrinth or Hangar and keep it updated. Plugins you added by hand are left alone.');
+  const mods = data.kind === 'mods';
+  const sources = data.hangar ? 'Modrinth or Hangar' : 'Modrinth';
+  paneHead(body, 'plug', mods ? 'Mods' : 'Plugins',
+    'Install from ' + sources + ' and keep it updated. '
+    + (mods ? 'Mods' : 'Plugins') + ' you added by hand are left alone.');
 
   const base = '/instances/' + encodeURIComponent(row.name) + '/plugins';
   const again = () => renderPlugins({ force: true });
@@ -2953,12 +2967,14 @@ async function renderPlugins(opts) {
   const add = document.createElement('div');
   add.className = 'section';
   const addTitle = document.createElement('h3');
-  addTitle.textContent = 'Add from Modrinth and Hangar';
+  addTitle.textContent = data.hangar ? 'Add from Modrinth and Hangar' : 'Add from Modrinth';
   const addRow = document.createElement('div');
   addRow.className = 'row';
   const q = document.createElement('input');
   q.type = 'search';
-  q.placeholder = 'Search plugins — try WorldEdit, spark, EssentialsX';
+  q.placeholder = mods
+    ? 'Search mods — try Lithium, FerriteCore, Fabric API'
+    : 'Search plugins — try WorldEdit, spark, EssentialsX';
   q.style.flex = '1 1 240px';
   const go = iconButton('search', 'Search');
   addRow.append(q, go);
@@ -2973,7 +2989,7 @@ async function renderPlugins(opts) {
     results.textContent = '';
     const looking = document.createElement('div');
     looking.className = 'hint';
-    looking.textContent = 'Asking Modrinth and Hangar…';
+    looking.textContent = 'Asking ' + (data.hangar ? 'Modrinth and Hangar…' : 'Modrinth…');
     results.append(looking);
     let found;
     try {
@@ -2998,7 +3014,7 @@ async function renderPlugins(opts) {
     if (!found.results.length) {
       const none = document.createElement('div');
       none.className = 'hint';
-      none.textContent = 'Nothing on Modrinth or Hangar matches that'
+      none.textContent = 'Nothing on ' + sources + ' matches that'
         + (data.gameVersion ? ' for ' + data.gameVersion + '.' : '.');
       results.append(none);
       return;
@@ -3076,7 +3092,7 @@ async function renderPlugins(opts) {
 
   check.onclick = async () => {
     check.disabled = true;
-    checkNote.textContent = 'Asking Modrinth and Hangar about everything mcctl installed…';
+    checkNote.textContent = 'Asking ' + sources.replace(' or ', ' and ') + ' about everything mcctl installed…';
     try {
       const out = await post(base + '/updates');
       pluginView.updates = {};
@@ -3102,7 +3118,8 @@ async function renderPlugins(opts) {
       listWrap.append(emptyState('plug', manualCount
         ? 'Nothing installed through mcctl yet. Anything installed from the search above shows '
           + 'up here with one-click updates.'
-        : 'No plugins yet. Search Modrinth above and they land in this server’s plugins folder.'));
+        : 'No ' + data.kind + ' yet. Search ' + sources + ' above and they land in this server’s '
+          + data.kind + ' folder.'));
     } else {
       const list = document.createElement('div');
       list.className = 'people';
@@ -3114,8 +3131,8 @@ async function renderPlugins(opts) {
       own.className = 'hint';
       own.style.marginTop = '4px';
       own.textContent = manualCount + (manualCount === 1 ? ' jar' : ' jars')
-        + ' in the plugins folder ' + (manualCount === 1 ? 'was' : 'were')
-        + ' added by hand — custom or premium plugins mcctl leaves alone. '
+        + ' in the ' + data.kind + ' folder ' + (manualCount === 1 ? 'was' : 'were')
+        + ' added by hand — custom or premium ' + data.kind + ' mcctl leaves alone. '
         + (manualCount === 1 ? 'It loads' : 'They load') + ' as normal.';
       listWrap.append(own);
     }
@@ -4268,6 +4285,10 @@ async function renderServerSettings() {
   sup.append(supRow);
   body.append(sup);
 
+  // The Server software card below speaks PaperMC; on a Fabric server it would offer builds
+  // the server cannot run, so it does not appear at all.
+  const isPaper = (row.loader ?? 'paper') === 'paper';
+
   supApply.onclick = async () => {
     supApply.disabled = true;
     try {
@@ -4313,6 +4334,7 @@ async function renderServerSettings() {
   softOut.style.display = 'grid';
   softOut.style.gap = '8px';
   soft.append(softNow, softRow, softOut);
+  soft.hidden = !isPaper;
   body.append(soft);
 
   softCheck.onclick = async () => {
@@ -4759,9 +4781,13 @@ $('#formNew').onsubmit = async (e) => {
 
   try {
     const form = new FormData(e.target);
+    const loader = form.get('loader') || 'paper';
+    const version = form.get('version') || null;
     const inst = await post('/instances', {
       name: form.get('name'),
-      paperVersion: form.get('paperVersion') || null,
+      loader: loader,
+      paperVersion: loader === 'paper' ? version : null,
+      fabricVersion: loader === 'fabric' ? version : null,
       memory: form.get('memory') || '4G',
       port: form.get('port') || null,
       onlineMode: form.get('onlineMode') !== 'offline',
@@ -4919,35 +4945,65 @@ $('#bSetClose').onclick = back;
 // submitting an empty version and failing on the server.
 $('#bCreate').disabled = true;
 
-api('/paper/versions').then((vs) => {
+/**
+ * The version dropdown follows the Software choice: Paper's versions from PaperMC, Fabric's
+ * from its meta API. Each list is fetched once and kept, so flipping between the two is
+ * instant after the first look.
+ */
+const versionLists = {};
+
+async function loadVersions(loader) {
   const sel = $('#nVersion');
+  $('#nVersionHint').textContent = loader === 'fabric'
+    ? 'Downloads the Fabric server launcher, which fetches the rest on first start.'
+    : 'Downloads the newest stable Paper build.';
+  $('#nLoaderHint').textContent = loader === 'fabric' ? 'Runs mods' : 'Runs plugins';
+  if (!versionLists[loader]) {
+    sel.disabled = true;
+    sel.textContent = '';
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = 'Loading versions…';
+    sel.append(o);
+    try {
+      versionLists[loader] = await api('/' + loader + '/versions');
+    } catch {
+      sel.textContent = '';
+      const bad = document.createElement('option');
+      bad.value = '';
+      bad.textContent = 'Could not reach ' + (loader === 'fabric' ? 'FabricMC' : 'PaperMC');
+      sel.append(bad);
+      // A dead end is not an empty dropdown. Creating needs the download; adding a server you
+      // already have does not, and that is a real way forward rather than an instruction to
+      // come back later.
+      $('#newHint').textContent = 'Creating a server needs a connection, to download the server jar. '
+        + 'A server you already have can still be added.';
+      $('#bCreate').disabled = true;
+      if (!$('#bJumpAdopt')) {
+        const jump = document.createElement('button');
+        jump.id = 'bJumpAdopt';
+        jump.type = 'button';
+        jump.textContent = 'Add an existing server instead';
+        jump.onclick = () => selectTab('adopt');
+        $('#bCreate').after(jump);
+      }
+      return;
+    }
+  }
   sel.textContent = '';
-  vs.forEach((v, i) => {
+  versionLists[loader].forEach((v, i) => {
     const o = document.createElement('option');
     o.value = v;
     o.textContent = v + (i === 0 ? ' (newest)' : '');
     if (i === 0) o.selected = true;
     sel.append(o);
   });
+  sel.disabled = false;
   $('#bCreate').disabled = false;
-}).catch(() => {
-  const sel = $('#nVersion');
-  sel.textContent = '';
-  const o = document.createElement('option');
-  o.value = '';
-  o.textContent = 'Could not reach PaperMC';
-  sel.append(o);
-  sel.disabled = true;
-  // A dead end is not an empty dropdown. Creating needs the download; adding a server you already
-  // have does not, and that is a real way forward rather than an instruction to come back later.
-  $('#newHint').textContent = 'Creating a server needs a connection, to download the Paper jar. A server you already have can still be added.';
-  $('#bCreate').disabled = true;
-  const jump = document.createElement('button');
-  jump.type = 'button';
-  jump.textContent = 'Add an existing server instead';
-  jump.onclick = () => selectTab('adopt');
-  $('#bCreate').after(jump);
-});
+}
+
+$('#nLoader').onchange = () => loadVersions($('#nLoader').value);
+loadVersions('paper');
 
 // ------------------------------------------------------------ prerequisites -
 

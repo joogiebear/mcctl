@@ -119,6 +119,14 @@ export function jvmFlagsFor(memory) {
   ]
 }
 
+/**
+ * Which server software family an instance runs. Absent means paper: every instance made
+ * before the field existed is one, and defaulting here migrates them all without a write.
+ */
+export function loaderOf(inst) {
+  return inst?.loader ?? 'paper'
+}
+
 export function parseMemoryGb(memory) {
   const m = /^(\d+(?:\.\d+)?)\s*([GgMm])$/.exec(String(memory).trim())
   if (!m) fail(`invalid memory value "${memory}" - use e.g. 4G or 6144M`)

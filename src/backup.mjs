@@ -49,7 +49,9 @@ function membersFor(inst, scope) {
   const props = readProps(path.join(inst.dir, 'server.properties'))
   const exists = (p) => fs.existsSync(path.join(inst.dir, p))
 
-  const plugins = exists('plugins') ? ['plugins'] : []
+  // Mods are plugins' sibling on a Fabric server; the plugins scope covers both, because the
+  // scope names the ROLE (the server's content) rather than the folder.
+  const plugins = [...(exists('plugins') ? ['plugins'] : []), ...(exists('mods') ? ['mods'] : [])]
   const worlds = worldDirs(props).filter(exists)
   const config = [...ROOT_CONFIG_FILES.filter(exists), ...(exists('config') ? ['config'] : [])]
 

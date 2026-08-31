@@ -1,8 +1,16 @@
 # Plan: modded servers and Modrinth modpacks
 
-Status: **planned, not started.** Written 2026-08-31, to be built after v0.6.2 has had
-a hands-on test pass. Ships on the 0.6.x line — it extends the same content-installing
-area the plugin manager lives in.
+Status: **Phase 1 (Fabric) shipped 2026-08-31**; Phases 2–4 planned. Ships on the
+0.6.x line — it extends the same content-installing area the plugin manager lives in.
+
+Phase 1 turned out smaller than planned in the best way: Fabric's bundled launcher jar
+runs with a plain `-jar` like Paper, so the daemon needed no new launch machinery at
+all — the per-loader command builder is deferred to the NeoForge phase that actually
+needs it. What shipped: `loader` in the registry (absent = paper, the whole migration),
+`mcctl new --fabric <version>` and a Software choice in the panel's create form, the
+Plugins tab becoming a Mods tab on Fabric instances (mods/ folder, fabric.mod.json
+manifests, Modrinth `mod` facet, Hangar skipped), backups covering mods/, and the
+Paper-update card scoped away from non-Paper servers.
 
 ## The goal
 

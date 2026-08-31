@@ -15,6 +15,7 @@ import { listInstances, getInstance, removeInstance, updateInstance, serverJarPa
 import { acceptableWebhook, notifyInstance } from './src/notify.mjs'
 import * as plugins from './src/plugins.mjs'
 import * as upgrade from './src/upgrade.mjs'
+import * as fabric from './src/fabric.mjs'
 import { readState, clearState } from './src/control.mjs'
 import * as sup from './src/supervisor.mjs'
 import { rconExec, stripColors } from './src/rcon.mjs'
@@ -252,6 +253,7 @@ async function cmdNew(positional, flags) {
   // --paper <version> makes "spin up a fresh environment on version X" one command instead of
   // three. Downloading first means a failed fetch leaves no half-made instance behind.
   let jar = flags.jar ?? null
+  let loader = 'paper'
   if (flags.paper) {
     const build = await paper.fetchBuild(String(flags.paper), flags.build ?? null)
     out(build.cached
@@ -259,8 +261,20 @@ async function cmdNew(positional, flags) {
       : `Downloaded ${build.name} — build ${build.build}, ${build.channel}, ${build.sizeHuman}.`)
     jar = build.name
   }
+  // --fabric <version> is the same one command for a modded server: the launcher jar Fabric
+  // serves runs with a plain -jar like Paper does, and mods land in mods/ instead of plugins/.
+  if (flags.fabric) {
+    if (flags.paper) fail('pick one of --paper or --fabric')
+    const launcher = await fabric.fetchLauncher(String(flags.fabric))
+    out(launcher.cached
+      ? `Using stored ${launcher.name}.`
+      : `Downloaded ${launcher.name} — loader ${launcher.loader}, ${launcher.sizeHuman}.`)
+    jar = launcher.name
+    loader = 'fabric'
+  }
 
   const inst = await create.newInstance(name, {
+    loader,
     template: flags.template ?? null,
     from: flags.from ?? null,
     withWorlds: Boolean(flags.withWorlds),
@@ -1174,6 +1188,7 @@ INSTANCES
   mcctl new <name> [options]         Create a fresh instance
       --jar <file>                   Server jar from the jars/ store
       --paper <version>              Download that Paper version and use it
+      --fabric <version>             Download Fabric for that version (mods, not plugins)
       --template <name>              Start from a saved template
       --memory <4G> --port <n>
       --accept-eula                  Write eula=true (you accept Mojang's EULA)

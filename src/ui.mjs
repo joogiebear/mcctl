@@ -19,6 +19,7 @@ import * as metrics from './metrics.mjs'
 import * as settings from './settings.mjs'
 import * as plugins from './plugins.mjs'
 import * as upgrade from './upgrade.mjs'
+import * as fabric from './fabric.mjs'
 import { acceptableWebhook } from './notify.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -382,12 +383,18 @@ async function handlePlugins(req, res, name, seg, url) {
   const inst = registry.getInstance(name)
   const verb = seg[4] ?? null
   const gameVersion = plugins.mcVersionOf(inst)
+  // Plugins on a Paper-family server, mods on a Fabric one - same tab, different folder,
+  // vocabulary and Modrinth facet. Hangar hosts only plugins, so mods skip it entirely.
+  const kind = plugins.contentKindFor(inst)
 
   if (req.method === 'GET' && !verb) {
     return json(res, 200, {
       plugins: plugins.listPlugins(inst),
       running: supervisor.isRunning(name),
       gameVersion,
+      kind: kind.kind,
+      word: kind.word,
+      hangar: kind.hangar,
     })
   }
   if (req.method === 'GET' && verb === 'search') {
@@ -395,17 +402,22 @@ async function handlePlugins(req, res, name, seg, url) {
     if (!q) return json(res, 200, { results: [], errors: [] })
     // Both sources at once. One being down must not blank the other's answers, so each
     // failure becomes a note beside the results rather than an error instead of them.
-    const [modrinthHits, hangarHits] = await Promise.allSettled([
-      plugins.searchPlugins(q, { gameVersion }),
-      plugins.searchHangar(q),
-    ])
+    const asks = [
+      plugins.searchPlugins(q, {
+        gameVersion,
+        loaders: plugins.loadersFor(inst),
+        projectType: kind.projectType,
+      }),
+    ]
+    if (kind.hangar) asks.push(plugins.searchHangar(q))
+    const [modrinthHits, hangarHits] = await Promise.allSettled(asks)
     const errors = []
     if (modrinthHits.status === 'rejected') errors.push(modrinthHits.reason?.message ?? 'Modrinth search failed')
-    if (hangarHits.status === 'rejected') errors.push(hangarHits.reason?.message ?? 'Hangar search failed')
+    if (hangarHits && hangarHits.status === 'rejected') errors.push(hangarHits.reason?.message ?? 'Hangar search failed')
     return json(res, 200, {
       results: [
         ...(modrinthHits.value ?? []),
-        ...(hangarHits.value ?? []),
+        ...(hangarHits?.value ?? []),
       ],
       errors,
     })
@@ -746,6 +758,9 @@ async function route(req, res) {
   if (seg[1] === 'paper' && seg[2] === 'versions' && req.method === 'GET') {
     return json(res, 200, await paper.versions())
   }
+  if (seg[1] === 'fabric' && seg[2] === 'versions' && req.method === 'GET') {
+    return json(res, 200, await fabric.versions())
+  }
 
   // ---- instances -----------------------------------------------------------
   if (seg[1] === 'instances' && seg.length === 2 && req.method === 'GET') {
@@ -785,23 +800,29 @@ async function route(req, res) {
     const jobId = body.jobId ? String(body.jobId) : null
     try {
       let jar = body.jar || null
-      if (body.paperVersion) {
-        jobUpdate(jobId, { stage: 'resolve', percent: null, message: `Finding Paper ${body.paperVersion}` })
-        const build = await paper.fetchBuild(String(body.paperVersion), null, {
-          onProgress: ({ received, total, cached }) => {
-            if (cached) return jobUpdate(jobId, { stage: 'cached', percent: 100, message: 'Server jar already downloaded' })
-            jobUpdate(jobId, {
-              stage: 'download',
-              percent: total ? Math.min(100, Math.round((received / total) * 100)) : null,
-              message: 'Downloading the server jar',
-            })
-          },
+      const loader = body.loader === 'fabric' ? 'fabric' : 'paper'
+      const onProgress = ({ received, total, cached }) => {
+        if (cached) return jobUpdate(jobId, { stage: 'cached', percent: 100, message: 'Server jar already downloaded' })
+        jobUpdate(jobId, {
+          stage: 'download',
+          percent: total ? Math.min(100, Math.round((received / total) * 100)) : null,
+          message: 'Downloading the server jar',
         })
+      }
+      if (loader === 'fabric') {
+        if (!body.fabricVersion) return json(res, 400, { error: 'a Minecraft version is required for a Fabric server' })
+        jobUpdate(jobId, { stage: 'resolve', percent: null, message: `Finding Fabric for ${body.fabricVersion}` })
+        const launcher = await fabric.fetchLauncher(String(body.fabricVersion), { onProgress })
+        jar = launcher.name
+      } else if (body.paperVersion) {
+        jobUpdate(jobId, { stage: 'resolve', percent: null, message: `Finding Paper ${body.paperVersion}` })
+        const build = await paper.fetchBuild(String(body.paperVersion), null, { onProgress })
         jar = build.name
       }
       jobUpdate(jobId, { stage: 'create', percent: null, message: 'Setting up the server folder' })
       const inst = await create.newInstance(String(body.name), {
         jar,
+        loader,
         memory: body.memory || '4G',
         port: body.port ? Number(body.port) : null,
         motd: body.motd || null,

@@ -21,6 +21,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import zlib from 'node:zlib'
 import { fail, UserError, readJson, writeJson } from './util.mjs'
+import { loaderOf } from './registry.mjs'
 
 // ---- reading one entry out of a zip -----------------------------------------
 
@@ -154,8 +155,24 @@ function unquote(v) {
 
 const DISABLED = '.disabled'
 
+/**
+ * What "content" means for this instance. A Paper-family server loads plugins from plugins/;
+ * a Fabric server loads mods from mods/. Same management, different folder and vocabulary -
+ * and a different Modrinth facet, because a plugin will not load as a mod or vice versa.
+ */
+export function contentKindFor(inst) {
+  return loaderOf(inst) === 'fabric'
+    ? { dir: 'mods', kind: 'mods', word: 'mod', projectType: 'mod', hangar: false }
+    : { dir: 'plugins', kind: 'plugins', word: 'plugin', projectType: 'plugin', hangar: true }
+}
+
+/** The Modrinth loader facet for this instance's content. */
+export function loadersFor(inst) {
+  return loaderOf(inst) === 'fabric' ? ['fabric'] : LOADERS
+}
+
 function pluginsDir(inst) {
-  return path.join(inst.dir, 'plugins')
+  return path.join(inst.dir, contentKindFor(inst).dir)
 }
 
 // ---- what mcctl itself installed --------------------------------------------
@@ -211,7 +228,31 @@ function moveManaged(inst, from, to) {
 /** The Minecraft version this server runs, read from its jar's filename; null when unclear. */
 export function mcVersionOf(inst) {
   const m = /^(?:paper|purpur|folia|spigot|craftbukkit)-(\d+\.\d+(?:\.\d+)?)/i.exec(inst.jar || '')
+    ?? /^fabric-server-mc\.(\d+\.\d+(?:\.\d+)?)-/i.exec(inst.jar || '')
   return m ? m[1] : null
+}
+
+/** What a Fabric mod's own manifest says, mapped to the same shape plugin.yml yields. */
+function readFabricManifest(full) {
+  const raw = readZipEntry(full, 'fabric.mod.json')
+  if (!raw) return null
+  let data
+  try {
+    data = JSON.parse(raw.toString('utf8'))
+  } catch {
+    return null
+  }
+  // authors entries are strings or { name } objects, in the wild both at once.
+  const authors = (Array.isArray(data.authors) ? data.authors : [])
+    .map((a) => (typeof a === 'string' ? a : a?.name))
+    .filter(Boolean)
+  return {
+    name: data.name || data.id,
+    version: data.version,
+    description: data.description,
+    authors,
+    website: data.contact?.homepage,
+  }
 }
 
 /**
@@ -240,6 +281,7 @@ export function listPlugins(inst) {
     try {
       const yml = readZipEntry(full, 'plugin.yml') ?? readZipEntry(full, 'paper-plugin.yml')
       if (yml) meta = parsePluginYml(yml.toString('utf8'))
+      else meta = readFabricManifest(full) ?? {}
     } catch {
       /* an unreadable jar is still listed by filename */
     }
@@ -327,11 +369,11 @@ async function modrinth(pathname, init) {
   return res.json()
 }
 
-/** Search Modrinth for plugins this kind of server can load. */
-export async function searchPlugins(query, { gameVersion = null, limit = 20 } = {}) {
+/** Search Modrinth for content this kind of server can load - plugins or mods by loader. */
+export async function searchPlugins(query, { gameVersion = null, limit = 20, loaders = LOADERS, projectType = 'plugin' } = {}) {
   const facets = [
-    ['project_type:plugin'],
-    LOADERS.map((l) => `categories:${l}`),
+    [`project_type:${projectType}`],
+    loaders.map((l) => `categories:${l}`),
   ]
   if (gameVersion) facets.push([`versions:${gameVersion}`])
   const params = new URLSearchParams({
@@ -476,9 +518,9 @@ export async function installFromHangar(inst, slug, { gameVersion = null } = {})
  * (and the server's game version, when known) wins; with nothing but pre-releases, the
  * newest compatible one of those is better than nothing and is labelled by its own type.
  */
-export function pickVersion(versions, { gameVersion = null } = {}) {
+export function pickVersion(versions, { gameVersion = null, loaders = LOADERS } = {}) {
   const fits = (v) =>
-    v.loaders.some((l) => LOADERS.includes(l)) &&
+    v.loaders.some((l) => loaders.includes(l)) &&
     (!gameVersion || v.game_versions.includes(gameVersion))
   return versions.find((v) => v.version_type === 'release' && fits(v)) ?? versions.find(fits) ?? null
 }
@@ -495,14 +537,16 @@ export function primaryFile(version) {
  * keep its name - a truncated or tampered download must not sit there looking installed.
  */
 export async function installPlugin(inst, projectId, { gameVersion = null } = {}) {
-  const params = new URLSearchParams({ loaders: JSON.stringify(LOADERS) })
+  const loaders = loadersFor(inst)
+  const { word } = contentKindFor(inst)
+  const params = new URLSearchParams({ loaders: JSON.stringify(loaders) })
   if (gameVersion) params.set('game_versions', JSON.stringify([gameVersion]))
   const versions = await modrinth(`/project/${encodeURIComponent(projectId)}/version?${params}`)
-  const version = pickVersion(versions, { gameVersion })
+  const version = pickVersion(versions, { gameVersion, loaders })
   if (!version) {
     fail(gameVersion
-      ? `no build of that plugin supports ${gameVersion} on a Paper-family server`
-      : 'no build of that plugin supports a Paper-family server')
+      ? `no build of that ${word} supports ${gameVersion} on a ${loaders[0]} server`
+      : `no build of that ${word} supports a ${loaders[0]} server`)
   }
   const file = primaryFile(version)
   if (!file) fail('that version has no downloadable file')
@@ -566,7 +610,7 @@ export async function checkUpdates(inst, { gameVersion = null } = {}) {
     const body = {
       hashes: [...byHash.keys()],
       algorithm: 'sha1',
-      loaders: LOADERS,
+      loaders: loadersFor(inst),
       ...(gameVersion ? { game_versions: [gameVersion] } : {}),
     }
     const latest = await modrinth('/version_files/update', { method: 'POST', body: JSON.stringify(body) })
@@ -642,7 +686,7 @@ export async function updatePlugin(inst, file, { gameVersion = null } = {}) {
   const body = {
     hashes: [sha],
     algorithm: 'sha1',
-    loaders: LOADERS,
+    loaders: loadersFor(inst),
     ...(gameVersion ? { game_versions: [gameVersion] } : {}),
   }
   const latest = await modrinth('/version_files/update', { method: 'POST', body: JSON.stringify(body) })

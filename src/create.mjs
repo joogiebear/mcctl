@@ -198,6 +198,7 @@ export async function newInstance(
     motd = null,
     java = 'java',
     onlineMode = true,
+    loader = 'paper',
   } = {},
 ) {
   validateName(name)
@@ -291,6 +292,7 @@ export async function newInstance(
     jar: path.basename(chosenJar),
     java,
     memory,
+    loader,
     port: finalPort,
     rcon: { port: finalRcon, password: rconPassword },
     createdAt: new Date().toISOString(),
@@ -339,6 +341,9 @@ export async function adoptInstance(name, dir, { jar = null, memory = '4G', java
     jar: chosen,
     java,
     memory,
+    // Guessed from the jar the way a person would: a Fabric launcher names itself. Anything
+    // else is treated as the Paper family, which is what every adopted server has been so far.
+    loader: /^fabric-server/i.test(chosen) ? 'fabric' : 'paper',
     port,
     rcon: { port: rconPort, password: rconPassword },
     createdAt: new Date().toISOString(),
