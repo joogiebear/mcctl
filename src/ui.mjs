@@ -32,9 +32,12 @@ export function serve({ port = 8770, host = '127.0.0.1', open = true } = {}) {
 
   return new Promise((resolve) => {
     server.listen(port, host, () => {
-      const url = `http://${host}:${port}/`
+      // Report the port actually bound, not the one asked for: the desktop app passes 0 so the OS
+      // picks a free one, and a URL built from the request would point at port zero.
+      const bound = server.address().port
+      const url = `http://${host}:${bound}/`
       if (open) openBrowser(url)
-      resolve({ server, url })
+      resolve({ server, url, port: bound })
     })
   })
 }

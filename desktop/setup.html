@@ -1,0 +1,119 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>mcctl setup</title>
+<style>
+  :root {
+    --bg: #10131a; --panel: #171b24; --line: #262c39; --ink: #e6e9ef; --dim: #8b94a7;
+    --accent: #5aa9e6; --bad: #e06c75;
+    --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.6 system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; }
+  .card { width: min(620px, 92vw); background: var(--panel); border: 1px solid var(--line);
+          border-radius: 10px; padding: 28px 30px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { color: var(--dim); margin: 0 0 24px; }
+  label.field { display: block; margin-bottom: 6px; color: var(--dim); font-size: 12px;
+                text-transform: uppercase; letter-spacing: .7px; }
+  .pathrow { display: flex; gap: 8px; margin-bottom: 20px; }
+  .pathrow input { flex: 1; background: #0d1017; color: var(--ink); border: 1px solid var(--line);
+                   border-radius: 6px; padding: 9px 11px; font-family: var(--mono); font-size: 12.5px; }
+  button { background: #222836; color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+           padding: 9px 14px; font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.primary { background: #1d3b2a; border-color: #2c5b40; padding: 10px 22px; }
+  button:disabled { opacity: .45; cursor: default; }
+  .toggle { display: flex; gap: 10px; align-items: flex-start; padding: 14px;
+            border: 1px solid var(--line); border-radius: 8px; margin-bottom: 20px; background: #141821; }
+  .toggle input { margin-top: 3px; }
+  .toggle .why { color: var(--dim); font-size: 12.5px; }
+  .err { color: var(--bad); font-size: 13px; min-height: 20px; margin-bottom: 8px; white-space: pre-wrap; }
+  footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .note { color: var(--dim); font-size: 12px; }
+</style>
+
+<div class="card">
+  <h1>Where should mcctl keep things?</h1>
+  <p class="sub">Server files, downloaded jars and backups. You can change this later.</p>
+
+  <label class="field" for="root">Install location</label>
+  <div class="pathrow">
+    <input id="root" spellcheck="false">
+    <button id="pickRoot">Browse…</button>
+  </div>
+
+  <div class="toggle">
+    <input type="checkbox" id="same" checked>
+    <div>
+      <label for="same"><b>Keep servers in the same place</b></label>
+      <div class="why">
+        Turn this off to put servers on another drive. Worlds and backups are the parts that grow,
+        so this is usually about space rather than tidiness.
+      </div>
+    </div>
+  </div>
+
+  <div id="serversBlock" hidden>
+    <label class="field" for="servers">Servers location</label>
+    <div class="pathrow">
+      <input id="servers" spellcheck="false">
+      <button id="pickServers">Browse…</button>
+    </div>
+  </div>
+
+  <div class="err" id="err"></div>
+
+  <footer>
+    <span class="note" id="mode"></span>
+    <button class="primary" id="go">Continue</button>
+  </footer>
+</div>
+
+<script>
+  const $ = (s) => document.querySelector(s);
+  const d = window.mcctlDesktop;
+
+  let defaults = null;
+
+  async function init() {
+    defaults = await d.getSetup();
+    $('#root').value = defaults.defaultDataRoot;
+    $('#servers').value = defaults.defaultDataRoot + '\\servers';
+    $('#mode').textContent = 'core: ' + defaults.coreMode;
+  }
+
+  $('#same').onchange = (e) => {
+    $('#serversBlock').hidden = e.target.checked;
+  };
+
+  $('#pickRoot').onclick = async () => {
+    const p = await d.pickFolder('Choose where mcctl keeps its files');
+    if (p) $('#root').value = p;
+  };
+
+  $('#pickServers').onclick = async () => {
+    const p = await d.pickFolder('Choose where servers are stored');
+    if (p) $('#servers').value = p;
+  };
+
+  $('#go').onclick = async () => {
+    const separate = !$('#same').checked;
+    const dataRoot = $('#root').value.trim();
+    const instancesDir = $('#servers').value.trim();
+    if (!dataRoot || (separate && !instancesDir)) {
+      $('#err').textContent = 'Both locations are needed.';
+      return;
+    }
+    $('#go').disabled = true;
+    $('#err').textContent = '';
+    const res = await d.saveSetup({ dataRoot, instancesDir, separate });
+    if (!res.ok) {
+      $('#err').textContent = res.error;
+      $('#go').disabled = false;
+    }
+    // On success the app relaunches into the panel, so there is nothing to do here.
+  };
+
+  init();
+</script>

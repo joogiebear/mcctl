@@ -1,0 +1,45 @@
+{
+  "name": "mcctl-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop app for mcctl - a local Minecraft server dev platform",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --core ..",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^44.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "io.github.joogiebear.mcctl",
+    "productName": "mcctl",
+    "files": ["main.js", "preload.js", "setup.html", "package.json"],
+    "extraResources": [
+      {
+        "from": "..",
+        "to": "core",
+        "filter": [
+          "mcctl.mjs",
+          "src/**",
+          "package.json",
+          "!**/node_modules",
+          "!instances/**",
+          "!jars/**",
+          "!backups/**",
+          "!run/**",
+          "!desktop/**",
+          "!.git/**"
+        ]
+      }
+    ],
+    "win": { "target": ["nsis"] },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
