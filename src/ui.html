@@ -22,6 +22,10 @@
     --surface:  #141823;
     --raised:   #1c2130;
     --sunken:   #0a0c12;
+    /* Between void and surface. Four components had this as a copied hex - the vitals strip, the
+       sections in Backups, the charts and the task form - which is exactly the set a surface
+       hierarchy has to be able to talk about. */
+    --recess:   #11151f;
     --line:     #252b3b;
     --edge:     #354056;
 
@@ -43,7 +47,54 @@
 
     --r: 8px;
     --r-sm: 6px;
+
+    /* Elevation on a dark ground, without shadows. A soft shadow over #0c0e14 reads as dirt; a
+       one-pixel light edge along the top of a card reads as a surface catching the light, which is
+       what the eye is actually looking for. */
+    --lift: inset 0 1px 0 rgba(255, 255, 255, .045);
+    --lift-strong: inset 0 1px 0 rgba(255, 255, 255, .07);
+
+    /* The state colours again, at the strength a background can take. Used for the wash behind a
+       lit spine so the colour is felt at the edge of a card rather than declared across it. */
+    --live-wash:  rgba(74, 222, 128, .09);
+    --warn-wash:  rgba(240, 182, 77, .09);
+    --fault-wash: rgba(242, 100, 92, .09);
+
+    --spine: 3px;
   }
+
+  /* ---- icons ---------------------------------------------------------------- */
+
+  /* Sized in ems so an icon tracks the text it sits beside rather than needing a size per use. */
+  .ico {
+    width: 1em; height: 1em;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: square;
+    stroke-linejoin: miter;
+    /* Optical alignment: a 16-grid glyph sits a hair high against a text baseline. */
+    vertical-align: -.14em;
+  }
+  .ico-lg { width: 1.25em; height: 1.25em; }
+
+  /* ---- a lit edge means something here is wrong ------------------------------ */
+
+  /*
+    Borrowed from the console, and borrowed with its rule intact.
+
+    Each log line has a three-pixel left border that stays transparent unless the line is a warning,
+    an error, or mcctl itself speaking. On a real log that is a few percent of lines, and it works
+    precisely because the field is almost entirely unlit - you see the pattern before you read a
+    word.
+
+    Applying it to "anything with a state" would have inverted that: four stopped servers would get
+    four grey stripes carrying nothing, and the one that mattered would have to compete with them.
+    So a lit edge appears here for the same reason it appears in the console and no other - the
+    thing it is attached to is not doing what it should. Everything else says its state the way it
+    already did, with a lamp, a badge, or dimming.
+  */
 
   * { box-sizing: border-box; }
 
@@ -150,7 +201,7 @@
 
   /* ---- server cards ----------------------------------------------------- */
 
-  #list { overflow-y: auto; min-height: 0; padding: 6px; }
+  #list { overflow-y: auto; min-height: 0; padding: 8px; display: grid; gap: 6px; align-content: start; }
 
   .card {
     display: grid;
@@ -166,8 +217,40 @@
     font: inherit;
     cursor: pointer;
   }
-  .card:hover { background: var(--raised); }
-  .card[aria-current="true"] { background: var(--lapis-wash); border-color: var(--lapis-dim); }
+  /*
+    A row per server was a lamp, a name and a grey line. Everything about it was the same weight, so
+    a list of servers read as a list of strings rather than as machines with states.
+
+    It is a card now: its own surface, a lit spine down the left when it is doing something, and the
+    selected one lifted rather than merely tinted. The spine is the same idea the console uses in
+    its gutter, which is what stops it being decoration - the interface says "state" one way.
+  */
+  .card {
+    /* Measured identical to the panel behind it before this: rgb(20,24,35) on rgb(20,24,35), so a
+       card read only by its one-pixel border. That was the flatness, and one step up fixes it. */
+    background: var(--raised);
+    border-color: var(--line);
+    transition: background .12s, border-color .12s;
+  }
+  .card:hover { background: #222839; border-color: var(--edge); }
+  .card[aria-current="true"] {
+    background: var(--lapis-wash);
+    border-color: var(--lapis-dim);
+    box-shadow: var(--lift-strong);
+  }
+  /*
+    No spine here, deliberately - it was tried and removed.
+
+    The lamp beside the name already carries this: it has the state's colour, a halo, and it
+    breathes when the server is actually running. A stripe on the same card restates that in a
+    weaker form - it cannot move, so it cannot tell a live panel from a frozen one, which was the
+    whole argument for the lamp - and it takes seven pixels off a name that already ellipsizes.
+
+    What the card needed was not a second state channel. It was to stop being the same colour as
+    the panel holding it.
+  */
+  .card[data-status="orphaned"],
+  .card[data-status="unknown"] { border-color: #4a2529; }
   .card .lamp { grid-row: 1 / 3; align-self: center; }
   .card .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .card .vitals {
@@ -252,6 +335,9 @@
   button.danger { color: #ffc9c5; border-color: #4a2529; background: #2b1719; }
   button.danger:hover:not(:disabled) { border-color: var(--fault); background: #3a1c1f; }
   button.ghost { background: transparent; }
+  /* Any button holding an icon becomes a row, so the glyph and the word share a baseline and a gap
+     rather than the icon sitting on the text. */
+  button:has(> .ico) { display: inline-flex; align-items: center; gap: 6px; }
 
   input, select {
     background: var(--sunken);
@@ -276,7 +362,13 @@
   .row { display: flex; gap: 8px; align-items: center; }
 
   /* Segmented control: one visual group for one decision. */
-  .seg {
+  /*
+    One shape for "pick one of these", wherever it appears: the console's level filter, the Players
+    tab's all/operators/banned, and the Performance tab's time ranges. They were three sets of
+    plain buttons that happened to do the same job and looked like three different things.
+  */
+  .ranges { margin-bottom: 16px; }
+  .seg, .filters, .ranges {
     display: inline-flex;
     background: var(--sunken);
     border: 1px solid var(--line);
@@ -284,9 +376,9 @@
     padding: 2px;
     gap: 2px;
   }
-  .seg button { background: transparent; border: 0; padding: 4px 10px; font-size: 12.5px; color: var(--ink-2); border-radius: 4px; }
-  .seg button[aria-pressed="true"] { background: var(--raised); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
-  .seg button:hover:not([aria-pressed="true"]) { color: var(--ink); background: transparent; }
+  .seg button, .filters button, .ranges button { background: transparent; border: 0; padding: 4px 10px; font-size: 12.5px; color: var(--ink-2); border-radius: 4px; }
+  .seg button[aria-pressed="true"], .filters button[aria-pressed="true"], .ranges button[aria-pressed="true"] { background: var(--raised); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+  .seg button:hover:not([aria-pressed="true"]), .filters button:hover:not([aria-pressed="true"]), .ranges button:hover:not([aria-pressed="true"]) { color: var(--ink); background: transparent; }
 
   /* ---- empty state ------------------------------------------------------ */
 
@@ -336,7 +428,16 @@
   }
   /* Wraps rather than overflowing. At the app's minimum width there is not room for the name,
      two badges and five buttons on one line, and the button that fell off the end was Manage. */
-  .srv-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .srv-head {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--line);
+    box-shadow: var(--lift);
+  }
+  /* Start and Stop are the verbs; the rest are places to go. Splitting them stops five identical
+     buttons from making the one you want as hard to find as the four you do not. */
+  .srv-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .srv-actions .sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
   .srv-head h1 { margin: 0; font: 600 17px/1.2 var(--ui); letter-spacing: -.01em; }
   .srv-state { font: 12.5px/1 var(--ui); color: var(--ink-2); }
   /* A server anyone can join as any name is a different kind of server, and its logs get bug
@@ -354,7 +455,26 @@
   }
   .srv-actions { display: flex; gap: 7px; }
 
-  .vitals-bar { display: flex; flex-wrap: wrap; gap: 4px 22px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: #11151f; }
+  /*
+    Facts about the server, as cells rather than a run of label-value pairs.
+
+    It was a flat row of tiny uppercase labels over monospace values, which read as a debug dump -
+    true, and nothing the eye could land on. Each fact now gets its own cell with a hairline
+    between, so a glance can find the port without reading the whole line.
+  */
+  .vitals-bar {
+    display: flex; flex-wrap: wrap;
+    gap: 0;
+    padding: 0;
+    border-bottom: 1px solid var(--line);
+    background: var(--sunken);
+  }
+  .vitals-bar > div {
+    display: grid; gap: 2px;
+    padding: 8px 15px;
+    border-right: 1px solid var(--line);
+  }
+  .vitals-bar > div:last-child { border-right: 0; }
   .vital { display: grid; gap: 1px; }
   .vital dt { font: 600 10px/1.4 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
   .vital dd { margin: 0; font: 12.5px/1.4 var(--mono); color: var(--ink); }
@@ -366,7 +486,37 @@
 
   /* ---- tabs within a server ---------------------------------------------- */
 
-  .srv-tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+  .srv-tabs {
+    display: flex; gap: 2px; padding: 0 8px;
+    border-bottom: 1px solid var(--line);
+    /* The strip sits a step below the header it hangs from, so the selected tab reads as lifting
+       out of it toward the pane rather than floating on the same plane as everything else. */
+    background: var(--sunken);
+    /*
+      Scrolls rather than overflowing. Six tabs fit at the app's 900px minimum with about forty
+      pixels to spare, and that margin is not something to rely on - a longer label or a wider
+      system font eats it, and what falls off the end is a tab with no way to reach it. Adding the
+      icons alone cost sixty pixels and put Settings out of reach until this was here.
+    */
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .srv-tabs::-webkit-scrollbar { height: 0; }
+  .srv-tabs button { flex: none; }
+
+  /*
+    Below about a thousand pixels the icons come off the tabs.
+
+    Six labels alone need almost exactly the width the strip has at the app's 900px minimum, and the
+    glyphs cost sixty pixels on top of that - enough to push Settings off the end. The strip scrolls
+    so nothing is ever unreachable, but a control you have to scroll sideways to find is a worse
+    outcome than one without a picture next to it. The word is what names the tab; the icon only
+    ever made it faster to find.
+  */
+  @media (max-width: 1000px) {
+    .srv-tabs button .ico { display: none; }
+    .srv-tabs button { gap: 0; }
+  }
   .srv-tabs button {
     background: transparent;
     border: 0;
@@ -376,8 +526,17 @@
     color: var(--ink-2);
     font-size: 13px;
   }
-  .srv-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--lapis); font-weight: 600; }
-  .srv-tabs button:hover { background: transparent; color: var(--ink); }
+  .srv-tabs button { display: inline-flex; align-items: center; gap: 7px; }
+  .srv-tabs button .ico { color: var(--ink-3); transition: color .12s; }
+  .srv-tabs button[aria-selected="true"] {
+    color: var(--ink);
+    border-bottom-color: var(--lapis);
+    font-weight: 600;
+    background: var(--surface);
+  }
+  .srv-tabs button[aria-selected="true"] .ico { color: var(--lapis); }
+  .srv-tabs button:hover { background: var(--surface); color: var(--ink); }
+  .srv-tabs button:hover .ico { color: var(--ink-2); }
 
   /* One grid cell holding every pane, so switching cannot change the height of anything above. */
   .panes { display: grid; min-height: 0; }
@@ -405,6 +564,7 @@
     background: var(--surface);
   }
   .snap:hover { background: var(--raised); }
+  .snap .when { color: var(--ink); }
   .snap .when { grid-area: when; font: 12.5px/1.4 var(--ui); color: var(--ink); }
   .snap .what { grid-area: what; font: 11.5px/1.4 var(--mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .snap .size { grid-area: size; font: 12px/1 var(--mono); color: var(--ink-2); white-space: nowrap; text-align: right; }
@@ -416,21 +576,19 @@
   .snap button { padding: 4px 9px; font-size: 12px; }
   .snap-actions { grid-area: actions; display: flex; gap: 6px; }
 
-  .section { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: var(--r-sm); background: #11151f; }
+  .section { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--recess); }
   .section h3 { margin: 0; font: 600 12px/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); }
   .where { margin: 0 0 10px; gap: 10px; }
   .mono-path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* ---- performance ---------------------------------------------------------- */
 
-  .ranges { display: flex; gap: 4px; margin-bottom: 16px; }
-  .ranges button[aria-pressed="true"] { background: var(--lapis-dim); border-color: #3d55b8; color: #eaf0ff; }
 
   .gauge { display: grid; gap: 8px; margin-bottom: 20px; }
   .gauge-head { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
   .gauge-head h3 { margin: 0; font: 600 11px/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
   .gauge-head .now { font: 600 19px/1 var(--mono); color: var(--ink); }
   .gauge-head .aside { font: 12px/1 var(--ui); color: var(--ink-3); margin-left: auto; }
-  .chart { width: 100%; height: 96px; display: block; background: #11151f; border: 1px solid var(--line); border-radius: var(--r-sm); }
+  .chart { width: 100%; height: 96px; display: block; background: var(--recess); border: 1px solid var(--line); border-radius: var(--r-sm); }
   .chart .grid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
   .chart .line { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; }
   .chart .area { stroke: none; opacity: .16; }
@@ -442,8 +600,6 @@
 
   .who-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
   .who-bar input[type="search"] { flex: 1 1 200px; min-width: 160px; }
-  .filters { display: flex; gap: 4px; }
-  .filters button[aria-pressed="true"] { background: var(--lapis-dim); border-color: #3d55b8; color: #eaf0ff; }
 
   .people { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
   .who {
@@ -455,10 +611,23 @@
     padding: 10px 12px;
     background: var(--surface);
   }
-  .who:hover { background: var(--raised); }
+  /* Online already wears a badge, and the row is already sorted to the top for being online. A
+     lit edge as well would be the third way of saying one thing. */
+  .who[data-online] { background-image: linear-gradient(90deg, var(--live-wash), transparent 22%); }
+  .who:hover { background-color: var(--raised); }
   .who .w-name { grid-area: name; display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; font: 600 13.5px/1.3 var(--ui); color: var(--ink); }
   .who .w-name .unknown { font-weight: 400; font-style: italic; color: var(--ink-3); }
-  .who .w-meta { grid-area: meta; font: 11.5px/1.5 var(--mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /*
+    Wraps rather than truncating. A UUID is 36 characters and the facts beside it - when they were
+    last seen, why they are banned - were the half that got cut, which is the half a person is
+    reading the line for.
+  */
+  .who .w-meta {
+    grid-area: meta;
+    font: 11.5px/1.55 var(--mono);
+    color: var(--ink-3);
+    overflow-wrap: anywhere;
+  }
   .who .w-acts { grid-area: acts; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
   .who .w-acts button { padding: 4px 9px; font-size: 12px; }
 
@@ -470,6 +639,28 @@
   .pill[data-tone="op"] { color: #cdd9ff; border-color: #33407a; background: #171d33; }
   .pill[data-tone="ban"] { color: #ffc9c5; border-color: #4a2529; background: #2b1719; }
   .pill[data-tone="on"] { color: #9ff0c4; border-color: #22503a; background: #14261d; }
+
+  /* ---- a pane with nothing in it yet ---------------------------------------- */
+
+  .empty-pane {
+    display: grid;
+    justify-items: center;
+    gap: 12px;
+    padding: 34px 20px;
+    text-align: center;
+  }
+  .empty-pane p {
+    margin: 0;
+    max-width: 46ch;
+    font: 12.5px/1.6 var(--ui);
+    color: var(--ink-3);
+  }
+  /* Big and faint. It marks the space without competing with the sentence that explains it. */
+  .empty-pane .empty-mark {
+    width: 34px; height: 34px;
+    color: var(--edge);
+    stroke-width: 1.25;
+  }
 
   /* ---- scheduled tasks ---------------------------------------------------- */
 
@@ -484,7 +675,26 @@
     border-radius: var(--r-sm);
     background: var(--surface);
   }
-  .task[data-off] { opacity: .62; }
+  .task {
+    background: var(--raised);
+    box-shadow: var(--lift);
+    padding-left: 15px;
+    position: relative;
+    overflow: hidden;
+  }
+  /*
+    No spine for a healthy task. "Ready" is the normal state of every task on the screen, and a
+    stripe on all of them would say nothing. The one worth marking is a task mcctl believes in that
+    Windows has never heard of - that one will never fire, and it should look like it.
+  */
+  .task::before {
+    content: '';
+    position: absolute; left: 0; top: 0; bottom: 0;
+    width: var(--spine);
+    background: transparent;
+  }
+  .task[data-missing]::before { background: var(--fault); }
+  .task[data-off] { opacity: .62; background: var(--surface); box-shadow: none; }
   .task .t-what { grid-area: what; font: 600 13.5px/1.3 var(--ui); color: var(--ink); }
   .task .t-owner { font: 400 11px/1 var(--ui); color: var(--ink-3); letter-spacing: 0; }
   .task .t-when { grid-area: when; font: 12px/1.5 var(--ui); color: var(--ink-3); }
@@ -503,7 +713,7 @@
 
   /* The form for a new or edited task. Fields appear and vanish with the kind of schedule
      chosen, so it is a grid of rows rather than a fixed set of columns. */
-  .task-form { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--edge); border-radius: var(--r-sm); background: #11151f; }
+  .task-form { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--edge); border-radius: var(--r-sm); background: var(--recess); }
   .task-form .field { display: grid; gap: 5px; }
   .task-form label { font: 600 11px/1 var(--ui); text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3); }
   .task-form .when-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
@@ -695,6 +905,47 @@
   }
 </style>
 
+<!--
+  One sprite, defined once, referenced with <use href="#i-name">.
+
+  Inline rather than a file, because the panel is a single document that has to work with no network
+  at all - and an icon font would be a second thing to ship and a worse thing to style.
+
+  Drawn on a 16 grid with square caps and joins. That is for legibility at this size, not a nod to
+  anything - a rounded cap on a 1.5px stroke at 16px is half a pixel of blur on every terminal, and
+  the app's actual visual language is the isometric block in the brand mark, which does not survive
+  being shrunk to a toolbar glyph. These are here to be found quickly, and every one sits beside its
+  own word.
+-->
+<svg id="sprite" width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+  <defs>
+    <g id="i-base" fill="none" stroke="currentColor" stroke-width="1.5"
+       stroke-linecap="square" stroke-linejoin="miter"></g>
+  </defs>
+
+  <symbol id="i-terminal" viewBox="0 0 16 16"><path d="M2 3h12v10H2z"/><path d="M5 7l2 1.5L5 10"/><path d="M8.5 10.5H11"/></symbol>
+  <symbol id="i-archive" viewBox="0 0 16 16"><path d="M2 3h12v3H2z"/><path d="M3 6v7h10V6"/><path d="M6.5 9h3"/></symbol>
+  <symbol id="i-user" viewBox="0 0 16 16"><path d="M5.5 3h5v4h-5z"/><path d="M3 14v-2.5h10V14"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 16 16"><path d="M1.5 9h3l2-5 2.5 9 2-4h3.5"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 16 16"><path d="M3 3h10v10H3z"/><path d="M8 5.5V8h2.5"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 16 16"><path d="M2 4.5h12M2 11.5h12"/><path d="M5 3v3M11 10v3"/></symbol>
+
+  <symbol id="i-play" viewBox="0 0 16 16"><path d="M4.5 3l8 5-8 5z"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 16 16"><path d="M4 4h8v8H4z"/></symbol>
+  <symbol id="i-restart" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.8-3.85"/><path d="M13 2v3h-3"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4h4.5l1.5 2H14v7H2z"/></symbol>
+  <symbol id="i-dots" viewBox="0 0 16 16"><path d="M3.25 8h.5M7.75 8h.5M12.25 8h.5" stroke-width="2.5"/></symbol>
+
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 16 16"><path d="M3 4.5h10"/><path d="M4.5 4.5V13h7V4.5"/><path d="M6.5 4.5V3h3v1.5"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 16 16"><path d="M2.5 13.5V11L11 2.5 13.5 5 5 13.5z"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 16 16"><path d="M9 1.5L4 8.5h3.5L7 14.5l5-7H8.5z"/></symbol>
+  <symbol id="i-restore" viewBox="0 0 16 16"><path d="M3 8a5 5 0 1 0 1.8-3.85"/><path d="M3 2v3h3"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16"><path d="M2.5 2.5h8v8h-8z"/><path d="M10.5 10.5L14 14"/></symbol>
+  <symbol id="i-server" viewBox="0 0 16 16"><path d="M2 3h12v4H2zM2 9h12v4H2z"/><path d="M4.5 5h.5M4.5 11h.5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 16 16"><path d="M8 2l6 11H2z"/><path d="M8 6.5v3M8 11h.01"/></symbol>
+</svg>
+
 <div id="banner"></div>
 
 <header>
@@ -759,11 +1010,11 @@
         <span class="badge" id="srvOffline" hidden title="Anyone can join as any name. Players get name-derived UUIDs, and every log carries an OFFLINE/INSECURE banner.">Offline mode</span>
         <span class="grow"></span>
         <span class="srv-actions">
-          <button class="primary" id="bStart">Start</button>
-          <button id="bStop">Stop</button>
-          <button id="bRestart">Restart</button>
-          <button id="bFolder" title="Show this server's files in Explorer">Open folder</button>
-          <button id="bManage">Manage…</button>
+          <button class="primary" id="bStart"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-play"/></svg>Start</button>
+          <button id="bStop"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-stop"/></svg>Stop</button>
+          <button id="bRestart"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-restart"/></svg>Restart</button>
+          <span class="sep"></span><button id="bFolder" class="ghost" title="Show this server's files in Explorer"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-folder"/></svg>Open folder</button>
+          <button id="bManage" class="ghost"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-dots"/></svg>Manage</button>
         </span>
       </div>
 
@@ -771,21 +1022,19 @@
       <div id="srvNotice"></div>
 
       <div class="srv-tabs" role="tablist" aria-label="Server sections">
-        <button role="tab" data-pane="console" aria-selected="true">Console</button>
-        <button role="tab" data-pane="backups" aria-selected="false">Backups</button>
-        <button role="tab" data-pane="players" aria-selected="false">Players</button>
-        <button role="tab" data-pane="performance" aria-selected="false">Performance</button>
-        <button role="tab" data-pane="scheduler" aria-selected="false">Scheduler</button>
-        <button role="tab" data-pane="settings" aria-selected="false">Settings</button>
+        <button role="tab" data-pane="console" aria-selected="true"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-terminal"/></svg>Console</button>
+        <button role="tab" data-pane="backups" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-archive"/></svg>Backups</button>
+        <button role="tab" data-pane="players" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-user"/></svg>Players</button>
+        <button role="tab" data-pane="performance" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-pulse"/></svg>Performance</button>
+        <button role="tab" data-pane="scheduler" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>Scheduler</button>
+        <button role="tab" data-pane="settings" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-sliders"/></svg>Settings</button>
       </div>
 
       <div class="panes">
       <div class="pane pane-console" id="paneConsole" data-active>
         <div class="con-bar">
           <span class="con-search">
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-              <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 L14 14"/>
-            </svg>
+            <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
             <input id="conSearch" placeholder="Search the console" autocomplete="off" aria-label="Search the console">
           </span>
           <span class="seg" role="group" aria-label="Filter by level">
@@ -1727,6 +1976,54 @@ $('#bRestart').onclick = act('restart');
  * the core cannot drift about what exists or what a field accepts. The server reads this file once
  * at boot, so anything changed while it is running is announced as taking effect on restart.
  */
+/**
+ * An icon from the sprite at the top of the document.
+ *
+ * <p>`<use>` rather than a copy of the path per button: nineteen glyphs defined once, referenced
+ * wherever they are needed, and restyled from one place. `currentColor` means an icon inherits the
+ * colour of whatever it sits in, so a danger button's icon turns red without anybody saying so.
+ *
+ * <p>Always aria-hidden. Every icon in this interface sits beside its own label - none of them is
+ * the only thing saying what a control does - so announcing them would just read the same word
+ * twice.
+ */
+function icon(name, cls) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'ico' + (cls ? ' ' + cls : ''));
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', '#i-' + name);
+  svg.append(use);
+  return svg;
+}
+
+/** A button that carries an icon and a word. The word is what is read out; the icon is for speed. */
+function iconButton(name, label, cls) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  if (cls) b.className = cls;
+  b.append(icon(name), document.createTextNode(label));
+  return b;
+}
+
+/**
+ * An empty pane that says what would be here.
+ *
+ * <p>These were a paragraph of grey text against a large blank area, which reads as a page that
+ * failed to load rather than one with nothing in it yet. An icon at the size of the thing it
+ * stands for turns the same sentence into a state.
+ */
+function emptyState(name, text) {
+  const wrap = document.createElement('div');
+  wrap.className = 'empty-pane';
+  wrap.append(icon(name, 'empty-mark'));
+  const p = document.createElement('p');
+  p.textContent = text;
+  wrap.append(p);
+  return wrap;
+}
+
 // ------------------------------------------------------------ performance ---
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -2061,18 +2358,12 @@ async function renderPlayers(opts) {
 
     list.textContent = '';
     if (!data.players.length) {
-      const none = document.createElement('div');
-      none.className = 'hint';
-      none.textContent = 'Nobody has joined this server, and nobody is opped, banned or whitelisted. '
-        + 'People appear here the first time the server hears of them.';
-      list.append(none);
+      list.append(emptyState('user', 'Nobody has joined this server, and nobody is opped, banned '
+        + 'or whitelisted. People appear here the first time the server hears of them.'));
       return;
     }
     if (!shown.length) {
-      const none = document.createElement('div');
-      none.className = 'hint';
-      none.textContent = 'Nobody here matches that.';
-      list.append(none);
+      list.append(emptyState('search', 'Nobody here matches that.'));
       return;
     }
     const people = document.createElement('div');
@@ -2087,6 +2378,7 @@ async function renderPlayers(opts) {
 function playerRow(p, data, base, again) {
   const el = document.createElement('div');
   el.className = 'who';
+  if (p.online) el.setAttribute('data-online', '');
 
   const name = document.createElement('div');
   name.className = 'w-name';
@@ -2145,9 +2437,7 @@ function playerRow(p, data, base, again) {
   const banBtn = document.createElement('button');
   banBtn.className = p.banned ? '' : 'danger';
   banBtn.textContent = p.banned ? 'Unban' : 'Ban';
-  const wipe = document.createElement('button');
-  wipe.className = 'danger';
-  wipe.textContent = 'Delete data';
+  const wipe = iconButton('trash', 'Delete data', 'danger');
   wipe.disabled = data.running || !p.joined;
   wipe.title = data.running
     ? 'Stop the server first - a running one writes this straight back'
@@ -2445,9 +2735,7 @@ async function renderScheduler(opts) {
 
   // ---- add ------------------------------------------------------------------
   const addWrap = document.createElement('div');
-  const add = document.createElement('button');
-  add.className = 'primary';
-  add.textContent = 'New task';
+  const add = iconButton('plus', 'New task', 'primary');
   addWrap.append(add);
   body.append(addWrap);
 
@@ -2480,11 +2768,8 @@ async function renderScheduler(opts) {
   body.append(listTitle);
 
   if (!data.tasks.length) {
-    const none = document.createElement('div');
-    none.className = 'hint';
-    none.textContent = 'Nothing scheduled. A nightly backup and a daily restart are the two most '
-      + 'servers ever need.';
-    body.append(none);
+    body.append(emptyState('clock', 'Nothing scheduled. A nightly backup and a daily restart are '
+      + 'the two most servers ever need.'));
   } else {
     const list = document.createElement('div');
     list.className = 'tasks';
@@ -2500,10 +2785,8 @@ async function renderScheduler(opts) {
   body.append(runTitle);
 
   if (!data.runs.length) {
-    const none = document.createElement('div');
-    none.className = 'hint';
-    none.textContent = 'Nothing has run yet. Every run writes a line here, including the ones that fail.';
-    body.append(none);
+    body.append(emptyState('bolt', 'Nothing has run yet. Every run writes a line here, including '
+      + 'the ones that fail.'));
   } else {
     const runs = document.createElement('div');
     runs.className = 'runs';
@@ -2534,6 +2817,7 @@ function taskCard(task, data, base, again, editor) {
   const el = document.createElement('div');
   el.className = 'task';
   if (!task.enabled) el.setAttribute('data-off', '');
+  else if (!task.known) el.setAttribute('data-missing', '');
 
   const what = document.createElement('div');
   what.className = 't-what';
@@ -2578,15 +2862,11 @@ function taskCard(task, data, base, again, editor) {
 
   const acts = document.createElement('div');
   acts.className = 't-acts';
-  const runNow = document.createElement('button');
-  runNow.textContent = 'Run now';
+  const runNow = iconButton('bolt', 'Run now');
   const toggle = document.createElement('button');
   toggle.textContent = task.enabled ? 'Turn off' : 'Turn on';
-  const edit = document.createElement('button');
-  edit.textContent = 'Edit';
-  const drop = document.createElement('button');
-  drop.className = 'danger';
-  drop.textContent = 'Delete';
+  const edit = iconButton('pencil', 'Edit');
+  const drop = iconButton('trash', 'Delete', 'danger');
   acts.append(runNow, toggle, edit, drop);
   el.append(what, state, when, acts);
 
@@ -2820,9 +3100,7 @@ async function renderBackups(opts) {
     scope.append(o);
   }
   scope.style.maxWidth = '150px';
-  const go = document.createElement('button');
-  go.className = 'primary';
-  go.textContent = 'Back up now';
+  const go = iconButton('archive', 'Back up now', 'primary');
   nowRow.append(scope, go);
   const nowNote = document.createElement('div');
   nowNote.className = 'hint';
@@ -2939,11 +3217,8 @@ async function renderBackups(opts) {
   hist.append(histTitle, where);
 
   if (!data.snapshots.length) {
-    const none = document.createElement('div');
-    none.className = 'hint';
-    none.textContent = 'Nothing here yet. Reset and delete both take one automatically before they run, '
-      + 'so this fills up on its own.';
-    hist.append(none);
+    hist.append(emptyState('archive', 'Nothing here yet. Reset and delete both take one '
+      + 'automatically before they run, so this fills up on its own.'));
   } else {
     const list = document.createElement('div');
     list.className = 'snaps';
@@ -2965,15 +3240,12 @@ async function renderBackups(opts) {
       tag.textContent = snap.scope;
       const actions = document.createElement('div');
       actions.className = 'snap-actions';
-      const restore = document.createElement('button');
-      restore.textContent = 'Restore';
+      const restore = iconButton('restore', 'Restore');
       restore.disabled = data.running;
       restore.title = data.running
         ? 'Stop the server first'
         : 'Extract this snapshot back over the server files';
-      const drop = document.createElement('button');
-      drop.className = 'danger';
-      drop.textContent = 'Delete';
+      const drop = iconButton('trash', 'Delete', 'danger');
       actions.append(restore, drop);
       el.append(when, size, tag, actions, what);
       list.append(el);
