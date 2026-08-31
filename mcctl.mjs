@@ -613,7 +613,10 @@ async function cmdRebuild(positional, flags) {
   }
   const res = await manage.rebuild(name, {
     keepPlugins: !flags.wipePlugins,
-    snapshot: !flags.noSnapshot,
+    // The parser turns --no-snapshot into { snapshot: false }, the same as --no-wait and
+    // --no-sync in cmdStart. Reading flags.noSnapshot here read a key it never writes, so the
+    // documented flag was silently ignored and a snapshot taken anyway.
+    snapshot: flags.snapshot !== false,
   })
   if (res.snapshot) out(`Snapshot: ${res.snapshot}`)
   out(`Rebuilt "${name}" — removed: ${res.removed.join(', ') || '(nothing to remove)'}`)
@@ -640,7 +643,9 @@ function cmdLaunchers(positional) {
 async function cmdUi(positional, flags) {
   const { url } = await ui.serve({
     port: Number(flags.port ?? 8770),
-    open: !flags.noOpen,
+    // --no-open arrives as { open: false }; flags.noOpen was a key the parser never writes,
+    // so the flag was silently ignored and the browser opened anyway.
+    open: flags.open !== false,
   })
   out(`mcctl panel: ${url}`)
   out('Bound to 127.0.0.1 only — it can start servers and type console commands, so it is')
@@ -1021,7 +1026,7 @@ SNAPSHOTS
 OTHER
   mcctl templates                    List templates
   mcctl templates save <inst> <tpl>  Save an instance's plugins+config as a template
-  mcctl ui                           Open the local control panel in a browser
+  mcctl ui [--port n] [--no-open]    Serve the local control panel (and open it in a browser)
   mcctl paper versions               Paper versions available to download
   mcctl paper fetch <version>        Download a Paper build into the jar store
   mcctl config                       Show where servers, jars and backups live
