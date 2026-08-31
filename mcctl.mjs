@@ -17,6 +17,7 @@ import * as sup from './src/supervisor.mjs'
 import { rconExec, stripColors } from './src/rcon.mjs'
 import * as backup from './src/backup.mjs'
 import * as create from './src/create.mjs'
+import * as paper from './src/paper.mjs'
 import { readProps, writeProps } from './src/props.mjs'
 import { UserError, fail, table, humanBytes, humanDuration, dirSize, isPortFree } from './src/util.mjs'
 
@@ -271,11 +272,23 @@ async function cmdConsole(positional) {
 
 async function cmdNew(positional, flags) {
   const name = requireName(positional, 'new')
+
+  // --paper <version> makes "spin up a fresh environment on version X" one command instead of
+  // three. Downloading first means a failed fetch leaves no half-made instance behind.
+  let jar = flags.jar ?? null
+  if (flags.paper) {
+    const build = await paper.fetchBuild(String(flags.paper), flags.build ?? null)
+    out(build.cached
+      ? `Using stored ${build.name} (build ${build.build}, ${build.channel}).`
+      : `Downloaded ${build.name} — build ${build.build}, ${build.channel}, ${build.sizeHuman}.`)
+    jar = build.name
+  }
+
   const inst = await create.newInstance(name, {
     template: flags.template ?? null,
     from: flags.from ?? null,
     withWorlds: Boolean(flags.withWorlds),
-    jar: flags.jar ?? null,
+    jar,
     memory: flags.memory ?? '4G',
     port: flags.port ? Number(flags.port) : null,
     rconPort: flags.rconPort ? Number(flags.rconPort) : null,
@@ -526,6 +539,46 @@ function cmdTemplates(positional, flags) {
   out(table(rows))
 }
 
+async function cmdPaper(positional, flags) {
+  const sub = positional[0] ?? 'versions'
+
+  if (sub === 'versions') {
+    const all = await paper.versions({ includeUnstable: Boolean(flags.unstable) })
+    const limit = Number(flags.limit ?? 25)
+    out(`Paper versions (newest first)${flags.unstable ? ', including pre-releases' : ''}:`)
+    out('  ' + all.slice(0, limit).join('  '))
+    if (all.length > limit) out(`  ... ${all.length - limit} older (use --limit ${all.length})`)
+    return
+  }
+
+  if (sub === 'builds') {
+    const version = positional[1]
+    if (!version) fail('usage: mcctl paper builds <version>')
+    const all = await paper.builds(version)
+    const rows = [['BUILD', 'CHANNEL', 'DATE', 'FILE']]
+    for (const b of all.slice(0, Number(flags.limit ?? 15))) {
+      rows.push([String(b.build), b.channel, b.time.slice(0, 10), b.name ?? '-'])
+    }
+    out(table(rows))
+    return
+  }
+
+  if (sub === 'fetch') {
+    const version = positional[1]
+    if (!version) fail('usage: mcctl paper fetch <version> [build] [--force]')
+    const res = await paper.fetchBuild(version, positional[2] ?? null, { force: Boolean(flags.force) })
+    if (res.cached) {
+      out(`Already stored: ${res.name} (build ${res.build}, ${res.channel}). Re-download with --force.`)
+    } else {
+      out(`Downloaded ${res.name} — build ${res.build}, ${res.channel}, ${res.sizeHuman}, checksum verified.`)
+    }
+    out(`Use it with: mcctl new <name> --jar ${res.name}`)
+    return
+  }
+
+  fail('usage: mcctl paper [versions|builds <version>|fetch <version> [build]]')
+}
+
 function cmdJars(positional, flags) {
   const sub = positional[0]
   if (sub === 'import') {
@@ -694,6 +747,7 @@ const COMMANDS = {
   templates: cmdTemplates,
   template: cmdTemplates,
   jars: cmdJars,
+  paper: cmdPaper,
   doctor: cmdDoctor,
   help: cmdHelp,
 }
