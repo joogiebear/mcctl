@@ -15,6 +15,7 @@ import * as schedule from './schedule.mjs'
 import { readProps, writeProps } from './props.mjs'
 import { storedPlayers } from './players.mjs'
 import * as players from './players.mjs'
+import * as metrics from './metrics.mjs'
 import * as settings from './settings.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -286,6 +287,32 @@ function autoBackupTask(name) {
   return mine.find((t) => t.owner === schedule.OWNER_BACKUPS)
     ?? mine.find((t) => !t.owner && t.name === 'Automatic backup')
     ?? null
+}
+
+/**
+ * How hard this server has been working.
+ *
+ * <p>Read from the file the daemon writes rather than measured here: the panel is a different
+ * process that may have been started after the server, and CPU is a rate that needs two readings
+ * taken by whoever was watching at the time.
+ */
+function handleMetrics(req, res, name, url) {
+  registry.getInstance(name)
+  if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+
+  const asked = Number(url.searchParams.get('seconds'))
+  // Capped at what is kept. Asking for a day gets everything there is rather than an error.
+  const seconds = Number.isFinite(asked) && asked > 0 ? Math.min(asked, 18000) : 3600
+  const status = supervisor.statusOf(name)
+  return json(res, 200, {
+    samples: metrics.readSamples(name, seconds),
+    everySeconds: metrics.SAMPLE_SECONDS,
+    cores: metrics.CPU_CORES,
+    running: supervisor.isRunning(name),
+    uptimeMs: status.uptimeMs ?? null,
+    startedAt: status.startedAt ?? null,
+    memory: status.memory ?? null,
+  })
 }
 
 /**
@@ -691,6 +718,7 @@ async function route(req, res) {
   if (seg[3] === 'backups') return handleBackups(req, res, name, seg)
   if (seg[3] === 'schedules') return handleSchedules(req, res, name, seg)
   if (seg[3] === 'players') return handlePlayers(req, res, name, seg)
+  if (seg[3] === 'metrics') return handleMetrics(req, res, name, url)
 
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
 
