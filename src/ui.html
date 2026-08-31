@@ -3847,6 +3847,79 @@ async function renderServerSettings() {
     sectionFor(f.group || 'other').append(wrap);
   }
 
+  // ---- supervision: mcctl's own settings, not server.properties -------------
+  // Its own card with its own Apply, because it saves through a different endpoint than the
+  // properties below and takes effect at the next java exit rather than the next start.
+  const sup = document.createElement('div');
+  sup.className = 'section set-group';
+  {
+    const head = document.createElement('div');
+    head.className = 'set-head';
+    const mark = document.createElement('span');
+    mark.className = 'mark';
+    mark.append(icon('restart'));
+    const h = document.createElement('h3');
+    h.textContent = 'If it crashes';
+    const blurb = document.createElement('p');
+    blurb.textContent = 'What mcctl does when the server dies without being asked to.';
+    head.append(mark, h, blurb);
+    sup.append(head);
+  }
+  const arWrap = document.createElement('label');
+  arWrap.className = 'row';
+  arWrap.style.cursor = 'pointer';
+  const arSwitch = document.createElement('input');
+  arSwitch.type = 'checkbox';
+  arSwitch.className = 'switch';
+  arSwitch.checked = row.autoRestart === true;
+  arWrap.append(arSwitch, document.createTextNode('Restart it automatically'));
+  const arHint = document.createElement('div');
+  arHint.className = 'hint';
+  arHint.textContent = 'Comes back ten seconds after a crash. Three crashes in ten minutes and it '
+    + 'stays down instead of grinding all night. Stopping it yourself always sticks.';
+  sup.append(arWrap, arHint);
+
+  const whField = document.createElement('div');
+  whField.className = 'field';
+  const whLabel = document.createElement('label');
+  whLabel.textContent = 'Discord webhook';
+  const whInput = document.createElement('input');
+  whInput.className = 'mono';
+  whInput.autocomplete = 'off';
+  whInput.spellcheck = false;
+  whInput.placeholder = 'https://discord.com/api/webhooks/…';
+  whInput.value = row.webhook || '';
+  const whHint = document.createElement('div');
+  whHint.className = 'hint';
+  whHint.textContent = 'Gets a message when the server crashes, recovers, gives up, or a scheduled '
+    + 'task fails. Leave empty for none. Server → Integrations → Webhooks in Discord.';
+  whField.append(whLabel, whInput, whHint);
+  sup.append(whField);
+
+  const supRow = document.createElement('div');
+  supRow.className = 'row';
+  const supApply = document.createElement('button');
+  supApply.textContent = 'Apply';
+  supRow.append(supApply);
+  sup.append(supRow);
+  body.append(sup);
+
+  supApply.onclick = async () => {
+    supApply.disabled = true;
+    try {
+      await post('/instances/' + encodeURIComponent(row.name) + '/settings', {
+        autoRestart: arSwitch.checked,
+        webhook: whInput.value.trim(),
+      });
+      toast('Saved. A running server picks this up at its next exit.', 'good');
+      await refresh();
+    } catch (e) {
+      toast(e.message, 'bad');
+    } finally {
+      supApply.disabled = false;
+    }
+  };
+
   const actions = document.createElement('div');
   actions.className = 'row';
   const save = document.createElement('button');

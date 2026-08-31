@@ -17,6 +17,7 @@ import { storedPlayers } from './players.mjs'
 import * as players from './players.mjs'
 import * as metrics from './metrics.mjs'
 import * as settings from './settings.mjs'
+import { acceptableWebhook } from './notify.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -837,6 +838,14 @@ async function route(req, res) {
       create.placeJar(registry.getInstance(name).dir, patch.jar)
     }
     if (body.java) patch.java = String(body.java)
+    if (Object.hasOwn(body, 'autoRestart')) patch.autoRestart = body.autoRestart === true
+    if (Object.hasOwn(body, 'webhook')) {
+      const url = String(body.webhook ?? '').trim()
+      if (url && !acceptableWebhook(url)) {
+        return json(res, 400, { error: 'the webhook must be an http(s) URL - paste the one Discord gives you.' })
+      }
+      patch.webhook = url || null
+    }
     registry.updateInstance(name, patch)
     return json(res, 200, safeInstance(supervisor.statusOf(name)))
   }

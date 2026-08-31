@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process'
 
 import { ensureDirs, ROOT, runDir } from './src/paths.mjs'
 import { listInstances, getInstance, removeInstance, updateInstance, serverJarPath } from './src/registry.mjs'
+import { acceptableWebhook, notifyInstance } from './src/notify.mjs'
 import { readState, clearState } from './src/control.mjs'
 import * as sup from './src/supervisor.mjs'
 import { rconExec, stripColors } from './src/rcon.mjs'
@@ -389,8 +390,24 @@ function cmdSet(positional) {
       case 'rcon.password':
         patch.rcon = { ...(patch.rcon ?? inst.rcon), password: value }
         break
+      // The daemon re-reads the registry at every java exit, so both of these apply to a RUNNING
+      // server from its next exit - no restart needed to arm them.
+      case 'auto-restart':
+        if (!['on', 'off', 'true', 'false'].includes(value.toLowerCase())) {
+          fail('auto-restart takes on or off')
+        }
+        patch.autoRestart = ['on', 'true'].includes(value.toLowerCase())
+        break
+      case 'webhook':
+        if (value.toLowerCase() === 'off') {
+          patch.webhook = null
+        } else {
+          if (!acceptableWebhook(value)) fail(`"${value}" is not an http(s) URL - paste the one Discord gives you`)
+          patch.webhook = value
+        }
+        break
       default:
-        fail(`unknown setting "${key}" - one of: memory, java, jar, port, rcon.port, rcon.password`)
+        fail(`unknown setting "${key}" - one of: memory, java, jar, port, rcon.port, rcon.password, auto-restart, webhook`)
     }
   }
   // Before the registry, not after. An instance runs the jar in its own directory, and recording a
@@ -665,6 +682,7 @@ function cmdReveal(positional) {
   out(`Opening ${manage.reveal(name)}`)
 }
 
+
 function cmdLaunchers(positional) {
   // Backfills instances made before launchers existed, and repairs them if mcctl moves on disk -
   // the .bat files hold an absolute path to the CLI.
@@ -886,6 +904,16 @@ async function runTask(id) {
     out(line)
   }
 
+  // A failed task runs at 3am with nobody watching, which is exactly what the webhook is for.
+  // Awaited so the process does not exit under the delivery; best-effort beyond that.
+  const alert = async (detail) => {
+    try {
+      await notifyInstance(getInstance(instance), `scheduled task "${task.name}" FAILED: ${detail}`)
+    } catch {
+      /* the run log and the exit code already carry the failure */
+    }
+  }
+
   /**
    * Start the server, and wait to find out whether it survived.
    *
@@ -899,10 +927,12 @@ async function runTask(id) {
     const res = await sup.start(instance, { timeout: TASK_START_TIMEOUT })
     if (res.failed) {
       process.exitCode = 1
+      await alert(`${verb}, but it stopped again: ${res.reason}`)
       return record('FAILED', `${verb}, but it stopped again: ${res.reason}`)
     }
     if (res.timedOut) {
       process.exitCode = 1
+      await alert(`${verb}, but it had not finished starting after ${TASK_START_TIMEOUT / 1000}s`)
       return record('FAILED', `${verb}, but it had not finished starting after ${TASK_START_TIMEOUT / 1000}s`)
     }
     return record('ok', verb)
@@ -945,6 +975,7 @@ async function runTask(id) {
   } catch (err) {
     record('FAILED', err?.message ?? String(err))
     process.exitCode = 1
+    await alert(err?.message ?? String(err))
     return
   }
   out(`done in ${Math.round((Date.now() - started) / 1000)}s`)
@@ -1048,7 +1079,8 @@ INSTANCES
                                      Puts an OFFLINE/INSECURE banner in every log.
   mcctl clone <src> <new>            Copy plugins+config into a new instance
       --with-worlds                  Also copy world data (default: fresh worlds)
-  mcctl set <name> key=value...      memory, java, jar, port, rcon.port, rcon.password
+  mcctl set <name> key=value...      memory, java, jar, port, rcon.port, rcon.password,
+                                     auto-restart=on|off, webhook=<url>|off
   mcctl props <name> [key=value...]  Read or edit server.properties
   mcctl rm <name> [--purge --yes]    Unregister (and optionally delete files)
 
