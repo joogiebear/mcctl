@@ -67,7 +67,19 @@ if (matching.length === 1) {
   let title = TAG
   if (fs.existsSync(notes)) {
     const first = fs.readFileSync(notes, 'utf8').split('\n').map((l) => l.trim()).find(Boolean)
-    if (first) title = `${TAG} — ${first.replace(/^#+\s*/, '').replace(/\.$/, '')}`
+    if (first) {
+      const summary = first.replace(/^#+\s*/, '').replace(/\.$/, '')
+      // Warned about, never truncated. The first line of the notes becomes the release title,
+      // and a title that is really a sentence reads badly in a list of releases - but cutting it
+      // short would hide the mistake rather than fix it, and the fix is one line of editing.
+      if (summary.length > 60) {
+        process.stdout.write(
+          `  warn the title is ${summary.length} characters and will read as a sentence rather than` +
+            ` a name. It comes from the first line of ${path.basename(notes)}.\n`,
+        )
+      }
+      title = `${TAG} — ${summary}`
+    }
   }
   const args = ['release', 'create', TAG, '--repo', REPO, '--draft', '--title', title]
   if (fs.existsSync(notes)) args.push('--notes-file', notes)
