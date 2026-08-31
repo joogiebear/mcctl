@@ -1149,17 +1149,17 @@
       <div id="srvNotice"></div>
 
       <div class="srv-body">
-      <nav class="srv-nav" role="tablist" aria-label="Server sections">
-        <button role="tab" data-pane="console" aria-selected="true"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-terminal"/></svg>Console</button>
-        <button role="tab" data-pane="backups" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-archive"/></svg>Backups</button>
-        <button role="tab" data-pane="players" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-user"/></svg>Players</button>
-        <button role="tab" data-pane="performance" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-pulse"/></svg>Performance</button>
-        <button role="tab" data-pane="scheduler" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>Scheduler</button>
-        <button role="tab" data-pane="settings" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-sliders"/></svg>Settings</button>
+      <nav class="srv-nav" role="tablist" aria-orientation="vertical" aria-label="Server sections">
+        <button role="tab" id="tabConsole" aria-controls="paneConsole" data-pane="console" aria-selected="true"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-terminal"/></svg>Console</button>
+        <button role="tab" id="tabBackups" aria-controls="paneBackups" data-pane="backups" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-archive"/></svg>Backups</button>
+        <button role="tab" id="tabPlayers" aria-controls="panePlayers" data-pane="players" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-user"/></svg>Players</button>
+        <button role="tab" id="tabPerformance" aria-controls="panePerformance" data-pane="performance" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-pulse"/></svg>Performance</button>
+        <button role="tab" id="tabScheduler" aria-controls="paneScheduler" data-pane="scheduler" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>Scheduler</button>
+        <button role="tab" id="tabSettings" aria-controls="paneSettings" data-pane="settings" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-sliders"/></svg>Settings</button>
       </nav>
 
       <div class="panes">
-      <div class="pane pane-console" id="paneConsole" data-active>
+      <div class="pane pane-console" id="paneConsole" role="tabpanel" aria-labelledby="tabConsole" data-active>
         <div class="con-bar">
           <span class="con-search">
             <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
@@ -1189,23 +1189,23 @@
         </div>
       </div>
 
-      <div class="pane pane-scroll" id="paneBackups">
+      <div class="pane pane-scroll" id="paneBackups" role="tabpanel" aria-labelledby="tabBackups">
         <div class="pane-body wide" id="backupsBody"></div>
       </div>
 
-      <div class="pane pane-scroll" id="panePlayers">
+      <div class="pane pane-scroll" id="panePlayers" role="tabpanel" aria-labelledby="tabPlayers">
         <div class="pane-body wide" id="playersBody"></div>
       </div>
 
-      <div class="pane pane-scroll" id="panePerformance">
+      <div class="pane pane-scroll" id="panePerformance" role="tabpanel" aria-labelledby="tabPerformance">
         <div class="pane-body wide" id="performanceBody"></div>
       </div>
 
-      <div class="pane pane-scroll" id="paneScheduler">
+      <div class="pane pane-scroll" id="paneScheduler" role="tabpanel" aria-labelledby="tabScheduler">
         <div class="pane-body wide" id="schedulerBody"></div>
       </div>
 
-      <div class="pane pane-scroll" id="paneSettings">
+      <div class="pane pane-scroll" id="paneSettings" role="tabpanel" aria-labelledby="tabSettings">
         <div class="pane-body" id="settingsBody"></div>
       </div>
       </div>
@@ -1534,7 +1534,14 @@ function show(view) {
  */
 function showPane(pane) {
   state.pane = pane;
-  for (const b of $$('.srv-nav [data-pane]')) b.setAttribute('aria-selected', String(b.dataset.pane === pane));
+  for (const b of $$('.srv-nav [data-pane]')) {
+    const on = b.dataset.pane === pane;
+    b.setAttribute('aria-selected', String(on));
+    // One stop in the tab order for the whole list, which is how a tablist is supposed to behave:
+    // Tab moves past the section list to the section, and the arrow keys move within it. Six stops
+    // between the server header and its content is six presses to get anywhere.
+    b.tabIndex = on ? 0 : -1;
+  }
   for (const el of $$('.pane')) el.toggleAttribute('data-active', el.id === 'pane' + pane[0].toUpperCase() + pane.slice(1));
   if (pane === 'settings') renderServerSettings();
   if (pane === 'backups') renderBackups();
@@ -1553,6 +1560,33 @@ function showPane(pane) {
 }
 
 for (const b of $$('.srv-nav [data-pane]')) b.onclick = () => showPane(b.dataset.pane);
+
+/*
+  Arrow keys move between sections; Home and End jump to the ends.
+
+  Required by the roving tabindex above - with only the selected section reachable by Tab, there
+  has to be another way to reach the rest. Both axes are accepted rather than only the one matching
+  the current orientation, because the list is a column at most sizes and a row at small ones, and
+  a key that works in one layout and not the other is worse than one that always works.
+*/
+$('.srv-nav').addEventListener('keydown', (e) => {
+  const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
+  const buttons = $$('.srv-nav [data-pane]');
+  const at = buttons.indexOf(document.activeElement);
+  if (at < 0) return;
+
+  let next = null;
+  if (step) next = buttons[(at + step + buttons.length) % buttons.length];
+  else if (e.key === 'Home') next = buttons[0];
+  else if (e.key === 'End') next = buttons[buttons.length - 1];
+  if (!next) return;
+
+  e.preventDefault();
+  // Selection follows focus, which is the expected behaviour when showing a panel is instant and
+  // has no side effects - and switching section here only ever draws.
+  showPane(next.dataset.pane);
+  next.focus();
+});
 
 /** Back out of a sheet to wherever the person was. */
 function back() {
