@@ -8,7 +8,8 @@
     "start": "electron .",
     "dev": "electron . --core ..",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "release": "electron-builder --publish always"
   },
   "devDependencies": {
     "electron": "^44.0.0",
@@ -44,12 +45,20 @@
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "joogiebear",
+        "repo": "mcctl-releases"
+      }
+    ]
   },
   "dependencies": {
     "electron-updater": "^6.8.9"

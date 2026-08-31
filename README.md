@@ -209,3 +209,49 @@ This is built for **localhost and LAN only**.
   current run. The server's own `logs/` directory keeps the full rolling history.
 - `tar` exits 1 with a warning when it skips a file the running server holds
   locked. That is expected on hot snapshots and is not treated as failure.
+
+---
+
+## Desktop app
+
+A window around the same panel, plus a native folder picker and first-run setup.
+
+```bash
+cd desktop
+npm install
+npm start                  # runs the bundled core
+npm start -- --core ..     # develop against this checkout (or set MCCTL_CORE)
+```
+
+The core runs **inside** the Electron process. Electron is already a Node runtime, so importing
+mcctl directly is what bundling means here: one process, no second Node to ship, and no orphaned
+child if the window dies.
+
+Closing the window does **not** stop your servers. They are detached daemons that do not belong to
+the app.
+
+### Releasing
+
+Installers and the update feed go to **`joogiebear/mcctl-releases`** (public). The source repo stays
+private — `electron-updater` needs a readable feed, and the alternative is embedding a GitHub token
+in every copy of the app, where anyone who downloads it can extract it.
+
+```bash
+cd desktop
+npm version patch                 # bump; the app reports this version
+GH_TOKEN=<token> npm run release  # build + publish installer and latest.yml
+```
+
+Builds are **unsigned**. Auto-update works regardless, but Windows SmartScreen warns on first
+install ("More info → Run anyway"). Signing is a certificate purchase, not a code change; the build
+config is arranged so it can be switched on without rework.
+
+### How updates behave
+
+Checking, downloading and installing are three separate presses. Nothing downloads or installs on
+its own — this app sits beside long-lived servers, and an update that restarts the window
+unannounced is a surprise rather than a feature. Installing warns that running servers survive it,
+because the honest answer is that only the window restarts.
+
+Update checks are refused outside a packaged build: in development the version is whatever
+`package.json` says and there is no installer to replace.
