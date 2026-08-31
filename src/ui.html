@@ -451,6 +451,7 @@
   }
   .pill[data-tone="op"] { color: #cdd9ff; border-color: #33407a; background: #171d33; }
   .pill[data-tone="ban"] { color: #ffc9c5; border-color: #4a2529; background: #2b1719; }
+  .pill[data-tone="on"] { color: #9ff0c4; border-color: #22503a; background: #14261d; }
 
   /* ---- scheduled tasks ---------------------------------------------------- */
 
@@ -1790,7 +1791,10 @@ async function renderPlayers(opts) {
     const term = playerView.search.trim().toLowerCase();
     const match = PLAYER_FILTERS.find((f) => f.key === playerView.filter).match;
     const shown = data.players.filter((p) => match(p)
-      && (!term || (p.name || '').toLowerCase().includes(term) || p.uuid.includes(term)));
+      && (!term || (p.name || '').toLowerCase().includes(term) || p.uuid.includes(term)))
+      // Whoever is on the server right now goes to the top. They are the ones you are most likely
+      // to be here about.
+      .sort((a, b) => Number(b.online) - Number(a.online));
 
     list.textContent = '';
     if (!data.players.length) {
@@ -1832,6 +1836,14 @@ function playerRow(p, data, base, again) {
     who.title = 'This server has only ever seen this id, never a name to go with it.';
   }
   name.append(who);
+  // First, because it is the one piece of state that is true this second rather than on disk.
+  if (p.online) {
+    const pill = document.createElement('span');
+    pill.className = 'pill';
+    pill.dataset.tone = 'on';
+    pill.textContent = 'Online';
+    name.append(pill);
+  }
   if (p.op) {
     const pill = document.createElement('span');
     pill.className = 'pill';
@@ -1857,7 +1869,8 @@ function playerRow(p, data, base, again) {
   const meta = document.createElement('div');
   meta.className = 'w-meta';
   const bits = [p.uuid];
-  if (p.lastSeen) bits.push('last seen ' + stamp(p.lastSeen));
+  if (p.online) bits.push('connected now');
+  else if (p.lastSeen) bits.push('last seen ' + stamp(p.lastSeen));
   else if (!p.joined) bits.push('has never joined');
   if (p.banned && p.banReason) bits.push('banned: ' + p.banReason);
   meta.textContent = bits.join('  \u00b7  ');
