@@ -1882,14 +1882,24 @@ async function paintPerformance(name, opts) {
   body.append(ranges);
 
   const samples = data.samples;
+  const history = data.history || { count: 0 };
   if (!samples.length) {
     const none = document.createElement('div');
     none.className = 'hint';
-    none.textContent = data.running
-      ? 'Measuring. The first reading needs two samples ' + data.everySeconds + ' seconds apart, '
-        + 'because processor use is a rate rather than a number you can read off once.'
-      : 'Nothing recorded. This is measured while the server runs, and history is cleared when it '
-        + 'starts so two runs are never drawn as one line.';
+    if (history.count) {
+      // There IS history, just not in this window - which is the normal state of a server that
+      // stopped an hour ago. Saying "nothing recorded" here would be a lie about their own data.
+      const wide = RANGES.find((r) => r.key > history.staleSeconds);
+      none.textContent = 'Nothing in this range. This server last ran ' + ago(history.newest * 1000)
+        + ', and ' + history.count + ' readings are kept'
+        + (wide ? ' - try ' + wide.label + '.' : '.');
+    } else {
+      none.textContent = data.running
+        ? 'Measuring. The first reading needs two samples ' + data.everySeconds + ' seconds apart, '
+          + 'because processor use is a rate rather than a number you can read off once.'
+        : 'Nothing recorded. This is measured while the server runs, and history is cleared when it '
+          + 'starts so two runs are never drawn as one line.';
+    }
     body.append(none);
     return;
   }

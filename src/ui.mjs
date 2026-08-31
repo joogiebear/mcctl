@@ -304,8 +304,22 @@ function handleMetrics(req, res, name, url) {
   // Capped at what is kept. Asking for a day gets everything there is rather than an error.
   const seconds = Number.isFinite(asked) && asked > 0 ? Math.min(asked, 18000) : 3600
   const status = supervisor.statusOf(name)
+  const all = metrics.readSamples(name)
+  const cutoff = Math.floor(Date.now() / 1000) - seconds
+  // Both the window and what lies outside it. A stopped server whose last run ended an hour ago
+  // has nothing in the last five minutes and plenty on disk, and the page has to be able to tell
+  // "never measured" from "not in this range" - they call for opposite things to say.
+  const newest = all.length ? all[all.length - 1].at : null
   return json(res, 200, {
-    samples: metrics.readSamples(name, seconds),
+    samples: all.filter((s) => s.at >= cutoff),
+    history: {
+      count: all.length,
+      oldest: all.length ? all[0].at : null,
+      newest,
+      // How far back the shortest range would have to reach to catch anything, so the page can
+      // name one rather than inviting someone to try all five.
+      staleSeconds: newest === null ? null : Math.max(0, Math.floor(Date.now() / 1000) - newest),
+    },
     everySeconds: metrics.SAMPLE_SECONDS,
     cores: metrics.CPU_CORES,
     running: supervisor.isRunning(name),

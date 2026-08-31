@@ -136,14 +136,14 @@ function trim(file) {
 }
 
 /**
- * The samples from the last `seconds`, oldest first.
+ * Every sample kept for this server, oldest first.
  *
- * <p>Filtered by timestamp rather than by count, so a window means the same thing whether the
- * server has been up for four hours or four minutes - a short history draws a short line rather
- * than a full-width one at the wrong scale.
+ * <p>Unfiltered on purpose. Windowing happens in the caller, which needs to know both what falls
+ * inside the range and whether anything falls outside it - a stopped server whose history is older
+ * than the chosen window has plenty recorded, and telling someone "nothing recorded" because they
+ * were looking at the last five minutes is a lie about their own data.
  */
-export function readSamples(name, seconds) {
-  const cutoff = Math.floor(Date.now() / 1000) - seconds
+export function readSamples(name) {
   let text
   try {
     text = fs.readFileSync(metricsFile(name), 'utf8')
@@ -155,7 +155,7 @@ export function readSamples(name, seconds) {
     if (!line) continue
     const [ts, cpu, rss] = line.split(' ')
     const at = Number(ts)
-    if (!Number.isFinite(at) || at < cutoff) continue
+    if (!Number.isFinite(at)) continue
     rows.push({ at, cpu: Number(cpu), rss: Number(rss) })
   }
   return rows
