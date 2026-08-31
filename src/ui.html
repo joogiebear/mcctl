@@ -26,6 +26,8 @@
        sections in Backups, the charts and the task form - which is exactly the set a surface
        hierarchy has to be able to talk about. */
     --recess:   #11151f;
+    /* The border colour a danger control already uses, named so it stops being pasted. */
+    --fault-edge: #4a2529;
     --line:     #252b3b;
     --edge:     #354056;
 
@@ -54,12 +56,11 @@
     --lift: inset 0 1px 0 rgba(255, 255, 255, .045);
     --lift-strong: inset 0 1px 0 rgba(255, 255, 255, .07);
 
-    /* The state colours again, at the strength a background can take. Used for the wash behind a
-       lit spine so the colour is felt at the edge of a card rather than declared across it. */
+    /* Green at the strength a background can take, for the faint wash behind a player who is
+       connected. The amber and red equivalents went out with the spine system that used them. */
     --live-wash:  rgba(74, 222, 128, .09);
-    --warn-wash:  rgba(240, 182, 77, .09);
-    --fault-wash: rgba(242, 100, 92, .09);
 
+    /* The width of a lit edge. One thing uses it - a scheduled task Windows has never heard of. */
     --spine: 3px;
   }
 
@@ -74,8 +75,6 @@
     stroke-width: 1.5;
     stroke-linecap: square;
     stroke-linejoin: miter;
-    /* Optical alignment: a 16-grid glyph sits a hair high against a text baseline. */
-    vertical-align: -.14em;
   }
   .ico-lg { width: 1.25em; height: 1.25em; }
 
@@ -249,8 +248,8 @@
     What the card needed was not a second state channel. It was to stop being the same colour as
     the panel holding it.
   */
-  .card[data-status="orphaned"],
-  .card[data-status="unknown"] { border-color: #4a2529; }
+  .card[data-status="orphaned"]:not([aria-current="true"]),
+  .card[data-status="unknown"]:not([aria-current="true"]) { border-color: var(--fault-edge); }
   .card .lamp { grid-row: 1 / 3; align-self: center; }
   .card .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .card .vitals {
@@ -367,7 +366,9 @@
     tab's all/operators/banned, and the Performance tab's time ranges. They were three sets of
     plain buttons that happened to do the same job and looked like three different things.
   */
-  .ranges { margin-bottom: 16px; }
+  /* A grid item, unlike the other two, so inline-flex blockifies to flex and the trough stretched
+     the width of the pane - 620px of empty inset well beside 194px of buttons. */
+  .ranges { margin-bottom: 16px; justify-self: start; width: max-content; }
   .seg, .filters, .ranges {
     display: inline-flex;
     background: var(--sunken);
@@ -453,7 +454,6 @@
     color: #f4cd86;
     white-space: nowrap;
   }
-  .srv-actions { display: flex; gap: 7px; }
 
   /*
     Facts about the server, as cells rather than a run of label-value pairs.
@@ -463,6 +463,9 @@
     between, so a glance can find the port without reading the whole line.
   */
   .vitals-bar {
+    /* A <dl>, so it arrives with a 1em block margin nobody asked for - which showed as two bands
+       of panel colour above and below a strip meant to sit flush between its neighbours. */
+    margin: 0;
     display: flex; flex-wrap: wrap;
     /*
       Dividers drawn by the gap, not by a border on each cell.
@@ -511,6 +514,10 @@
     */
     overflow-x: auto;
     scrollbar-width: none;
+    /* overflow-x also makes overflow-y auto, and the buttons filled the strip exactly - so the
+       focus ring, which sits 2px outside its button, was clipped to two vertical stubs. This is
+       the room it needs. */
+    padding-top: 3px;
   }
   .srv-tabs::-webkit-scrollbar { height: 0; }
   .srv-tabs button { flex: none; }
@@ -524,10 +531,7 @@
     outcome than one without a picture next to it. The word is what names the tab; the icon only
     ever made it faster to find.
   */
-  @media (max-width: 1000px) {
-    .srv-tabs button .ico { display: none; }
-    .srv-tabs button { gap: 0; }
-  }
+
   .srv-tabs button {
     background: transparent;
     border: 0;
@@ -548,6 +552,23 @@
   .srv-tabs button[aria-selected="true"] .ico { color: var(--lapis); }
   .srv-tabs button:hover { background: var(--surface); color: var(--ink); }
   .srv-tabs button:hover .ico { color: var(--ink-2); }
+
+  /*
+    Below about a thousand pixels the icons come off the tabs.
+
+    Six labels alone need almost exactly the width the strip has at the app's 900px minimum, and the
+    glyphs cost sixty pixels on top - enough to push Settings off the end. The strip scrolls so
+    nothing is ever unreachable, but a control you have to scroll sideways to find is a worse
+    outcome than one without a picture beside it.
+
+    It sits here, after the rules it has to beat, because a media query carries no extra weight of
+    its own - the gap declaration in it was previously being overridden by a later rule and did
+    nothing at all.
+  */
+  @media (max-width: 1000px) {
+    .srv-tabs button .ico { display: none; }
+    .srv-tabs button { gap: 0; }
+  }
 
   /* One grid cell holding every pane, so switching cannot change the height of anything above. */
   .panes { display: grid; min-height: 0; }
@@ -929,11 +950,6 @@
   own word.
 -->
 <svg id="sprite" width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
-  <defs>
-    <g id="i-base" fill="none" stroke="currentColor" stroke-width="1.5"
-       stroke-linecap="square" stroke-linejoin="miter"></g>
-  </defs>
-
   <symbol id="i-terminal" viewBox="0 0 16 16"><path d="M2 3h12v10H2z"/><path d="M5 7l2 1.5L5 10"/><path d="M8.5 10.5H11"/></symbol>
   <symbol id="i-archive" viewBox="0 0 16 16"><path d="M2 3h12v3H2z"/><path d="M3 6v7h10V6"/><path d="M6.5 9h3"/></symbol>
   <symbol id="i-user" viewBox="0 0 16 16"><path d="M5.5 3h5v4h-5z"/><path d="M3 14v-2.5h10V14"/></symbol>
@@ -950,11 +966,11 @@
   <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
   <symbol id="i-trash" viewBox="0 0 16 16"><path d="M3 4.5h10"/><path d="M4.5 4.5V13h7V4.5"/><path d="M6.5 4.5V3h3v1.5"/></symbol>
   <symbol id="i-pencil" viewBox="0 0 16 16"><path d="M2.5 13.5V11L11 2.5 13.5 5 5 13.5z"/></symbol>
-  <symbol id="i-bolt" viewBox="0 0 16 16"><path d="M9 1.5L4 8.5h3.5L7 14.5l5-7H8.5z"/></symbol>
+  <!-- Tips pulled in: at the original 31-degree vertices the miter projected ~2.8 units past
+       the point, which is outside the viewBox, and every render clipped both ends flat. -->
+  <symbol id="i-bolt" viewBox="0 0 16 16" stroke-miterlimit="2"><path d="M9 2.8L4.6 8.5h3.4L7 13.2l4.4-5.7H8z"/></symbol>
   <symbol id="i-restore" viewBox="0 0 16 16"><path d="M3 8a5 5 0 1 0 1.8-3.85"/><path d="M3 2v3h3"/></symbol>
   <symbol id="i-search" viewBox="0 0 16 16"><path d="M2.5 2.5h8v8h-8z"/><path d="M10.5 10.5L14 14"/></symbol>
-  <symbol id="i-server" viewBox="0 0 16 16"><path d="M2 3h12v4H2zM2 9h12v4H2z"/><path d="M4.5 5h.5M4.5 11h.5"/></symbol>
-  <symbol id="i-alert" viewBox="0 0 16 16"><path d="M8 2l6 11H2z"/><path d="M8 6.5v3M8 11h.01"/></symbol>
 </svg>
 
 <div id="banner"></div>
