@@ -90,6 +90,7 @@ function jobUpdate(id, patch) {
 const EDITABLE_PROPS = [
   {
     key: 'online-mode',
+    group: 'access',
     label: 'Require a Minecraft account',
     type: 'bool',
     fallback: 'true',
@@ -97,14 +98,30 @@ const EDITABLE_PROPS = [
       + 'gives players name-derived UUIDs instead of real ones, and puts an OFFLINE/INSECURE '
       + 'banner in every log. Plugin authors often refuse a bug report carrying it.',
   },
-  { key: 'motd', label: 'Message of the day', type: 'text', fallback: 'A Minecraft Server' },
-  { key: 'difficulty', label: 'Difficulty', type: 'enum', fallback: 'easy', options: ['peaceful', 'easy', 'normal', 'hard'] },
-  { key: 'gamemode', label: 'Default game mode', type: 'enum', fallback: 'survival', options: ['survival', 'creative', 'adventure', 'spectator'] },
-  { key: 'max-players', label: 'Max players', type: 'int', fallback: '20', min: 1, max: 1000 },
-  { key: 'pvp', label: 'PvP', type: 'bool', fallback: 'true' },
-  { key: 'white-list', label: 'Whitelist', type: 'bool', fallback: 'false', note: 'Only listed players can join. Add them from the console with "whitelist add <name>".' },
-  { key: 'view-distance', label: 'View distance', type: 'int', fallback: '10', min: 2, max: 32 },
-  { key: 'spawn-protection', label: 'Spawn protection', type: 'int', fallback: '16', min: 0, max: 256 },
+  { key: 'motd', group: 'world', label: 'Message of the day', type: 'text', fallback: 'A Minecraft Server' },
+  { key: 'difficulty', group: 'gameplay', label: 'Difficulty', type: 'enum', fallback: 'easy', options: ['peaceful', 'easy', 'normal', 'hard'] },
+  { key: 'gamemode', group: 'gameplay', label: 'Default game mode', type: 'enum', fallback: 'survival', options: ['survival', 'creative', 'adventure', 'spectator'] },
+  { key: 'max-players', group: 'access', label: 'Max players', type: 'int', fallback: '20', min: 1, max: 1000 },
+  { key: 'pvp', group: 'gameplay', label: 'PvP', type: 'bool', fallback: 'true' },
+  { key: 'white-list', group: 'access', label: 'Whitelist', type: 'bool', fallback: 'false', note: 'Only listed players can join. Add them from the console with "whitelist add <name>".' },
+  { key: 'view-distance', group: 'world', label: 'View distance', type: 'int', fallback: '10', min: 2, max: 32 },
+  { key: 'spawn-protection', group: 'gameplay', label: 'Spawn protection', type: 'int', fallback: '16', min: 0, max: 256 },
+]
+
+/**
+ * How the settings screen is divided up.
+ *
+ * <p>Declared beside the fields rather than in the page, so the two cannot drift: a field added
+ * above without a group still renders, in a section at the end, instead of quietly vanishing from
+ * the only screen that can edit it.
+ */
+const PROP_GROUPS = [
+  { key: 'access', icon: 'user', title: 'Who can join',
+    blurb: 'Identity, the whitelist, and how many people at once.' },
+  { key: 'gameplay', icon: 'play', title: 'Gameplay',
+    blurb: 'The rules the world is played by.' },
+  { key: 'world', icon: 'server', title: 'World and load',
+    blurb: 'What players see before they join, and how much the server draws for them.' },
 ]
 
 const PROP_BY_KEY = new Map(EDITABLE_PROPS.map((p) => [p.key, p]))
@@ -161,7 +178,7 @@ async function handleProps(req, res, name) {
   if (req.method === 'GET') {
     // Who the world already knows about, so the page can warn before online mode is changed under
     // them. Switching does not migrate anyone - it hands everybody a different identity.
-    return json(res, 200, { fields: shape(readProps(file)), file, players: storedPlayers(inst.dir) })
+    return json(res, 200, { fields: shape(readProps(file)), groups: PROP_GROUPS, file, players: storedPlayers(inst.dir) })
   }
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
 

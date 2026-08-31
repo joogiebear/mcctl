@@ -685,6 +685,29 @@
   .pill[data-tone="ban"] { color: #ffc9c5; border-color: #4a2529; background: #2b1719; }
   .pill[data-tone="on"] { color: #9ff0c4; border-color: #22503a; background: #14261d; }
 
+  /* ---- settings, in groups -------------------------------------------------- */
+
+  .set-group { gap: 14px; }
+  .set-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 1px 10px;
+    align-items: center;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .set-head .mark {
+    grid-row: 1 / 3;
+    display: grid; place-items: center;
+    width: 28px; height: 28px;
+    border-radius: var(--r-sm);
+    background: var(--raised);
+    border: 1px solid var(--line);
+    color: var(--ink-2);
+  }
+  .set-head h3 { margin: 0; font: 600 13px/1.3 var(--ui); color: var(--ink); text-transform: none; letter-spacing: 0; }
+  .set-head p { margin: 0; font: 12px/1.4 var(--ui); color: var(--ink-3); }
+
   /* ---- a switch, for things that are on or off ------------------------------ */
 
   /*
@@ -1031,6 +1054,7 @@
   <symbol id="i-user" viewBox="0 0 16 16"><path d="M5.5 3h5v4h-5z"/><path d="M3 14v-2.5h10V14"/></symbol>
   <symbol id="i-pulse" viewBox="0 0 16 16"><path d="M1.5 9h3l2-5 2.5 9 2-4h3.5"/></symbol>
   <symbol id="i-clock" viewBox="0 0 16 16"><path d="M3 3h10v10H3z"/><path d="M8 5.5V8h2.5"/></symbol>
+  <symbol id="i-server" viewBox="0 0 16 16"><path d="M2 3h12v4H2zM2 9h12v4H2z"/><path d="M4.5 5h.5M4.5 11h.5"/></symbol>
   <symbol id="i-sliders" viewBox="0 0 16 16"><path d="M2 4.5h12M2 11.5h12"/><path d="M5 3v3M11 10v3"/></symbol>
 
   <symbol id="i-play" viewBox="0 0 16 16"><path d="M4.5 3l8 5-8 5z"/></symbol>
@@ -3540,6 +3564,39 @@ async function renderServerSettings() {
   const controls = new Map();
   const players = data.players;
 
+  /*
+    One card per group instead of nine fields in a column.
+
+    The groups come from the API, beside the field definitions, so the two cannot drift. Anything
+    without a group - a field added to the core and not yet placed - lands in a section at the end
+    rather than disappearing from the only screen that can edit it.
+  */
+  const sections = new Map();
+  const sectionFor = (key) => {
+    if (sections.has(key)) return sections.get(key);
+    const meta = (data.groups || []).find((g) => g.key === key)
+      || { icon: 'sliders', title: 'Other settings', blurb: 'Everything not filed above.' };
+    const card = document.createElement('div');
+    card.className = 'section set-group';
+    const head = document.createElement('div');
+    head.className = 'set-head';
+    const mark = document.createElement('span');
+    mark.className = 'mark';
+    mark.append(icon(meta.icon));
+    const h = document.createElement('h3');
+    h.textContent = meta.title;
+    const blurb = document.createElement('p');
+    blurb.textContent = meta.blurb;
+    head.append(mark, h, blurb);
+    card.append(head);
+    sections.set(key, card);
+    body.append(card);
+    return card;
+  };
+  // Built in the order the API declares them, so the screen does not reorder itself when a field
+  // happens to be missing from a server that has never booted.
+  for (const g of data.groups || []) sectionFor(g.key);
+
   for (const f of data.fields) {
     const wrap = document.createElement('div');
     wrap.className = 'field';
@@ -3605,7 +3662,7 @@ async function renderServerSettings() {
       });
       wrap.append(warn);
     }
-    body.append(wrap);
+    sectionFor(f.group || 'other').append(wrap);
   }
 
   const actions = document.createElement('div');
