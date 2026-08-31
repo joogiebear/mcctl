@@ -520,6 +520,43 @@ function cmdPrune(positional, flags) {
   out(removed.length ? `Removed ${removed.length} snapshot(s), keeping the newest ${keep}.` : 'Nothing to prune.')
 }
 
+/**
+ * Prove the snapshots restore, before the day that gets found out the hard way.
+ *
+ * <p>Exits non-zero when anything fails, so a scheduled `mcctl verify <name> --all` can be
+ * noticed by whatever runs it rather than scrolling past as text.
+ */
+async function cmdVerify(positional, flags) {
+  const name = requireName(positional, 'verify')
+  getInstance(name)
+  const targets = flags.all
+    ? backup.listSnapshots(name)
+    : [backup.resolveSnapshot(name, positional[1] ?? 'latest')]
+  if (!targets.length) fail(`no snapshots exist for "${name}". Create one with: mcctl backup ${name}`)
+
+  let failed = 0
+  for (const target of targets) {
+    const res = await backup.verifySnapshot(name, target.name)
+    if (res.ok) {
+      out(`ok    ${target.name}  (${res.entries} entries, ${humanBytes(res.size)})`)
+      if (!res.hasManifest) {
+        out('      no manifest beside it, so only the archive itself was checked, not its coverage')
+      }
+    } else {
+      failed++
+      out(`FAIL  ${target.name}`)
+      for (const problem of res.problems) out(`      ${problem}`)
+    }
+  }
+  if (targets.length > 1) {
+    out('')
+    out(failed
+      ? `${failed} of ${targets.length} snapshots FAILED verification.`
+      : `All ${targets.length} snapshots read back whole.`)
+  }
+  if (failed) process.exitCode = 1
+}
+
 // ------------------------------------------------------- templates and jars
 
 function cmdTemplates(positional, flags) {
@@ -1022,6 +1059,7 @@ SNAPSHOTS
   mcctl snapshots <name>             List snapshots
   mcctl restore <name> [ref] --yes   Restore (default ref: latest); server must be stopped
   mcctl prune <name> --keep <n>      Delete all but the newest n
+  mcctl verify <name> [ref|--all]    Read a snapshot back end to end and check its coverage
 
 OTHER
   mcctl templates                    List templates
@@ -1072,6 +1110,7 @@ const COMMANDS = {
   snapshots: cmdSnapshots,
   restore: cmdRestore,
   prune: cmdPrune,
+  verify: cmdVerify,
   templates: cmdTemplates,
   template: cmdTemplates,
   jars: cmdJars,

@@ -209,6 +209,90 @@ export async function restoreSnapshot(inst, snapshot) {
 }
 
 /**
+ * Read one archive back, end to end, and check it holds what it is supposed to.
+ *
+ * <p>A backup only actually exists at restore time - until then it is a file nothing has read
+ * since the day it was written. Listing with -t decompresses every block, so the gzip checksums
+ * are genuinely checked: this is not a stricter test than restoring, it IS restoring, minus the
+ * writes. Any complaint here is the complaint a restore would make on the day it mattered.
+ *
+ * <p>The listing is then compared against the manifest's top-level members. That catches the
+ * other way a snapshot lies: an archive that reads back perfectly but is missing a world,
+ * because something held it locked on the night it was taken.
+ *
+ * <p>Unlike creation, a non-zero exit here is always a failure. runTar tolerates exit 1 because
+ * bsdtar uses it for hot-snapshot warnings; on a read, exit 1 is how corruption reports itself.
+ */
+export async function verifyArchive(file, expectedMembers = []) {
+  const problems = []
+  let size = 0
+  try {
+    size = fs.statSync(file).size
+  } catch {
+    return { ok: false, size: 0, entries: 0, missing: [], problems: ['the archive file is missing'] }
+  }
+  if (size === 0) {
+    return { ok: false, size, entries: 0, missing: [], problems: ['the archive is zero bytes'] }
+  }
+
+  let entries = 0
+  const roots = new Set()
+  const sawEntry = (line) => {
+    const entry = line.trim().replace(/\\/g, '/')
+    if (!entry) return
+    entries++
+    roots.add(entry.split('/')[0])
+  }
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn(tarBinary(), ['-tzf', file], { windowsHide: true })
+      let stderr = ''
+      let tail = ''
+      child.stderr.on('data', (c) => {
+        stderr += c.toString()
+      })
+      child.stdout.on('data', (c) => {
+        const lines = (tail + c.toString()).split('\n')
+        tail = lines.pop()
+        for (const line of lines) sawEntry(line)
+      })
+      child.on('error', (err) =>
+        reject(new Error(err.code === 'ENOENT'
+          ? 'tar was not found on PATH (Windows 10/11 ships tar.exe in System32)'
+          : err.message)))
+      child.on('exit', (code) => {
+        sawEntry(tail)
+        if (code === 0) resolve()
+        else reject(new Error(stderr.trim().split(/\r?\n/)[0] || `tar exited ${code}`))
+      })
+    })
+  } catch (err) {
+    problems.push(`the archive does not read back: ${err.message}`)
+  }
+
+  let missing = []
+  if (!problems.length) {
+    if (!entries) problems.push('the archive reads back but holds no entries')
+    // Only checked when the walk succeeded: a truncated archive's partial listing would report
+    // every later member missing, which buries the actual finding under its consequences.
+    missing = expectedMembers.filter((m) => !roots.has(String(m).replace(/\\/g, '/').split('/')[0]))
+    for (const member of missing) {
+      problems.push(`the manifest lists "${member}" but the archive does not contain it`)
+    }
+  }
+  return { ok: problems.length === 0, size, entries, missing, problems }
+}
+
+export async function verifySnapshot(name, ref) {
+  const snap = resolveSnapshot(name, ref)
+  const result = await verifyArchive(snap.path, snap.members)
+  // No manifest means the member check was vacuous, not that it passed. Said, so an "ok" on a
+  // manifest-less archive is read at its actual strength.
+  const hasManifest = fs.existsSync(snap.path.replace(/\.tar\.gz$/, '.json'))
+  return { snapshot: snap, hasManifest, ...result }
+}
+
+/**
  * Delete one snapshot, and the manifest that describes it.
  *
  * <p>Both or neither: a manifest without its archive is a row in the history that cannot be

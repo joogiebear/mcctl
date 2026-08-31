@@ -117,6 +117,7 @@ already claimed in the registry or in use on the box.
 | `snapshots <name>` | List snapshots |
 | `restore <name> [ref] --yes` | Restore (default `latest`); server must be stopped |
 | `prune <name> --keep <n>` | Delete all but the newest n |
+| `verify <name> [ref\|--all]` | Read a snapshot back end to end and check its coverage |
 
 Scopes: `plugins`, `worlds`, `config`, `standard` (the default — plugins, the
 active world set, and config), `full` (everything except `cache/`, `libraries/`,
@@ -127,6 +128,12 @@ and `save-on` afterward, so a hot snapshot is coherent rather than a torn copy
 of a world mid-write.
 
 `restore` refuses without `--yes` and prints what it would overwrite.
+
+`verify` is a restore minus the writes: listing the archive decompresses every
+block, so the gzip checksums are genuinely checked, and the entries are compared
+against the manifest so a snapshot missing a locked world is caught the week it
+was taken rather than the day it is needed. It exits non-zero on any failure, so
+a scheduled `verify <name> --all` can be noticed by whatever runs it.
 
 ### Scheduled work
 
