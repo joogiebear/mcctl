@@ -14,6 +14,7 @@ import path from 'node:path'
 import { getInstance, serverJarPath, jvmFlagsFor } from './registry.mjs'
 import { runDir, stateFile, consoleLog, daemonLog, controlPath } from './paths.mjs'
 import { writeJson } from './util.mjs'
+import { startSampler, metricsFile } from './metrics.mjs'
 
 const name = process.argv[2]
 if (!name) {
@@ -107,11 +108,25 @@ const state = {
 writeJson(stateFile(name), state)
 log(`java pid ${child.pid}`)
 
+// Performance history starts empty every run. The old file describes a process that no longer
+// exists, and a graph that silently splices two runs together is worse than one that starts blank.
+try {
+  fs.rmSync(metricsFile(name), { force: true })
+} catch {
+  /* a leftover file only costs a stale first sample */
+}
+// A graph is worth less than the thing it graphs, so a sampler that cannot start says so in the
+// daemon log and the server carries on without one.
+const stopSampler = startSampler(name, child.pid, {
+  onError: (err) => log(`performance sampling unavailable: ${err.message}`),
+})
+
 let stopping = false
 const stopWaiters = []
 
 child.on('exit', (code, signal) => {
   log(`java exited code=${code} signal=${signal}`)
+  stopSampler()
   out.write(`\n[mcctl] server process exited (code=${code}${signal ? `, signal=${signal}` : ''})\n`)
   state.running = false
   state.exitCode = code
