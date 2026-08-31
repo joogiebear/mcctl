@@ -16,6 +16,12 @@
     --surface:  #141823;
     --raised:   #1c2130;
     --sunken:   #0a0c12;
+    /* Between void and surface. Four components had this as a copied hex - the vitals strip, the
+       sections in Backups, the charts and the task form - which is exactly the set a surface
+       hierarchy has to be able to talk about. */
+    --recess:   #11151f;
+    /* The border colour a danger control already uses, named so it stops being pasted. */
+    --fault-edge: #4a2529;
     --line:     #252b3b;
     --edge:     #354056;
 
@@ -37,6 +43,19 @@
 
     --r: 8px;
     --r-sm: 6px;
+
+    /* Elevation on a dark ground, without shadows. A soft shadow over #0c0e14 reads as dirt; a
+       one-pixel light edge along the top of a card reads as a surface catching the light, which is
+       what the eye is actually looking for. */
+    --lift: inset 0 1px 0 rgba(255, 255, 255, .045);
+    --lift-strong: inset 0 1px 0 rgba(255, 255, 255, .07);
+
+    /* Green at the strength a background can take, for the faint wash behind a player who is
+       connected. The amber and red equivalents went out with the spine system that used them. */
+    --live-wash:  rgba(74, 222, 128, .09);
+
+    /* The width of a lit edge. One thing uses it - a scheduled task Windows has never heard of. */
+    --spine: 3px;
   }
 
   * { box-sizing: border-box; }

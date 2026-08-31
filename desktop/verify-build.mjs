@@ -128,6 +128,44 @@ function checkSignature(file) {
   return { ok: true, publisher: cn ? cn[1] : subject }
 }
 
+/**
+ * The two design-token blocks have to stay identical.
+ *
+ * <p>setup.html is loaded from disk by Electron before the panel server exists, so it cannot share
+ * a stylesheet with ui.html without a build step, and there is no build step. Both files say so in
+ * a comment ending "change both or neither" - and that comment failed silently the first time a
+ * real change tested it, because a comment cannot check anything.
+ *
+ * <p>This can. A wizard whose palette has drifted from the panel's is not a build worth shipping.
+ */
+function checkTokensMatch() {
+  const grab = (file) => {
+    let text
+    try {
+      text = fs.readFileSync(file, 'utf8')
+    } catch {
+      return null
+    }
+    const m = /( {2}:root \{[\s\S]*?\n {2}\})/.exec(text)
+    return m ? m[1] : null
+  }
+  const panel = grab(path.join(HERE, '..', 'src', 'ui.html'))
+  const wizard = grab(path.join(HERE, 'setup.html'))
+  if (!panel || !wizard) return { ok: false, why: 'a :root block could not be found in one of them' }
+  if (panel === wizard) return { ok: true, count: (panel.match(/^ {4}--/gm) || []).length }
+
+  const a = panel.split('\n')
+  const b = wizard.split('\n')
+  let at = 0
+  while (at < Math.max(a.length, b.length) && a[at] === b[at]) at++
+  return {
+    ok: false,
+    why: `they differ at line ${at + 1} of the block - the panel has `
+      + `${JSON.stringify((a[at] || '(end)').trim())} and the wizard has `
+      + `${JSON.stringify((b[at] || '(end)').trim())}`,
+  }
+}
+
 if (!STRUCTURE_ONLY && fs.existsSync(EXE)) {
   const configured = Boolean(pkg?.build?.win?.azureSignOptions || pkg?.build?.win?.signtoolOptions)
   if (!configured) {
@@ -138,6 +176,10 @@ if (!STRUCTURE_ONLY && fs.existsSync(EXE)) {
     else problems.push(`mcctl.exe is configured to be signed but ${res.why}.`)
   }
 }
+
+const tokens = checkTokensMatch()
+if (tokens.ok) notes.push(`tokens: the panel and the wizard share the same ${tokens.count}`)
+else problems.push(`the design tokens in src/ui.html and desktop/setup.html have drifted - ${tokens.why}.`)
 
 for (const note of notes) process.stdout.write(`  ok   ${note}\n`)
 if (problems.length) {
