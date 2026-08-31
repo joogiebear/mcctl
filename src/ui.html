@@ -420,6 +420,24 @@
   .section h3 { margin: 0; font: 600 12px/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); }
   .where { margin: 0 0 10px; gap: 10px; }
   .mono-path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* ---- performance ---------------------------------------------------------- */
+
+  .ranges { display: flex; gap: 4px; margin-bottom: 16px; }
+  .ranges button[aria-pressed="true"] { background: var(--lapis-dim); border-color: #3d55b8; color: #eaf0ff; }
+
+  .gauge { display: grid; gap: 8px; margin-bottom: 20px; }
+  .gauge-head { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+  .gauge-head h3 { margin: 0; font: 600 11px/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
+  .gauge-head .now { font: 600 19px/1 var(--mono); color: var(--ink); }
+  .gauge-head .aside { font: 12px/1 var(--ui); color: var(--ink-3); margin-left: auto; }
+  .chart { width: 100%; height: 96px; display: block; background: #11151f; border: 1px solid var(--line); border-radius: var(--r-sm); }
+  .chart .grid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .chart .line { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+  .chart .area { stroke: none; opacity: .16; }
+
+  .facts { display: flex; flex-wrap: wrap; gap: 4px 22px; font: 12px/1.6 var(--ui); color: var(--ink-3); }
+  .facts b { color: var(--ink-2); font-weight: 600; font-family: var(--mono); }
+
   /* ---- players -------------------------------------------------------------- */
 
   .who-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
@@ -756,6 +774,7 @@
         <button role="tab" data-pane="console" aria-selected="true">Console</button>
         <button role="tab" data-pane="backups" aria-selected="false">Backups</button>
         <button role="tab" data-pane="players" aria-selected="false">Players</button>
+        <button role="tab" data-pane="performance" aria-selected="false">Performance</button>
         <button role="tab" data-pane="scheduler" aria-selected="false">Scheduler</button>
         <button role="tab" data-pane="settings" aria-selected="false">Settings</button>
       </div>
@@ -799,6 +818,10 @@
 
       <div class="pane pane-scroll" id="panePlayers">
         <div class="pane-body wide" id="playersBody"></div>
+      </div>
+
+      <div class="pane pane-scroll" id="panePerformance">
+        <div class="pane-body wide" id="performanceBody"></div>
       </div>
 
       <div class="pane pane-scroll" id="paneScheduler">
@@ -1139,6 +1162,10 @@ function showPane(pane) {
   if (pane === 'backups') renderBackups();
   if (pane === 'scheduler') renderScheduler();
   if (pane === 'players') renderPlayers();
+  if (pane === 'performance') renderPerformance();
+  // Only the visible tab polls. A graph nobody is looking at is a request every ten seconds
+  // for as long as the app is open.
+  if (pane !== 'performance') stopPerfPolling();
   // Scroll position is not kept while a pre is hidden, so the console has to be put back where it
   // was - and "at the bottom" is where it was for anyone who had not scrolled up.
   if (pane === 'console' && state.atBottom) {
@@ -1551,6 +1578,7 @@ function select(name) {
   $('#backupsBody').dataset.for = '';
   $('#schedulerBody').dataset.for = '';
   $('#playersBody').dataset.for = '';
+  $('#performanceBody').dataset.for = '';
   renderServer(state.rows.find((r) => r.name === name));
   showPane(state.pane);
   renderLog();
@@ -1699,6 +1727,231 @@ $('#bRestart').onclick = act('restart');
  * the core cannot drift about what exists or what a field accepts. The server reads this file once
  * at boot, so anything changed while it is running is announced as taking effect on restart.
  */
+// ------------------------------------------------------------ performance ---
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+const RANGES = [
+  { key: 60, label: '1m' },
+  { key: 300, label: '5m' },
+  { key: 1800, label: '30m' },
+  { key: 3600, label: '1h' },
+  { key: 14400, label: '4h' },
+];
+
+const perfView = { seconds: 300 };
+let perfTimer = null;
+
+function stopPerfPolling() {
+  if (perfTimer) { clearInterval(perfTimer); perfTimer = null; }
+}
+
+function svg(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, String(v));
+  return el;
+}
+
+/**
+ * One measurement over time.
+ *
+ * <p>Drawn into a fixed viewBox and stretched by CSS, with non-scaling-stroke so the line keeps its
+ * thickness rather than being squashed along with the coordinates.
+ *
+ * <p>The vertical scale is given, not derived from the data. An auto-scaled CPU graph makes 0.4%
+ * look identical to 90% - the shape is the same and only the axis label differs, which is exactly
+ * the mistake a glance at a graph is meant to avoid.
+ */
+function chart(samples, { pick, max, colour }) {
+  const W = 600;
+  const H = 96;
+  const el = svg('svg', {
+    class: 'chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img',
+  });
+
+  for (let i = 1; i < 4; i++) {
+    const y = (H / 4) * i;
+    el.append(svg('line', { class: 'grid', x1: 0, y1: y, x2: W, y2: y }));
+  }
+  if (samples.length < 2) return el;
+
+  const first = samples[0].at;
+  const span = Math.max(1, samples[samples.length - 1].at - first);
+  const x = (s) => ((s.at - first) / span) * W;
+  const y = (s) => H - Math.min(1, Math.max(0, pick(s) / max)) * H;
+
+  const points = samples.map((s) => `${x(s).toFixed(1)},${y(s).toFixed(1)}`);
+  el.append(svg('polygon', {
+    class: 'area', fill: colour,
+    points: `0,${H} ${points.join(' ')} ${W},${H}`,
+  }));
+  el.append(svg('polyline', { class: 'line', stroke: colour, points: points.join(' ') }));
+  return el;
+}
+
+function gauge({ title, now, aside, samples, pick, max, colour }) {
+  const wrap = document.createElement('div');
+  wrap.className = 'gauge';
+  const head = document.createElement('div');
+  head.className = 'gauge-head';
+  const h = document.createElement('h3');
+  h.textContent = title;
+  const value = document.createElement('span');
+  value.className = 'now';
+  value.textContent = now;
+  const note = document.createElement('span');
+  note.className = 'aside';
+  note.textContent = aside;
+  head.append(h, value, note);
+  wrap.append(head, chart(samples, { pick, max, colour }));
+  return wrap;
+}
+
+/** "4m 12s", "3h 07m" - the two units that matter at whatever scale it has reached. */
+function humanUptime(ms) {
+  if (!ms || ms < 0) return null;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ' + String(s % 60).padStart(2, '0') + 's';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ' + String(m % 60).padStart(2, '0') + 'm';
+  return Math.floor(h / 24) + 'd ' + String(h % 24).padStart(2, '0') + 'h';
+}
+
+/** The memory ceiling the server was given, as a number of megabytes. "2G" and "3072M" both count. */
+function memoryCeilingMb(text) {
+  const m = /^(\d+)\s*([gm])?$/i.exec(String(text || '').trim());
+  if (!m) return null;
+  return m[2] && m[2].toLowerCase() === 'm' ? Number(m[1]) : Number(m[1]) * 1024;
+}
+
+/**
+ * How hard this server is working, and how hard it has been working.
+ *
+ * <p>The numbers come from the daemon, which is the only thing alive at the moment each sample is
+ * taken. A stopped server therefore has no live reading and whatever history it left behind, which
+ * is worth showing rather than blanking - "what was it doing before it died" is the question.
+ */
+async function renderPerformance(opts) {
+  const force = Boolean(opts && opts.force);
+  const row = state.rows.find((r) => r.name === state.current);
+  const body = $('#performanceBody');
+  if (!row) { body.textContent = ''; stopPerfPolling(); return; }
+  if (!force && body.dataset.for === row.name && body.childElementCount) return;
+  body.dataset.for = row.name;
+  await paintPerformance(row.name);
+
+  stopPerfPolling();
+  // Matched to how often the daemon samples. Polling faster would redraw the same points.
+  perfTimer = setInterval(() => {
+    if (state.pane !== 'performance' || state.current !== row.name) return stopPerfPolling();
+    paintPerformance(row.name, { quiet: true });
+  }, 10000);
+}
+
+async function paintPerformance(name, opts) {
+  const body = $('#performanceBody');
+  let data;
+  try {
+    data = await api('/instances/' + encodeURIComponent(name) + '/metrics?seconds=' + perfView.seconds);
+  } catch (e) {
+    if (opts && opts.quiet) return;
+    body.textContent = '';
+    const bad = document.createElement('div');
+    bad.className = 'bad';
+    bad.textContent = e.message;
+    body.append(bad);
+    body.dataset.for = '';
+    return;
+  }
+  if (body.dataset.for !== name || state.current !== name) return;
+  body.textContent = '';
+
+  // ---- how far back to look ------------------------------------------------
+  const ranges = document.createElement('div');
+  ranges.className = 'ranges';
+  for (const r of RANGES) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = r.label;
+    b.setAttribute('aria-pressed', String(perfView.seconds === r.key));
+    b.onclick = () => { perfView.seconds = r.key; paintPerformance(name); };
+    ranges.append(b);
+  }
+  body.append(ranges);
+
+  const samples = data.samples;
+  if (!samples.length) {
+    const none = document.createElement('div');
+    none.className = 'hint';
+    none.textContent = data.running
+      ? 'Measuring. The first reading needs two samples ' + data.everySeconds + ' seconds apart, '
+        + 'because processor use is a rate rather than a number you can read off once.'
+      : 'Nothing recorded. This is measured while the server runs, and history is cleared when it '
+        + 'starts so two runs are never drawn as one line.';
+    body.append(none);
+    return;
+  }
+
+  const last = samples[samples.length - 1];
+  const peakCpu = samples.reduce((m, s) => Math.max(m, s.cpu), 0);
+  const peakRss = samples.reduce((m, s) => Math.max(m, s.rss), 0);
+  const ceiling = memoryCeilingMb(data.memory);
+  // Headroom above the peak, so a flat line does not sit against the top of the box; and never
+  // below the ceiling the JVM was given, so "nearly full" looks like nearly full.
+  const rssMax = Math.max(ceiling || 0, peakRss * 1.15, 256);
+
+  body.append(gauge({
+    title: 'Processor',
+    now: data.running ? last.cpu.toFixed(1) + '%' : 'stopped',
+    aside: 'peak ' + peakCpu.toFixed(1) + '%  ·  share of all ' + data.cores + ' cores',
+    samples,
+    pick: (s) => s.cpu,
+    // A fixed 100% scale would draw every ordinary server as a flat line on the floor. The scale
+    // follows the peak instead, with a floor of 10% so a quiet server is not magnified into drama.
+    max: Math.max(10, peakCpu * 1.15),
+    colour: '#7aa2ff',
+  }));
+
+  body.append(gauge({
+    title: 'Memory',
+    now: data.running ? last.rss + ' MB' : 'stopped',
+    aside: 'peak ' + peakRss + ' MB' + (ceiling ? '  ·  ' + data.memory + ' max heap' : ''),
+    samples,
+    pick: (s) => s.rss,
+    max: rssMax,
+    colour: '#8fd3a8',
+  }));
+
+  // Only when it would otherwise read as a breach. -Xmx caps the heap; this graph is the whole
+  // process, which includes the JVM itself, metaspace and anything off-heap, and sitting above the
+  // heap limit is ordinary rather than a problem.
+  if (ceiling && peakRss > ceiling) {
+    const note = document.createElement('div');
+    note.className = 'hint';
+    note.style.margin = '-12px 0 20px';
+    note.textContent = 'Above the heap limit is normal: this is the whole java process, and '
+      + data.memory + ' is the ceiling on its heap alone.';
+    body.append(note);
+  }
+
+  const facts = document.createElement('div');
+  facts.className = 'facts';
+  const add = (label, value) => {
+    const span = document.createElement('span');
+    const b = document.createElement('b');
+    b.textContent = value;
+    span.append(label + ' ', b);
+    facts.append(span);
+  };
+  const up = humanUptime(data.uptimeMs);
+  add('Uptime', up || (data.running ? 'just started' : 'not running'));
+  if (data.startedAt) add('Started', stamp(new Date(data.startedAt).toISOString()));
+  add('Samples', samples.length + ' every ' + data.everySeconds + 's');
+  body.append(facts);
+}
+
 // ---------------------------------------------------------------- players ---
 
 const PLAYER_FILTERS = [
