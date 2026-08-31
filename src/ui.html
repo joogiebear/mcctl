@@ -419,9 +419,9 @@
   /* ---- server view ------------------------------------------------------ */
 
   .server {
-    /* head, vitals, notice, tabs, panes. The command bar used to be a sixth row here; it belongs to
-       the console rather than to the server, so it moved inside that pane. */
-    grid-template-rows: auto auto auto auto minmax(0, 1fr);
+    /* head, vitals, notice, body. The body is the nav and the panes side by side; the command bar
+       belongs to the console rather than to the server, so it lives inside that pane. */
+    grid-template-rows: auto auto auto minmax(0, 1fr);
     grid-template-columns: minmax(0, 1fr);
     background: var(--surface);
     border: 1px solid var(--line);
@@ -500,77 +500,80 @@
 
   /* ---- tabs within a server ---------------------------------------------- */
 
-  .srv-tabs {
-    display: flex; gap: 2px; padding: 0 8px;
-    border-bottom: 1px solid var(--line);
-    /* The strip sits a step below the header it hangs from, so the selected tab reads as lifting
-       out of it toward the pane rather than floating on the same plane as everything else. */
+  /*
+    Sections down the side rather than across the top.
+
+    Six of them already needed more width than the strip had at the app's 900px minimum - the icons
+    alone pushed Settings off the end - and the fixes for that were a horizontal scroll nobody would
+    think to use and a media query that hid the icons. A column has none of those problems, has room
+    for a seventh section, and reads as what it is: a list of places rather than a row of options.
+  */
+  .srv-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 8px;
+    width: 172px;
+    border-right: 1px solid var(--line);
     background: var(--sunken);
-    /*
-      Scrolls rather than overflowing. Six tabs fit at the app's 900px minimum with about forty
-      pixels to spare, and that margin is not something to rely on - a longer label or a wider
-      system font eats it, and what falls off the end is a tab with no way to reach it. Adding the
-      icons alone cost sixty pixels and put Settings out of reach until this was here.
-    */
-    overflow-x: auto;
-    scrollbar-width: none;
-    /* overflow-x also makes overflow-y auto, and the buttons filled the strip exactly - so the
-       focus ring, which sits 2px outside its button, was clipped to two vertical stubs. This is
-       the room it needs. */
-    padding-top: 3px;
+    overflow-y: auto;
+    min-height: 0;
   }
-  .srv-tabs::-webkit-scrollbar { height: 0; }
-  .srv-tabs button { flex: none; }
-
-  /*
-    Below about a thousand pixels the icons come off the tabs.
-
-    Six labels alone need almost exactly the width the strip has at the app's 900px minimum, and the
-    glyphs cost sixty pixels on top of that - enough to push Settings off the end. The strip scrolls
-    so nothing is ever unreachable, but a control you have to scroll sideways to find is a worse
-    outcome than one without a picture next to it. The word is what names the tab; the icon only
-    ever made it faster to find.
-  */
-
-  .srv-tabs button {
-    background: transparent;
+  .srv-nav button {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 7px 10px;
     border: 0;
-    border-bottom: 2px solid transparent;
-    border-radius: 0;
-    padding: 9px 13px;
+    border-radius: var(--r-sm);
+    background: transparent;
     color: var(--ink-2);
-    font-size: 13px;
+    font: 13px/1.2 var(--ui);
+    text-align: left;
   }
-  .srv-tabs button { display: inline-flex; align-items: center; gap: 7px; }
-  .srv-tabs button .ico { color: var(--ink-3); transition: color .12s; }
-  .srv-tabs button[aria-selected="true"] {
+  .srv-nav button .ico { color: var(--ink-3); transition: color .12s; }
+  .srv-nav button:hover { background: var(--surface); color: var(--ink); }
+  .srv-nav button:hover .ico { color: var(--ink-2); }
+  .srv-nav button[aria-selected="true"] {
+    background: var(--lapis-wash);
     color: var(--ink);
-    border-bottom-color: var(--lapis);
     font-weight: 600;
-    background: var(--surface);
+    box-shadow: inset 2px 0 0 var(--lapis);
   }
-  .srv-tabs button[aria-selected="true"] .ico { color: var(--lapis); }
-  .srv-tabs button:hover { background: var(--surface); color: var(--ink); }
-  .srv-tabs button:hover .ico { color: var(--ink-2); }
+  .srv-nav button[aria-selected="true"] .ico { color: var(--lapis); }
+
+  /* The nav and the panes, side by side, filling what the header left over. */
+  .srv-body {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    min-height: 0;
+  }
 
   /*
-    Below about a thousand pixels the icons come off the tabs.
+    Under about 780px the column goes back to being a row.
 
-    Six labels alone need almost exactly the width the strip has at the app's 900px minimum, and the
-    glyphs cost sixty pixels on top - enough to push Settings off the end. The strip scrolls so
-    nothing is ever unreachable, but a control you have to scroll sideways to find is a worse
-    outcome than one without a picture beside it.
-
-    It sits here, after the rules it has to beat, because a media query carries no extra weight of
-    its own - the gap declaration in it was previously being overridden by a later rule and did
-    nothing at all.
+    A 172px column out of a 556px content area is a third of the width, which is too much to spend
+    on navigation when the console is what you came for. It becomes a scrolling strip again at that
+    size - the same shape it used to be, now only where it is actually the better of two bad
+    options.
   */
-  @media (max-width: 1000px) {
-    .srv-tabs button .ico { display: none; }
-    .srv-tabs button { gap: 0; }
+  @media (max-width: 780px) {
+    .srv-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+    .srv-nav {
+      flex-direction: row;
+      width: auto;
+      padding: 6px 8px;
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .srv-nav::-webkit-scrollbar { height: 0; }
+    .srv-nav button { width: auto; flex: none; }
+    .srv-nav button[aria-selected="true"] { box-shadow: inset 0 -2px 0 var(--lapis); }
   }
 
-  /* One grid cell holding every pane, so switching cannot change the height of anything above. */
   .panes { display: grid; min-height: 0; }
   .pane { display: none; min-height: 0; grid-area: 1 / 1; }
   .pane[data-active] { display: grid; }
@@ -636,8 +639,8 @@
   .people { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
   .who {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: "name acts" "meta acts";
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "face name acts" "face meta acts";
     gap: 2px 14px;
     align-items: center;
     padding: 10px 12px;
@@ -646,6 +649,16 @@
   /* Online already wears a badge, and the row is already sorted to the top for being online. A
      lit edge as well would be the third way of saying one thing. */
   .who[data-online] { background-image: linear-gradient(90deg, var(--live-wash), transparent 22%); }
+  .who .face {
+    grid-area: face;
+    align-self: center;
+    border-radius: var(--r-sm);
+    /* Crisp squares, not a blurred five-by-five bitmap scaled up. */
+    image-rendering: pixelated;
+    shape-rendering: crispEdges;
+    border: 1px solid var(--line);
+  }
+  .who[data-online] .face { border-color: #22503a; }
   .who:hover { background-color: var(--raised); }
   .who .w-name { grid-area: name; display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; font: 600 13.5px/1.3 var(--ui); color: var(--ink); }
   .who .w-name .unknown { font-weight: 400; font-style: italic; color: var(--ink-3); }
@@ -671,6 +684,69 @@
   .pill[data-tone="op"] { color: #cdd9ff; border-color: #33407a; background: #171d33; }
   .pill[data-tone="ban"] { color: #ffc9c5; border-color: #4a2529; background: #2b1719; }
   .pill[data-tone="on"] { color: #9ff0c4; border-color: #22503a; background: #14261d; }
+
+  /* ---- a switch, for things that are on or off ------------------------------ */
+
+  /*
+    A checkbox says "tick this to agree". A switch says "this is on now", which is what an automatic
+    backup actually is - a running state rather than a choice being submitted. Same input
+    underneath, so it keeps its label, its focus ring and its keyboard behaviour.
+  */
+  input.switch {
+    appearance: none;
+    -webkit-appearance: none;
+    flex: none;
+    width: 34px; height: 20px;
+    margin: 0;
+    border-radius: 999px;
+    background: var(--raised);
+    border: 1px solid var(--edge);
+    position: relative;
+    cursor: pointer;
+    transition: background .14s, border-color .14s;
+  }
+  input.switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--ink-3);
+    transition: transform .14s, background .14s;
+  }
+  input.switch:checked { background: var(--lapis-dim); border-color: var(--lapis); }
+  input.switch:checked::after { transform: translateX(14px); background: #eaf0ff; }
+  input.switch:disabled { opacity: .45; cursor: default; }
+
+  /* ---- what a section is, said once at the top of it ------------------------ */
+
+  /*
+    Every pane opens by naming itself and what it is for. The nav says where you are in two words;
+    this says it in a sentence, which is the difference between a screen you recognise and one you
+    have to work out. The mark is the same glyph the nav uses, so the two agree.
+  */
+  .pane-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 2px 12px;
+    align-items: center;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--recess);
+  }
+  .pane-head .mark {
+    grid-row: 1 / 3;
+    display: grid;
+    place-items: center;
+    width: 34px; height: 34px;
+    border-radius: var(--r-sm);
+    background: var(--lapis-wash);
+    border: 1px solid var(--lapis-dim);
+    color: var(--lapis);
+  }
+  .pane-head .mark .ico { width: 17px; height: 17px; }
+  .pane-head h2 { margin: 0; font: 600 14.5px/1.25 var(--ui); color: var(--ink); letter-spacing: -.01em; }
+  .pane-head p { margin: 0; font: 12.5px/1.4 var(--ui); color: var(--ink-3); }
 
   /* ---- a pane with nothing in it yet ---------------------------------------- */
 
@@ -1048,14 +1124,15 @@
       <dl class="vitals-bar" id="srvVitals"></dl>
       <div id="srvNotice"></div>
 
-      <div class="srv-tabs" role="tablist" aria-label="Server sections">
+      <div class="srv-body">
+      <nav class="srv-nav" role="tablist" aria-label="Server sections">
         <button role="tab" data-pane="console" aria-selected="true"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-terminal"/></svg>Console</button>
         <button role="tab" data-pane="backups" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-archive"/></svg>Backups</button>
         <button role="tab" data-pane="players" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-user"/></svg>Players</button>
         <button role="tab" data-pane="performance" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-pulse"/></svg>Performance</button>
         <button role="tab" data-pane="scheduler" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>Scheduler</button>
         <button role="tab" data-pane="settings" aria-selected="false"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-sliders"/></svg>Settings</button>
-      </div>
+      </nav>
 
       <div class="panes">
       <div class="pane pane-console" id="paneConsole" data-active>
@@ -1106,6 +1183,7 @@
 
       <div class="pane pane-scroll" id="paneSettings">
         <div class="pane-body" id="settingsBody"></div>
+      </div>
       </div>
       </div>
     </div>
@@ -1432,7 +1510,7 @@ function show(view) {
  */
 function showPane(pane) {
   state.pane = pane;
-  for (const b of $$('.srv-tabs [data-pane]')) b.setAttribute('aria-selected', String(b.dataset.pane === pane));
+  for (const b of $$('.srv-nav [data-pane]')) b.setAttribute('aria-selected', String(b.dataset.pane === pane));
   for (const el of $$('.pane')) el.toggleAttribute('data-active', el.id === 'pane' + pane[0].toUpperCase() + pane.slice(1));
   if (pane === 'settings') renderServerSettings();
   if (pane === 'backups') renderBackups();
@@ -1450,7 +1528,7 @@ function showPane(pane) {
   }
 }
 
-for (const b of $$('.srv-tabs [data-pane]')) b.onclick = () => showPane(b.dataset.pane);
+for (const b of $$('.srv-nav [data-pane]')) b.onclick = () => showPane(b.dataset.pane);
 
 /** Back out of a sheet to wherever the person was. */
 function back() {
@@ -2051,6 +2129,34 @@ function emptyState(name, text) {
   return wrap;
 }
 
+/**
+ * The title block a pane opens with.
+ *
+ * <p>The nav says where you are in one word. This says what the screen is for in a sentence, which
+ * is the difference between recognising a screen and working it out. Built here rather than in the
+ * markup because every pane's body is cleared and rebuilt on each render.
+ */
+function paneHead(bodyEl, name, title, subtitle) {
+  // A sibling of the body, not a child of it: the body is width-limited and padded for reading,
+  // and a title indented to match a text column does not read as the title of the pane.
+  const pane = bodyEl.parentElement;
+  const existing = pane.querySelector(':scope > .pane-head');
+  if (existing) existing.remove();
+
+  const head = document.createElement('div');
+  head.className = 'pane-head';
+  const mark = document.createElement('span');
+  mark.className = 'mark';
+  mark.append(icon(name));
+  const h = document.createElement('h2');
+  h.textContent = title;
+  const p = document.createElement('p');
+  p.textContent = subtitle;
+  head.append(mark, h, p);
+  pane.insertBefore(head, bodyEl);
+  return head;
+}
+
 // ------------------------------------------------------------ performance ---
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -2191,6 +2297,8 @@ async function paintPerformance(name, opts) {
   }
   if (body.dataset.for !== name || state.current !== name) return;
   body.textContent = '';
+  paneHead(body, 'pulse', 'Performance',
+    'Processor and memory while the server runs, sampled every ten seconds.');
 
   // ---- how far back to look ------------------------------------------------
   const ranges = document.createElement('div');
@@ -2327,6 +2435,8 @@ async function renderPlayers(opts) {
   }
   if (body.dataset.for !== row.name) return;
   body.textContent = '';
+  paneHead(body, 'user', 'Players',
+    'Everyone this server knows about, and what it thinks of them.');
 
   const base = '/instances/' + encodeURIComponent(row.name) + '/players';
   const again = () => renderPlayers({ force: true });
@@ -2401,11 +2511,61 @@ async function renderPlayers(opts) {
   paint();
 }
 
+/**
+ * A face for a player, drawn from their id.
+ *
+ * <p>The obvious way to do this is to fetch a skin head from one of the avatar services. mcctl has
+ * to work with no network at all - that is a stated constraint, not a preference - so instead the
+ * UUID is treated as what it already is: thirty-two hex digits of stable, well-distributed noise.
+ *
+ * <p>Eight of them pick a hue, the rest fill a five-by-five grid mirrored down the middle. The same
+ * player gets the same face on every machine forever, nothing is fetched, and a list of ids becomes
+ * a list of people you can tell apart at a glance.
+ */
+function playerFace(uuid, size) {
+  const hex = String(uuid).replace(/-/g, '');
+  const px = size || 34;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'face');
+  svg.setAttribute('viewBox', '0 0 5 5');
+  svg.setAttribute('width', px);
+  svg.setAttribute('height', px);
+  svg.setAttribute('aria-hidden', 'true');
+
+  const hue = parseInt(hex.slice(0, 8), 16) % 360;
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bg.setAttribute('width', '5');
+  bg.setAttribute('height', '5');
+  bg.setAttribute('fill', `hsl(${hue} 34% 20%)`);
+  svg.append(bg);
+
+  // Mirrored, because a symmetrical block of colour reads as a face and an arbitrary one reads as
+  // static. Three columns decide the pattern; the other two are their reflection.
+  const ink = `hsl(${hue} 62% 62%)`;
+  for (let col = 0; col < 3; col++) {
+    for (let row = 0; row < 5; row++) {
+      const bit = parseInt(hex.charAt(8 + col * 5 + row), 16);
+      if (Number.isNaN(bit) || bit < 8) continue;
+      for (const x of col === 2 ? [2] : [col, 4 - col]) {
+        const cell = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        cell.setAttribute('x', String(x));
+        cell.setAttribute('y', String(row));
+        cell.setAttribute('width', '1');
+        cell.setAttribute('height', '1');
+        cell.setAttribute('fill', ink);
+        svg.append(cell);
+      }
+    }
+  }
+  return svg;
+}
+
 /** One person, and the three things you can do about them. */
 function playerRow(p, data, base, again) {
   const el = document.createElement('div');
   el.className = 'who';
   if (p.online) el.setAttribute('data-online', '');
+  el.append(playerFace(p.uuid));
 
   const name = document.createElement('div');
   name.className = 'w-name';
@@ -2737,6 +2897,8 @@ async function renderScheduler(opts) {
   }
   if (body.dataset.for !== row.name) return;
   body.textContent = '';
+  paneHead(body, 'clock', 'Scheduled work',
+    'Backups, restarts and console commands on a clock, run by Windows whether or not this is open.');
 
   const base = '/instances/' + encodeURIComponent(row.name) + '/schedules';
   const again = () => renderScheduler({ force: true });
@@ -3108,6 +3270,8 @@ async function renderBackups(opts) {
   // an answer to the new one.
   if (body.dataset.for !== row.name) return;
   body.textContent = '';
+  paneHead(body, 'archive', 'Backups',
+    'Take a snapshot now, put one back, or leave it to a schedule.');
 
   const base = '/instances/' + encodeURIComponent(row.name) + '/backups';
 
@@ -3162,7 +3326,7 @@ async function renderBackups(opts) {
   autoRow.className = 'row';
   const onOff = document.createElement('input');
   onOff.type = 'checkbox';
-  onOff.style.width = 'auto';
+  onOff.className = 'switch';
   onOff.checked = Boolean(data.auto);
   const onOffLabel = document.createElement('label');
   onOffLabel.className = 'row';
@@ -3363,6 +3527,8 @@ async function renderServerSettings() {
   }
   if (body.dataset.for !== row.name) return; // switched servers while the fetch was in flight
   body.textContent = '';
+  paneHead(body, 'sliders', 'Server settings',
+    'The part of server.properties people actually change. Takes effect on the next start.');
 
   const note = document.createElement('div');
   note.className = 'hint';
