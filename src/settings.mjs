@@ -1,0 +1,107 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+/** Where the code lives. Distinct from where data lives — see below. */
+export const CODE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+/**
+ * Where mcctl keeps its own settings.
+ *
+ * <p>Deliberately NOT next to the code. Once this ships as an installed application the program
+ * directory is read-only for the person running it, and the one thing that must be findable before
+ * anything else is the file that says where everything else lives.
+ */
+export function settingsFile() {
+  const base = process.platform === 'win32'
+    ? process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')
+    : process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config')
+  return path.join(base, 'mcctl', 'settings.json')
+}
+
+export function load() {
+  try {
+    return JSON.parse(fs.readFileSync(settingsFile(), 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+export function save(patch) {
+  const file = settingsFile()
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const merged = { ...load(), ...patch }
+  fs.writeFileSync(file, JSON.stringify(merged, null, 2) + '\n')
+  return merged
+}
+
+/** The default data location for a fresh install: per-user, writable, and not inside the program. */
+export function defaultDataRoot() {
+  const base = process.platform === 'win32'
+    ? process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local')
+    : process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share')
+  return path.join(base, 'mcctl')
+}
+
+/**
+ * Resolve every location mcctl uses.
+ *
+ * <p>Three sources, in order:
+ *
+ * <ol>
+ *   <li><b>Settings</b>, if the person has chosen locations.</li>
+ *   <li><b>The code directory</b>, when it already holds an {@code instances.json}. This is what
+ *       keeps an existing checkout working after this change: its registry, worlds and backups stay
+ *       exactly where they are rather than the tool waking up one day pointed at an empty folder and
+ *       reporting no servers.</li>
+ *   <li><b>A per-user data directory</b>, for a fresh install.</li>
+ * </ol>
+ *
+ * <p>Servers can live on a different drive from everything else. That is the one split worth
+ * supporting directly: worlds and backups are the large, growing things, and the reason to move
+ * them is usually that they no longer fit where the program was installed.
+ */
+export function resolveRoots(overrides = {}) {
+  const s = { ...load(), ...overrides }
+
+  const legacy = fs.existsSync(path.join(CODE_ROOT, 'instances.json'))
+  const dataRoot = s.dataRoot ? path.resolve(s.dataRoot) : legacy ? CODE_ROOT : defaultDataRoot()
+
+  // separateInstances is the toggle: off (default) means servers live with everything else.
+  const instancesDir = s.separateInstances && s.instancesDir
+    ? path.resolve(s.instancesDir)
+    : path.join(dataRoot, 'instances')
+
+  return {
+    dataRoot,
+    instancesDir,
+    separateInstances: Boolean(s.separateInstances && s.instancesDir),
+    registryFile: path.join(dataRoot, 'instances.json'),
+    templatesDir: path.join(dataRoot, 'templates'),
+    jarsDir: path.join(dataRoot, 'jars'),
+    backupsDir: path.join(dataRoot, 'backups'),
+    runDir: path.join(dataRoot, 'run'),
+    usingLegacyLayout: legacy && !s.dataRoot,
+    settingsFile: settingsFile(),
+  }
+}
+
+/**
+ * Whether a directory can be written to, checked by actually writing.
+ *
+ * <p>Permission bits and free-space numbers both lie — a network share, a read-only mount, or a
+ * drive that has been unplugged all look fine until the first write. The picker needs a real answer
+ * before someone points their servers at a location that cannot hold them.
+ */
+export function checkWritable(dir) {
+  const probe = path.join(dir, '.mcctl-write-test')
+  try {
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(probe, 'ok')
+    fs.rmSync(probe, { force: true })
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+}

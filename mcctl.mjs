@@ -20,6 +20,8 @@ import * as create from './src/create.mjs'
 import * as paper from './src/paper.mjs'
 import * as ui from './src/ui.mjs'
 import * as manage from './src/manage.mjs'
+import * as settings from './src/settings.mjs'
+import * as paths from './src/paths.mjs'
 import { readProps, writeProps } from './src/props.mjs'
 import { UserError, fail, table, humanBytes, humanDuration, dirSize, isPortFree } from './src/util.mjs'
 
@@ -541,6 +543,57 @@ function cmdTemplates(positional, flags) {
   out(table(rows))
 }
 
+function cmdConfig(positional, flags) {
+  const sub = positional[0]
+
+  if (!sub || sub === 'show') {
+    const l = paths.LAYOUT
+    out(table([
+      ['settings file:', l.settingsFile],
+      ['data root:', l.dataRoot],
+      ['instances:', l.instancesDir + (l.separateInstances ? '   (separate location)' : '')],
+      ['jars:', l.jarsDir],
+      ['backups:', l.backupsDir],
+      ['templates:', l.templatesDir],
+      ['run state:', l.runDir],
+    ]))
+    if (l.usingLegacyLayout) {
+      out('')
+      out('Using the folder mcctl lives in, because it already holds instances.json.')
+      out('Move it with: mcctl config set-root <path>')
+    }
+    return
+  }
+
+  if (sub === 'set-root' || sub === 'set-instances') {
+    const dir = positional[1]
+    if (!dir) fail(`usage: mcctl config ${sub} <path>`)
+    const abs = path.resolve(dir)
+    const check = settings.checkWritable(abs)
+    // Written to, not merely inspected: permission bits and free-space numbers both lie about a
+    // network share, a read-only mount, or a drive that has been unplugged.
+    if (!check.ok) fail(`cannot write to ${abs}
+  ${check.error}`)
+
+    settings.save(sub === 'set-root'
+      ? { dataRoot: abs }
+      : { instancesDir: abs, separateInstances: true })
+    out(`Saved. ${sub === 'set-root' ? 'Data root' : 'Instances directory'}: ${abs}`)
+    out('')
+    out('Takes effect on the next command. Existing servers do NOT move — the registry stores')
+    out('their absolute paths, so they keep running where they are; only new ones land here.')
+    return
+  }
+
+  if (sub === 'same-drive') {
+    settings.save({ separateInstances: false })
+    out('Servers will be created under the data root again.')
+    return
+  }
+
+  fail('usage: mcctl config [show|set-root <path>|set-instances <path>|same-drive]')
+}
+
 function cmdRename(positional) {
   const from = positional[0]
   const to = positional[1]
@@ -767,6 +820,9 @@ OTHER
   mcctl ui                           Open the local control panel in a browser
   mcctl paper versions               Paper versions available to download
   mcctl paper fetch <version>        Download a Paper build into the jar store
+  mcctl config                       Show where servers, jars and backups live
+  mcctl config set-root <path>       Move the data root (new servers only)
+  mcctl config set-instances <path>  Put servers on a different drive
   mcctl rename <old> <new>           Rename an instance (and its folder)
   mcctl rebuild <name> --yes         Reset worlds; keeps plugins unless --wipe-plugins
   mcctl reveal <name>                Open the instance folder in Explorer
@@ -811,6 +867,7 @@ const COMMANDS = {
   template: cmdTemplates,
   jars: cmdJars,
   paper: cmdPaper,
+  config: cmdConfig,
   rename: cmdRename,
   rebuild: cmdRebuild,
   reveal: cmdReveal,
