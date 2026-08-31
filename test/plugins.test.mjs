@@ -7,7 +7,7 @@ import zlib from 'node:zlib'
 
 import {
   readZipEntry, parsePluginYml, mcVersionOf, listPlugins, setPluginEnabled, removePlugin,
-  pickVersion, primaryFile, LOADERS, readManaged, recordManaged,
+  pickVersion, primaryFile, LOADERS, readManaged, recordManaged, pickHangarVersion,
 } from '../src/plugins.mjs'
 import { UserError } from '../src/util.mjs'
 
@@ -225,6 +225,38 @@ test('a version for the wrong loader or game version does not fit', () => {
   assert.equal(pickVersion([v({ loaders: ['fabric'] })], {}), null)
   assert.equal(pickVersion([v({ game_versions: ['25.1'] })], { gameVersion: '26.2' }), null)
   assert.ok(LOADERS.includes('spigot'), 'paper servers load spigot builds')
+})
+
+// ---- choosing a Hangar version ----------------------------------------------
+
+const hv = (over) => ({
+  name: '2.0',
+  channel: { name: 'Release' },
+  platformDependencies: { PAPER: ['26.2'] },
+  downloads: { PAPER: { downloadUrl: 'https://x/file.jar', fileInfo: { name: 'x.jar', sha256Hash: 'h' }, externalUrl: null } },
+  ...over,
+})
+
+test('a Hangar Release with a real file and an exact version match wins', () => {
+  const versions = [
+    hv({ name: '3.0-beta', channel: { name: 'Beta' } }),
+    hv({ name: '2.0' }),
+  ]
+  const picked = pickHangarVersion(versions, { gameVersion: '26.2' })
+  assert.equal(picked.version.name, '2.0')
+  assert.equal(picked.exactMatch, true)
+})
+
+test('an external-only project yields null - it cannot be installed, only linked to', () => {
+  const versions = [hv({ downloads: { PAPER: { downloadUrl: null, fileInfo: null, externalUrl: 'https://elsewhere' } } })]
+  assert.equal(pickHangarVersion(versions, {}), null)
+})
+
+test('with no exact match the newest downloadable is offered, flagged as a mismatch', () => {
+  const versions = [hv({ platformDependencies: { PAPER: ['26.1.2'] } })]
+  const picked = pickHangarVersion(versions, { gameVersion: '26.2' })
+  assert.equal(picked.version.name, '2.0')
+  assert.equal(picked.exactMatch, false)
 })
 
 test('the primary file wins; the first stands in when nothing is marked', () => {

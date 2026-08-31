@@ -392,8 +392,23 @@ async function handlePlugins(req, res, name, seg, url) {
   }
   if (req.method === 'GET' && verb === 'search') {
     const q = String(url.searchParams.get('q') || '').trim()
-    if (!q) return json(res, 200, { results: [] })
-    return json(res, 200, { results: await plugins.searchPlugins(q, { gameVersion }) })
+    if (!q) return json(res, 200, { results: [], errors: [] })
+    // Both sources at once. One being down must not blank the other's answers, so each
+    // failure becomes a note beside the results rather than an error instead of them.
+    const [modrinthHits, hangarHits] = await Promise.allSettled([
+      plugins.searchPlugins(q, { gameVersion }),
+      plugins.searchHangar(q),
+    ])
+    const errors = []
+    if (modrinthHits.status === 'rejected') errors.push(modrinthHits.reason?.message ?? 'Modrinth search failed')
+    if (hangarHits.status === 'rejected') errors.push(hangarHits.reason?.message ?? 'Hangar search failed')
+    return json(res, 200, {
+      results: [
+        ...(modrinthHits.value ?? []),
+        ...(hangarHits.value ?? []),
+      ],
+      errors,
+    })
   }
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
   const body = await readBody(req)
@@ -406,7 +421,10 @@ async function handlePlugins(req, res, name, seg, url) {
   }
   if (verb === 'install') {
     if (!body.projectId) return json(res, 400, { error: 'projectId is required' })
-    return json(res, 200, await plugins.installPlugin(inst, String(body.projectId), { gameVersion }))
+    const result = body.source === 'hangar'
+      ? await plugins.installFromHangar(inst, String(body.projectId), { gameVersion })
+      : await plugins.installPlugin(inst, String(body.projectId), { gameVersion })
+    return json(res, 200, result)
   }
   if (verb === 'updates') {
     return json(res, 200, { updates: await plugins.checkUpdates(inst, { gameVersion }) })

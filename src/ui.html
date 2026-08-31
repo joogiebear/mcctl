@@ -2936,7 +2936,7 @@ async function renderPlugins(opts) {
   if (body.dataset.for !== row.name) return;
   body.textContent = '';
   paneHead(body, 'plug', 'Plugins',
-    'Install from Modrinth and keep it updated. Plugins you added by hand are left alone.');
+    'Install from Modrinth or Hangar and keep it updated. Plugins you added by hand are left alone.');
 
   const base = '/instances/' + encodeURIComponent(row.name) + '/plugins';
   const again = () => renderPlugins({ force: true });
@@ -2953,7 +2953,7 @@ async function renderPlugins(opts) {
   const add = document.createElement('div');
   add.className = 'section';
   const addTitle = document.createElement('h3');
-  addTitle.textContent = 'Add from Modrinth';
+  addTitle.textContent = 'Add from Modrinth and Hangar';
   const addRow = document.createElement('div');
   addRow.className = 'row';
   const q = document.createElement('input');
@@ -2973,7 +2973,7 @@ async function renderPlugins(opts) {
     results.textContent = '';
     const looking = document.createElement('div');
     looking.className = 'hint';
-    looking.textContent = 'Asking Modrinth…';
+    looking.textContent = 'Asking Modrinth and Hangar…';
     results.append(looking);
     let found;
     try {
@@ -2989,10 +2989,16 @@ async function renderPlugins(opts) {
     }
     go.disabled = false;
     results.textContent = '';
+    for (const err of found.errors || []) {
+      const bad = document.createElement('div');
+      bad.className = 'bad';
+      bad.textContent = err;
+      results.append(bad);
+    }
     if (!found.results.length) {
       const none = document.createElement('div');
       none.className = 'hint';
-      none.textContent = 'Nothing on Modrinth matches that'
+      none.textContent = 'Nothing on Modrinth or Hangar matches that'
         + (data.gameVersion ? ' for ' + data.gameVersion + '.' : '.');
       results.append(none);
       return;
@@ -3008,7 +3014,12 @@ async function renderPlugins(opts) {
       mark.append(icon('plug'));
       const nm = document.createElement('div');
       nm.className = 'w-name';
-      nm.textContent = hit.title;
+      const title = document.createElement('span');
+      title.textContent = hit.title;
+      const src = document.createElement('span');
+      src.className = 'pill';
+      src.textContent = hit.source === 'hangar' ? 'Hangar' : 'Modrinth';
+      nm.append(title, src);
       const meta = document.createElement('div');
       meta.className = 'w-meta';
       meta.textContent = (hit.downloads ? hit.downloads.toLocaleString() + ' downloads  ·  ' : '')
@@ -3028,8 +3039,11 @@ async function renderPlugins(opts) {
         install.disabled = true;
         install.textContent = 'Downloading…';
         try {
-          const out = await post(base + '/install', { projectId: hit.id });
+          const out = await post(base + '/install', { projectId: hit.id, source: hit.source });
           toast('Installed ' + out.installed + ' (' + out.version + ').', 'good');
+          // A claims mismatch is information, not a blocker - said in its own toast so it
+          // is not lost behind the success line.
+          if (out.versionNote) toast(out.versionNote);
           await again();
         } catch (e) {
           toast(e.message, 'bad');
@@ -3062,14 +3076,14 @@ async function renderPlugins(opts) {
 
   check.onclick = async () => {
     check.disabled = true;
-    checkNote.textContent = 'Asking Modrinth about every enabled jar…';
+    checkNote.textContent = 'Asking Modrinth and Hangar about everything mcctl installed…';
     try {
       const out = await post(base + '/updates');
       pluginView.updates = {};
       for (const u of out.updates) pluginView.updates[u.file] = u;
       checkNote.textContent = out.updates.length
         ? out.updates.length + ' update' + (out.updates.length === 1 ? '' : 's') + ' available.'
-        : 'Everything Modrinth recognises is already the newest build.';
+        : 'Everything mcctl installed is already the newest build.';
       paint();
     } catch (e) {
       checkNote.textContent = '';
@@ -3126,6 +3140,12 @@ async function renderPlugins(opts) {
       pill.textContent = p.version;
       nm.append(pill);
     }
+    if (p.source) {
+      const pill = document.createElement('span');
+      pill.className = 'pill';
+      pill.textContent = p.source === 'hangar' ? 'Hangar' : 'Modrinth';
+      nm.append(pill);
+    }
     if (!p.enabled) {
       const pill = document.createElement('span');
       pill.className = 'pill';
@@ -3171,6 +3191,7 @@ async function renderPlugins(opts) {
           toast(out.alreadyLatest
             ? p.name + ' is already the newest build.'
             : 'Updated ' + p.name + ' to ' + out.version + '. A plugins snapshot was taken first.', 'good');
+          if (out.versionNote) toast(out.versionNote);
           await again();
         } catch (e) {
           toast(e.message, 'bad');

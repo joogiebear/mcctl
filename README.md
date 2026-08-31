@@ -330,9 +330,11 @@ Log level shows as a coloured rail in the gutter rather than by recolouring the 
 stands out without becoming harder to read. A stack trace inherits the level of the line above it,
 which is what makes "filter to errors" show the whole failure instead of its first line.
 
-**Plugins** — search and install from Modrinth, filtered to builds that support this
-server's version, with a hash-based update check and one-click updates (a plugins-scope
-snapshot is taken first). The page manages **only what mcctl installed** — it records
+**Plugins** — search and install from **Modrinth and Hangar** together, each result
+naming its source, filtered or checked against this server's version, with checksum-
+verified downloads, an update check, and one-click updates (a plugins-scope snapshot is
+taken first). Hangar projects that host their downloads elsewhere are linked to rather
+than pretended at. The page manages **only what mcctl installed** — it records
 provenance in the plugins folder — so a custom or premium plugin dropped in by hand is
 never listed there, never offered a meaningless update, and never has its hash sent to
 anyone. `mcctl plugins <name>` lists the full inventory, manual jars included, with a

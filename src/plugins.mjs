@@ -253,6 +253,7 @@ export function listPlugins(inst) {
       managed: Boolean(record),
       source: record?.source ?? null,
       project: record?.project ?? null,
+      installedVersion: record?.version ?? null,
       name: meta.name || file.replace(/\.jar(\.disabled)?$/, ''),
       version: meta.version || null,
       description: meta.description || null,
@@ -341,6 +342,7 @@ export async function searchPlugins(query, { gameVersion = null, limit = 20 } = 
   })
   const data = await modrinth(`/search?${params}`)
   return data.hits.map((h) => ({
+    source: 'modrinth',
     id: h.project_id,
     slug: h.slug,
     title: h.title,
@@ -348,6 +350,123 @@ export async function searchPlugins(query, { gameVersion = null, limit = 20 } = 
     downloads: h.downloads,
     icon: h.icon_url || null,
   }))
+}
+
+// ---- Hangar -----------------------------------------------------------------
+
+/**
+ * Hangar is PaperMC's own plugin platform, and the second source - plenty of Paper-ecosystem
+ * plugins publish there and nowhere else. Two things make it different from Modrinth:
+ *
+ * <ul>
+ *   <li>Some projects host their downloads elsewhere (an external release page instead of a
+ *       file). Those cannot be installed by mcctl and are said to be so, with the link -
+ *       installing by hand is exactly what the manual-plugins boundary is for.</li>
+ *   <li>Version support is a sparse, exact list ("26.1.2" but not "26.2"), maintained by
+ *       hand. An exact match is preferred; failing that, the newest downloadable build is
+ *       offered WITH the mismatch stated, because "claims up to 26.1.2" is information the
+ *       person should weigh - not a reason to silently offer nothing.</li>
+ * </ul>
+ */
+const HANGAR = 'https://hangar.papermc.io/api/v1'
+
+async function hangar(pathname) {
+  let res
+  try {
+    res = await fetch(`${HANGAR}${pathname}`, {
+      headers: { 'user-agent': 'joogiebear/mcctl (github.com/joogiebear/mcctl)' },
+      signal: AbortSignal.timeout(15000),
+    })
+  } catch (err) {
+    throw new UserError(`could not reach Hangar: ${err.cause?.message || err.message}`)
+  }
+  if (!res.ok) throw new UserError(`Hangar answered ${res.status} for ${pathname}`)
+  return res.json()
+}
+
+export async function searchHangar(query, { limit = 10 } = {}) {
+  const params = new URLSearchParams({ q: String(query ?? ''), limit: String(limit), platform: 'PAPER' })
+  const data = await hangar(`/projects?${params}`)
+  return (data.result ?? []).map((p) => ({
+    source: 'hangar',
+    id: p.namespace?.slug ?? p.name,
+    slug: p.namespace?.slug ?? p.name,
+    title: p.name,
+    description: p.description || '',
+    downloads: p.stats?.totalDownloads ?? 0,
+    author: p.namespace?.owner ?? null,
+  }))
+}
+
+/**
+ * Choose a Hangar version: newest Release with a real Paper file and an exact game-version
+ * match; then any channel with both; then the newest downloadable at all, flagged as a
+ * version mismatch for the caller to say out loud. Null only when nothing is downloadable.
+ */
+export function pickHangarVersion(versions, { gameVersion = null } = {}) {
+  const downloadable = (v) => Boolean(v.downloads?.PAPER?.downloadUrl && v.downloads?.PAPER?.fileInfo)
+  const exact = (v) => !gameVersion || (v.platformDependencies?.PAPER ?? []).includes(gameVersion)
+  const pick =
+    versions.find((v) => v.channel?.name === 'Release' && downloadable(v) && exact(v)) ??
+    versions.find((v) => downloadable(v) && exact(v)) ??
+    versions.find(downloadable) ??
+    null
+  if (!pick) return null
+  return { version: pick, exactMatch: exact(pick) }
+}
+
+async function hangarVersions(slug) {
+  const data = await hangar(`/projects/${encodeURIComponent(slug)}/versions?limit=25&platform=PAPER`)
+  return data.result ?? []
+}
+
+export async function installFromHangar(inst, slug, { gameVersion = null } = {}) {
+  const versions = await hangarVersions(slug)
+  const picked = pickHangarVersion(versions, { gameVersion })
+  if (!picked) {
+    const external = versions.map((v) => v.downloads?.PAPER?.externalUrl).find(Boolean)
+    fail(external
+      ? `that project hosts its downloads elsewhere: ${external}\n  Download it by hand and drop it into the plugins folder - mcctl will leave it alone.`
+      : 'that project has no downloadable Paper build on Hangar')
+  }
+  const { version, exactMatch } = picked
+  const dl = version.downloads.PAPER
+
+  let res
+  try {
+    res = await fetch(dl.downloadUrl, { signal: AbortSignal.timeout(120000) })
+  } catch (err) {
+    throw new UserError(`download failed: ${err.cause?.message || err.message}`)
+  }
+  if (!res.ok) throw new UserError(`download failed: ${res.status}`)
+  const bytes = Buffer.from(await res.arrayBuffer())
+
+  const wantSha = dl.fileInfo.sha256Hash
+  if (wantSha) {
+    const got = crypto.createHash('sha256').update(bytes).digest('hex')
+    if (got !== wantSha) fail('the download did not match the checksum Hangar published; nothing was installed')
+  }
+
+  const dir = pluginsDir(inst)
+  fs.mkdirSync(dir, { recursive: true })
+  const name = path.basename(String(dl.fileInfo.name || `${slug}.jar`))
+  if (!/^[^\\/]+\.jar$/.test(name)) fail(`Hangar offered a file named "${name}", which is not a plugin jar`)
+  fs.writeFileSync(path.join(dir, name), bytes)
+  recordManaged(inst, name, {
+    source: 'hangar',
+    project: slug,
+    version: version.name,
+    installedAt: new Date().toISOString(),
+  })
+  return {
+    installed: name,
+    version: version.name,
+    size: bytes.length,
+    // Carried up so the person is told, not protected from, a claims mismatch.
+    versionNote: exactMatch || !gameVersion
+      ? null
+      : `Hangar lists support for ${(version.platformDependencies?.PAPER ?? []).slice(-1)[0] ?? 'other versions'}, not ${gameVersion} - it will probably run, but that is its author's claim, not mcctl's.`,
+  }
 }
 
 /**
@@ -434,33 +553,58 @@ export async function checkUpdates(inst, { gameVersion = null } = {}) {
   const rows = listPlugins(inst).filter((p) => p.enabled && p.managed)
   if (!rows.length) return []
   const dir = pluginsDir(inst)
-  const byHash = new Map()
-  for (const p of rows) {
-    const sha = sha1File(path.join(dir, p.file))
-    byHash.set(sha, p)
-  }
-  const body = {
-    hashes: [...byHash.keys()],
-    algorithm: 'sha1',
-    loaders: LOADERS,
-    ...(gameVersion ? { game_versions: [gameVersion] } : {}),
-  }
-  const latest = await modrinth('/version_files/update', { method: 'POST', body: JSON.stringify(body) })
-
   const updates = []
-  for (const [sha, p] of byHash) {
-    const v = latest[sha]
-    if (!v) continue
-    const file = primaryFile(v)
-    // Same hash means same file: already the newest.
-    if (!file || file.hashes?.sha1 === sha) continue
-    updates.push({
-      file: p.file,
-      name: p.name,
-      installedVersion: p.version,
-      latestVersion: v.version_number,
-      projectId: v.project_id,
-    })
+
+  // Modrinth-installed jars go by hash, in one batch.
+  const modrinthRows = rows.filter((p) => p.source !== 'hangar')
+  if (modrinthRows.length) {
+    const byHash = new Map()
+    for (const p of modrinthRows) {
+      const sha = sha1File(path.join(dir, p.file))
+      byHash.set(sha, p)
+    }
+    const body = {
+      hashes: [...byHash.keys()],
+      algorithm: 'sha1',
+      loaders: LOADERS,
+      ...(gameVersion ? { game_versions: [gameVersion] } : {}),
+    }
+    const latest = await modrinth('/version_files/update', { method: 'POST', body: JSON.stringify(body) })
+    for (const [sha, p] of byHash) {
+      const v = latest[sha]
+      if (!v) continue
+      const file = primaryFile(v)
+      // Same hash means same file: already the newest.
+      if (!file || file.hashes?.sha1 === sha) continue
+      updates.push({
+        file: p.file,
+        name: p.name,
+        installedVersion: p.version,
+        latestVersion: v.version_number,
+        projectId: v.project_id,
+        source: 'modrinth',
+      })
+    }
+  }
+
+  // Hangar has no hash lookup, but the provenance record knows exactly which version was
+  // installed, so the comparison is the recorded name against the newest pick. One project
+  // failing to answer must not sink the whole check.
+  for (const p of rows.filter((r) => r.source === 'hangar')) {
+    try {
+      const picked = pickHangarVersion(await hangarVersions(p.project), { gameVersion })
+      if (!picked || picked.version.name === p.installedVersion) continue
+      updates.push({
+        file: p.file,
+        name: p.name,
+        installedVersion: p.installedVersion,
+        latestVersion: picked.version.name,
+        projectId: p.project,
+        source: 'hangar',
+      })
+    } catch {
+      /* an unreachable project simply reports nothing this round */
+    }
   }
   return updates
 }
@@ -477,9 +621,23 @@ function sha1File(file) {
 export async function updatePlugin(inst, file, { gameVersion = null } = {}) {
   const dir = pluginsDir(inst)
   const current = safePluginPath(dir, file)
-  if (!Object.hasOwn(readManaged(inst).managed, file)) {
+  const entry = readManaged(inst).managed[file]
+  if (!entry) {
     fail('mcctl did not install this jar, so it will not touch it - custom and premium plugins are yours to update')
   }
+
+  if (entry.source === 'hangar') {
+    const picked = pickHangarVersion(await hangarVersions(entry.project), { gameVersion })
+    if (!picked) fail('that project no longer offers a downloadable Paper build on Hangar')
+    if (picked.version.name === entry.version) return { alreadyLatest: true, version: entry.version }
+    const res = await installFromHangar(inst, entry.project, { gameVersion })
+    if (res.installed !== file) {
+      fs.rmSync(current, { force: true })
+      forgetManaged(inst, file)
+    }
+    return { updated: res.installed, from: file, version: res.version, versionNote: res.versionNote }
+  }
+
   const sha = sha1File(current)
   const body = {
     hashes: [sha],
