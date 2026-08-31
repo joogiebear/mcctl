@@ -134,6 +134,13 @@ export function normaliseAction(input) {
     const keep = Number(input.keep)
     return { type, keep: Number.isInteger(keep) && keep > 0 ? Math.min(keep, 365) : null }
   }
+  if (type === 'restart') {
+    // Minutes of warning the players get first, said over the console. Zero is a legitimate
+    // choice - a restart at 5am on an empty server has nobody to warn - and the cap keeps a
+    // typo from becoming a task that spends an hour counting down.
+    const warn = Number(input.warnMinutes)
+    return { type, warnMinutes: Number.isInteger(warn) && warn > 0 ? Math.min(warn, 60) : 0 }
+  }
   return { type }
 }
 

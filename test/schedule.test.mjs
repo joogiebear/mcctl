@@ -70,7 +70,17 @@ test('backup keep is a positive whole number capped at 365, else null', () => {
 })
 
 test('fields the action does not use are dropped rather than stored', () => {
-  assert.deepEqual(normaliseAction({ type: 'restart', line: 'say hi', keep: 7 }), { type: 'restart' })
+  assert.deepEqual(normaliseAction({ type: 'restart', line: 'say hi', keep: 7 }),
+    { type: 'restart', warnMinutes: 0 })
+  assert.deepEqual(normaliseAction({ type: 'stop', warnMinutes: 5 }), { type: 'stop' })
+})
+
+test('a restart keeps its warning, whole and capped at an hour', () => {
+  assert.equal(normaliseAction({ type: 'restart', warnMinutes: '5' }).warnMinutes, 5)
+  assert.equal(normaliseAction({ type: 'restart', warnMinutes: 500 }).warnMinutes, 60)
+  assert.equal(normaliseAction({ type: 'restart', warnMinutes: -3 }).warnMinutes, 0)
+  assert.equal(normaliseAction({ type: 'restart', warnMinutes: 2.5 }).warnMinutes, 0)
+  assert.equal(normaliseAction({ type: 'restart' }).warnMinutes, 0)
 })
 
 // ---- describeResult ---------------------------------------------------------

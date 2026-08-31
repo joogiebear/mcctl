@@ -26,7 +26,7 @@ import * as java from './src/java.mjs'
 import * as schedule from './src/schedule.mjs'
 import * as paths from './src/paths.mjs'
 import { readProps, writeProps } from './src/props.mjs'
-import { UserError, fail, table, humanBytes, humanDuration, dirSize, isPortFree } from './src/util.mjs'
+import { UserError, fail, table, humanBytes, humanDuration, dirSize, isPortFree, sleep } from './src/util.mjs'
 import { parseArgs } from './src/args.mjs'
 
 const out = (msg = '') => process.stdout.write(`${msg}\n`)
@@ -960,8 +960,26 @@ async function runTask(id) {
       await sup.sendConsole(instance, action.line)
       record('ok', action.line)
     } else if (action.type === 'restart') {
+      if (running && action.warnMinutes > 0) {
+        // Counted down over the console: the full figure up front, again at one minute, again at
+        // ten seconds. Announcements are best-effort - a server that dies mid-countdown has made
+        // the warning moot, and the stop below already copes with a stopped server.
+        const say = (msg) => sup.sendConsole(instance, `say ${msg}`).catch(() => {})
+        let remaining = action.warnMinutes * 60
+        await say(`Server restarting in ${action.warnMinutes} minute${action.warnMinutes === 1 ? '' : 's'}`)
+        if (remaining > 60) {
+          await sleep((remaining - 60) * 1000)
+          remaining = 60
+          await say('Server restarting in 1 minute')
+        }
+        await sleep((remaining - 10) * 1000)
+        await say('Server restarting in 10 seconds')
+        await sleep(10000)
+      }
       if (running) await sup.stop(instance)
-      return await startAndReport('restarted')
+      return await startAndReport(action.warnMinutes > 0 && running
+        ? `restarted after a ${action.warnMinutes}-minute warning`
+        : 'restarted')
     } else if (action.type === 'stop') {
       if (!running) return record('skipped', 'it was already stopped')
       await sup.stop(instance)

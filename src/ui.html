@@ -2925,6 +2925,9 @@ function actionSummary(task, actions) {
   if (task.action.type === 'backup' && task.action.keep) {
     return label + ', keeping the newest ' + task.action.keep;
   }
+  if (task.action.type === 'restart' && task.action.warnMinutes > 0) {
+    return label + ' after a ' + task.action.warnMinutes + '-minute warning';
+  }
   return label;
 }
 
@@ -2978,6 +2981,14 @@ function taskForm({ actions, kinds, days, task, onCancel, onSubmit }) {
   keep.style.maxWidth = '90px';
   const keepField = mk('Snapshots to keep', keep);
 
+  const warn = document.createElement('input');
+  warn.type = 'number';
+  warn.min = '0';
+  warn.max = '60';
+  warn.value = String(task?.action?.warnMinutes ?? 5);
+  warn.style.maxWidth = '90px';
+  const warnField = mk('Minutes of warning first', warn);
+
   const kind = select(kinds.map((k) => ({ value: k, label: KIND_LABELS[k] || k })), task?.schedule?.kind ?? 'daily');
   const every = document.createElement('input');
   every.type = 'number';
@@ -3015,13 +3026,14 @@ function taskForm({ actions, kinds, days, task, onCancel, onSubmit }) {
   cancel.textContent = 'Cancel';
   row.append(save, cancel);
 
-  form.append(actField, lineField, keepField, whenRow, titleField, note, row);
+  form.append(actField, lineField, keepField, warnField, whenRow, titleField, note, row);
 
   const sync = () => {
     const a = act.value;
     const k = kind.value;
     lineField.hidden = a !== 'command';
     keepField.hidden = a !== 'backup';
+    warnField.hidden = a !== 'restart';
     everyField.hidden = k !== 'minutes' && k !== 'hourly';
     dayField.hidden = k !== 'weekly';
     atField.hidden = k !== 'daily' && k !== 'weekly';
@@ -3053,6 +3065,8 @@ function taskForm({ actions, kinds, days, task, onCancel, onSubmit }) {
     // Cleared or zeroed, this used to store as "no limit" and quietly disable pruning on a task
     // that runs unattended - which is how a backups folder fills a disk.
     if (act.value === 'backup') action.keep = Math.min(Math.max(Math.round(Number(keep.value)) || 1, 1), 365);
+    // Zero is a real choice - an empty 5am server has nobody to warn - so || is not used here.
+    if (act.value === 'restart') action.warnMinutes = Math.min(Math.max(Math.round(Number(warn.value) || 0), 0), 60);
     const sched = { kind: kind.value };
     // sync() clamps when a dropdown changes; this catches a number typed straight into the box
     // afterwards, which nothing else was checking before it was sent and bounced.
