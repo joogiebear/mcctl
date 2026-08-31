@@ -101,7 +101,7 @@ RCON refuses to carry.
 | `adopt <name> <dir>` | Register an existing server directory in place |
 | `new <name>` | Create a fresh instance (`--jar`, `--template`, `--accept-eula`) |
 | `clone <src> <new>` | Copy plugins and config into a new instance on a free port |
-| `set <name> key=value` | `memory`, `java`, `jar`, `port`, `rcon.port`, `rcon.password` |
+| `set <name> key=value` | `memory`, `java`, `jar`, `port`, `rcon.port`, `rcon.password`, `auto-restart=on\|off`, `webhook=<url>\|off` |
 | `props <name> [key=value]` | Read or edit `server.properties` |
 | `rm <name> [--purge --yes]` | Unregister, optionally deleting the files |
 
@@ -195,6 +195,19 @@ mcctl (short-lived CLI)
 
 The daemon exists because the CLI is short-lived and the JVM is not. It holds the
 pipe to the server's stdin for as long as the server runs.
+
+It also owns crash recovery, because it is the only thing alive at the moment a
+server dies. With `auto-restart=on` for an instance, a crash is relaunched in
+place after ten seconds; three crashes in ten minutes and it stays down saying
+why, so a broken plugin cannot grind the machine all night. A stop that was
+asked for always sticks — including `stop` typed straight into the console,
+recognised by its clean exit. An optional per-instance Discord `webhook` gets a
+message for the events nobody is watching the panel for: crashed, recovered,
+gave up, or a scheduled task that failed. Routine lifecycle stays quiet.
+
+Scheduled restarts can warn the players first (`warnMinutes` on the action, a
+field in the panel's task form): the countdown is said over the console at the
+full figure, one minute, and ten seconds.
 
 State is reconciled against live pids on every read, so a daemon that dies takes
 its instance to `stale` (cleaned up automatically) rather than reporting
