@@ -1,0 +1,26 @@
+# The other half of verify-build.mjs's complaint that "there is no CI on this repository".
+# This runs what can run without secrets: the test suite and a CLI smoke check. Building,
+# signing and publishing stay on the release machine - the signing profile lives there.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # windows-latest, not ubuntu: the scheduler speaks schtasks, the control channel is a
+    # named pipe, and the paths are drive letters. Passing on Linux would prove little.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test
+        run: npm test
+      - name: Smoke-check the CLI
+        run: |
+          node mcctl.mjs help
+          node mcctl.mjs list
