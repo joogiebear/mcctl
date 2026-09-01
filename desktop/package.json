@@ -75,7 +75,7 @@
       {
         "provider": "github",
         "owner": "joogiebear",
-        "repo": "mcctl-releases",
+        "repo": "mcctl",
         "releaseType": "draft"
       }
     ],

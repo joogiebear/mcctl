@@ -93,7 +93,8 @@ for (const name of expected) process.stdout.write(`  ok   ${name} (${byName.get(
 process.stdout.write(`  ok   latest.yml describes ${version} and matches the installer\n`)
 
 // ---- record which commit produced the binary ------------------------------------------------
-// The source repository is private and this one holds only binaries, so without this nothing
+// Releases live on the source repository now, but a draft can still drift from the branch, so
+// naming the commit remains the only thing that reliably
 // connects the installer to the code. Read from what the BUILD wrote, not from git now: a draft can
 // sit for days while the branch moves on, and the commit that matters is the one that made the file.
 /**

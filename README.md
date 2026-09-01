@@ -400,9 +400,10 @@ the app.
 
 ### Releasing
 
-Installers and the update feed go to **`joogiebear/mcctl-releases`** (public). The source repo stays
-private — `electron-updater` needs a readable feed, and the alternative is embedding a GitHub token
-in every copy of the app, where anyone who downloads it can extract it.
+Installers and the update feed live on **this repository's releases** (the repo went public on
+2026-09-01, and its full release history was migrated here). `joogiebear/mcctl-releases` is the
+legacy feed: apps installed as v0.6.6 or earlier check it for updates, so it keeps a copy of each
+new release until that population has moved across — publish there stops once it has.
 
 ```bash
 cd desktop
