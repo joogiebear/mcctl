@@ -340,7 +340,7 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    background: var(--raised);
+    background: linear-gradient(180deg, #212737, var(--raised));
     color: var(--ink);
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
@@ -351,7 +351,7 @@
     box-shadow: var(--lift);
     transition: background .12s, border-color .12s;
   }
-  button:hover:not(:disabled) { border-color: var(--edge); background: #222839; }
+  button:hover:not(:disabled) { border-color: var(--edge); background: linear-gradient(180deg, #262d40, #222839); }
   button:active:not(:disabled) { transform: translateY(1px); }
   button:disabled { opacity: .38; cursor: default; }
 
@@ -378,13 +378,66 @@
     padding: 7px 10px;
     font: 13px/1.4 var(--ui);
     width: 100%;
+    /* Carved into the surface, not painted on it. The dark inset along the top is --lift's
+       exact opposite: raised things catch the light on their upper edge, sunken things cast
+       a shadow there - and that difference is what makes a field read as a place to put
+       something rather than a grey rectangle. */
+    box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, .34);
+    transition: border-color .12s, background-color .12s, box-shadow .12s;
   }
-  input:hover, select:hover { border-color: var(--edge); }
-  input:focus, select:focus { outline: none; border-color: var(--lapis); box-shadow: 0 0 0 3px var(--lapis-wash); }
-  input:disabled { opacity: .5; }
+  input:hover:not(:disabled):not(:focus), select:hover:not(:disabled):not(:focus) {
+    border-color: var(--edge);
+  }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--lapis);
+    background-color: #0d1119;
+    box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, .28), 0 0 0 3px var(--lapis-wash);
+  }
+  input:disabled, select:disabled { opacity: .5; }
   input.mono { font-family: var(--mono); font-size: 12.5px; }
   input::placeholder { color: var(--ink-3); }
   input[aria-invalid="true"] { border-color: var(--fault); }
+
+  /*
+    Selects lose the operating system's grey arrow and gain the interface's own chevron -
+    drawn as a data URI because a background-image cannot reach currentColor, in ink-2 at
+    rest and lapis when open, matching how every other control announces focus.
+  */
+  select {
+    appearance: none;
+    padding-right: 30px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 6.5l3.5 3.5 3.5-3.5' fill='none' stroke='%239aa4ba' stroke-width='1.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 9px center;
+    background-size: 14px;
+    cursor: pointer;
+  }
+  select:focus {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 6.5l3.5 3.5 3.5-3.5' fill='none' stroke='%235b84ff' stroke-width='1.5'/%3E%3C/svg%3E");
+  }
+  select:disabled { cursor: default; }
+  /* The dropdown list itself is mostly the browser's, but on a dark page it can at least
+     stop being white. */
+  select option { background: var(--raised); color: var(--ink); }
+
+  /* The spinner buttons on number fields are tiny grey furniture from another OS; the
+     numbers here (ports, counts, minutes) are typed, not clicked up from zero. */
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { display: none; }
+  input[type="number"] { appearance: textfield; }
+
+  /* The search field's clear control, redrawn to belong to this interface. */
+  input[type="search"]::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    height: 13px;
+    width: 13px;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M4 4l8 8M12 4l-8 8' stroke='%236b7488' stroke-width='1.6'/%3E%3C/svg%3E") center/12px no-repeat;
+    cursor: pointer;
+  }
+
+  /* The time picker's clock glyph ships black; on this ground it was a smudge. */
+  input[type="time"]::-webkit-calendar-picker-indicator { filter: invert(.65); cursor: pointer; }
 
   .field { display: grid; gap: 5px; }
   .field > label { font: 600 11px/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); }
@@ -408,9 +461,16 @@
     border-radius: var(--r-sm);
     padding: 2px;
     gap: 2px;
+    /* The same carved-in trough the input fields wear, so "pick one of these" sits in the
+       surface the way "type something here" does. */
+    box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, .3);
   }
   .seg button, .filters button, .ranges button { background: transparent; border: 0; box-shadow: none; padding: 4px 10px; font-size: 12.5px; color: var(--ink-2); border-radius: 4px; }
-  .seg button[aria-pressed="true"], .filters button[aria-pressed="true"], .ranges button[aria-pressed="true"] { background: var(--raised); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+  .seg button[aria-pressed="true"], .filters button[aria-pressed="true"], .ranges button[aria-pressed="true"] {
+    background: linear-gradient(180deg, #242b3e, #1d2333);
+    color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--line), var(--lift-strong);
+  }
   .seg button:hover:not([aria-pressed="true"]), .filters button:hover:not([aria-pressed="true"]), .ranges button:hover:not([aria-pressed="true"]) { color: var(--ink); background: transparent; }
 
   /* ---- empty state ------------------------------------------------------ */
@@ -809,10 +869,12 @@
     width: 34px; height: 20px;
     margin: 0;
     border-radius: 999px;
-    background: var(--raised);
+    background: var(--sunken);
     border: 1px solid var(--edge);
     position: relative;
     cursor: pointer;
+    /* A trough the knob sits in, not a pill next to a dot. */
+    box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, .4);
     transition: background .14s, border-color .14s;
   }
   input.switch::after {
@@ -821,10 +883,11 @@
     top: 2px; left: 2px;
     width: 14px; height: 14px;
     border-radius: 50%;
-    background: var(--ink-3);
+    background: var(--ink-2);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .15);
     transition: transform .14s, background .14s;
   }
-  input.switch:checked { background: var(--lapis-dim); border-color: var(--lapis); }
+  input.switch:checked { background: linear-gradient(180deg, #3a50bd, var(--lapis-dim)); border-color: var(--lapis); }
   input.switch:checked::after { transform: translateX(14px); background: #eaf0ff; }
   input.switch:disabled { opacity: .45; cursor: default; }
   /*
@@ -1095,7 +1158,31 @@
     cursor: pointer;
   }
   .choice label:has(input:checked) { border-color: var(--lapis); background: var(--lapis-wash); }
-  .choice input { width: auto; grid-row: 1 / 3; align-self: center; accent-color: var(--lapis); }
+  /* Drawn rather than accent-colored: a native radio is the one control that ignored the
+     interface's own depth, and the dot growing in reads as the choice landing. */
+  .choice input {
+    appearance: none;
+    width: 16px; height: 16px;
+    margin: 0;
+    grid-row: 1 / 3; align-self: center;
+    border-radius: 50%;
+    border: 1.5px solid var(--edge);
+    background: var(--sunken);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, .35);
+    display: grid; place-items: center;
+    cursor: pointer;
+    transition: border-color .12s;
+  }
+  .choice input::after {
+    content: '';
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--lapis);
+    transform: scale(0);
+    transition: transform .12s ease-out;
+  }
+  .choice input:checked { border-color: var(--lapis); }
+  .choice input:checked::after { transform: scale(1); box-shadow: 0 0 7px rgba(91, 132, 255, .55); }
   .choice b { font-size: 13.5px; font-weight: 600; }
   .choice span { font-size: 12.5px; color: var(--ink-3); line-height: 1.45; }
 

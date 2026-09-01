@@ -113,8 +113,15 @@
     font: 12.5px/1.4 var(--mono);
     width: 100%;
   }
+  /* Carved into the surface the way the panel's fields are - --lift's opposite: sunken
+     things cast a shadow along their top edge instead of catching the light there. */
+  input[type="text"] { box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, .34); transition: border-color .12s, box-shadow .12s; }
   input[type="text"]:hover { border-color: var(--edge); }
-  input[type="text"]:focus { outline: none; border-color: var(--lapis); box-shadow: 0 0 0 3px var(--lapis-wash); }
+  input[type="text"]:focus {
+    outline: none;
+    border-color: var(--lapis);
+    box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, .28), 0 0 0 3px var(--lapis-wash);
+  }
 
   button {
     display: inline-flex;
