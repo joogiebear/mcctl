@@ -66,14 +66,21 @@ test('a fabric pack index reduces to what the install needs', () => {
   const out = parseIndex(INDEX)
   assert.equal(out.name, 'Example Pack')
   assert.equal(out.mc, '26.2')
-  assert.equal(out.fabricLoader, '0.19.3')
+  assert.deepEqual(out.loader, { kind: 'fabric', version: '0.19.3' })
   assert.deepEqual(out.files.map((f) => f.path), ['mods/lithium.jar', 'config/lithium.properties'])
   assert.equal(out.skipped, 1, 'the client-only file is skipped and counted')
 })
 
-test('a pack for a loader mcctl cannot run yet is refused by name', () => {
-  const neo = { ...INDEX, dependencies: { minecraft: '26.2', neoforge: '21.4.100' } }
-  assert.throws(() => parseIndex(neo), /neoforge.*Fabric packs only/s)
+test('a neoforge pack is a first-class citizen now', () => {
+  const neo = { ...INDEX, dependencies: { minecraft: '26.2', neoforge: '26.2.0.75' } }
+  assert.deepEqual(parseIndex(neo).loader, { kind: 'neoforge', version: '26.2.0.75' })
+})
+
+test('a pack for a loader mcctl cannot run is refused by name', () => {
+  const forge = { ...INDEX, dependencies: { minecraft: '26.2', forge: '52.0.1' } }
+  assert.throws(() => parseIndex(forge), /forge.*Fabric and NeoForge packs only/s)
+  const quilt = { ...INDEX, dependencies: { minecraft: '26.2', 'quilt-loader': '0.26.0' } }
+  assert.throws(() => parseIndex(quilt), /quilt/)
 })
 
 test('a pack with no loader, no minecraft version, or the wrong shape is refused', () => {

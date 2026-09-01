@@ -17,6 +17,7 @@ import * as plugins from './src/plugins.mjs'
 import * as upgrade from './src/upgrade.mjs'
 import * as fabric from './src/fabric.mjs'
 import * as mrpack from './src/mrpack.mjs'
+import * as neoforge from './src/neoforge.mjs'
 import { readState, clearState } from './src/control.mjs'
 import * as sup from './src/supervisor.mjs'
 import { rconExec, stripColors } from './src/rcon.mjs'
@@ -264,7 +265,7 @@ async function cmdNew(positional, flags) {
     out(`Created "${res.name}" from ${res.pack} ${res.packVersion}`)
     out(table([
       ['minecraft:', res.mc],
-      ['fabric loader:', res.fabricLoader],
+      ['loader:', `${res.loader.kind} ${res.loader.version}`],
       ['pack files:', String(res.files) + (res.skippedClientOnly ? ` (${res.skippedClientOnly} client-only skipped)` : '')],
       ['port:', String(res.port)],
     ]))
@@ -295,6 +296,20 @@ async function cmdNew(positional, flags) {
       : `Downloaded ${launcher.name} — loader ${launcher.loader}, ${launcher.sizeHuman}.`)
     jar = launcher.name
     loader = 'fabric'
+  }
+  // --neoforge <version>: its installer lays the server down and the starter jar makes it
+  // launch like every other, so this is its own branch rather than a jar to pass along.
+  if (flags.neoforge) {
+    if (flags.paper || flags.fabric) fail('pick one of --paper, --fabric or --neoforge')
+    const res = await neoforge.createServer(name, String(flags.neoforge), {
+      memory: flags.memory ?? '4G',
+      port: flags.port ? Number(flags.port) : null,
+      onlineMode: !flags.offline,
+      onProgress: ({ message }) => out(`  ${message}`),
+    })
+    out(`Created instance "${res.name}" — NeoForge ${res.neoVersion} (minecraft ${res.mc}), port ${res.port}`)
+    out(`Start it with: mcctl start ${name}`)
+    return
   }
 
   const inst = await create.newInstance(name, {
@@ -783,7 +798,8 @@ async function cmdPack(positional, flags) {
   if (sub === 'status' || sub === 'check') {
     const pack = mrpack.packOf(inst)
     if (!pack) fail(`"${name}" was not built from a modpack`)
-    out(`${name} runs ${pack.name} ${pack.versionNumber} (minecraft ${pack.mc}, fabric loader ${pack.fabricLoader})`)
+    const packLoader = pack.loader ?? { kind: 'fabric', version: pack.fabricLoader }
+    out(`${name} runs ${pack.name} ${pack.versionNumber} (minecraft ${pack.mc}, ${packLoader.kind} ${packLoader.version})`)
     const info = await mrpack.checkPackUpdate(inst)
     out(info.updateAvailable
       ? `Release ${info.latest.version} is out. Apply with: mcctl pack ${name} update --yes`
@@ -1257,6 +1273,7 @@ INSTANCES
       --jar <file>                   Server jar from the jars/ store
       --paper <version>              Download that Paper version and use it
       --fabric <version>             Download Fabric for that version (mods, not plugins)
+      --neoforge <version>           Install NeoForge for that version (mods, not plugins)
       --modpack <slug>               Build the whole server from a Modrinth modpack
       --template <name>              Start from a saved template
       --memory <4G> --port <n>

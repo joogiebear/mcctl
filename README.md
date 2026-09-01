@@ -99,7 +99,7 @@ RCON refuses to carry.
 | Command | Does |
 | --- | --- |
 | `adopt <name> <dir>` | Register an existing server directory in place |
-| `new <name>` | Create a fresh instance (`--paper <v>`, `--fabric <v>`, `--modpack <slug>`, `--jar`, `--template`, `--accept-eula`) |
+| `new <name>` | Create a fresh instance (`--paper <v>`, `--fabric <v>`, `--neoforge <v>`, `--modpack <slug>`, `--jar`, `--template`, `--accept-eula`) |
 | `clone <src> <new>` | Copy plugins and config into a new instance on a free port |
 | `set <name> key=value` | `memory`, `java`, `jar`, `port`, `rcon.port`, `rcon.password`, `auto-restart=on\|off`, `webhook=<url>\|off` |
 | `props <name> [key=value]` | Read or edit `server.properties` |

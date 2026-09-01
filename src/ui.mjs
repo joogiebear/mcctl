@@ -21,6 +21,7 @@ import * as plugins from './plugins.mjs'
 import * as upgrade from './upgrade.mjs'
 import * as fabric from './fabric.mjs'
 import * as mrpack from './mrpack.mjs'
+import * as neoforge from './neoforge.mjs'
 import { acceptableWebhook } from './notify.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -437,7 +438,6 @@ async function handlePlugins(req, res, name, seg, url) {
     // failure becomes a note beside the results rather than an error instead of them.
     const asks = [
       plugins.searchPlugins(q, {
-        gameVersion,
         loaders: plugins.loadersFor(inst),
         projectType: kind.projectType,
       }),
@@ -794,6 +794,9 @@ async function route(req, res) {
   if (seg[1] === 'fabric' && seg[2] === 'versions' && req.method === 'GET') {
     return json(res, 200, await fabric.versions())
   }
+  if (seg[1] === 'neoforge' && seg[2] === 'versions' && req.method === 'GET') {
+    return json(res, 200, await neoforge.versions())
+  }
   if (seg[1] === 'modpacks' && seg[2] === 'search' && req.method === 'GET') {
     const q = String(url.searchParams.get('q') || '').trim()
     return json(res, 200, { results: q ? await plugins.searchModpacks(q) : [] })
@@ -848,6 +851,19 @@ async function route(req, res) {
         })
         jobUpdate(jobId, { stage: 'done', percent: 100, message: `Created ${result.name}`, done: true })
         return json(res, 200, { ...safeInstance(supervisor.statusOf(String(body.name))), pack: result })
+      }
+      // NeoForge is its own creation path too: installer-laid, starter-jar launched, and the
+      // whole build-or-tear-down flow lives in neoforge.createServer.
+      if (body.loader === 'neoforge') {
+        if (!body.neoforgeVersion) return json(res, 400, { error: 'a Minecraft version is required for a NeoForge server' })
+        const result = await neoforge.createServer(String(body.name), String(body.neoforgeVersion), {
+          memory: body.memory || '4G',
+          port: body.port ? Number(body.port) : null,
+          onlineMode: body.onlineMode !== false,
+          onProgress: ({ message, percent }) => jobUpdate(jobId, { stage: 'neoforge', message, percent: percent ?? null }),
+        })
+        jobUpdate(jobId, { stage: 'done', percent: 100, message: `Created ${result.name}`, done: true })
+        return json(res, 200, safeInstance(supervisor.statusOf(String(body.name))))
       }
       const loader = body.loader === 'fabric' ? 'fabric' : 'paper'
       const onProgress = ({ received, total, cached }) => {

@@ -1,13 +1,17 @@
 # Plan: modded servers and Modrinth modpacks
 
-Status: **Phases 1–3 shipped 2026-08-31** — Fabric servers, .mrpack install, the Mods
-tab with pack-owned/mcctl-added/hand-dropped kept distinct, and **pack updates**
-(`mcctl pack <name> update`, and the Modpack card in the Mods tab): everything new
-downloaded and checksummed first, a standard snapshot next, and deletions limited to
-files the old record owned that the new pack dropped, with worlds and the server's root
-files protected even against a confused record. Remaining: **Phase 4, NeoForge**.
-Ships on the 0.6.x line — it extends the same content-installing area the plugin
-manager lives in.
+Status: **complete — all phases shipped 2026-08-31.** Fabric and NeoForge servers,
+.mrpack install for both loaders, the Mods tab with pack-owned/mcctl-added/hand-dropped
+kept distinct, and pack updates whose deletions are limited to what the old pack owned.
+
+The NeoForge phase came in smaller than planned, like Fabric's did: the installer's
+`--server-jar` flag downloads NeoForged's serverstarterjar as `server.jar`, a launcher
+built precisely so `java -jar server.jar` works — so the per-loader argument-file
+launch builder this phase was budgeted for was never needed, and the daemon has still
+never changed for any loader. What did ship: the installer flow (checksummed from the
+maven, run into the instance, torn down on failure), `mods.toml` manifests via a
+TOML-lite the way plugin.yml got a YAML-lite, NeoForge facets and packs, and a
+registry-recorded `mcVersion` for servers whose jar name cannot carry it.
 
 Phase 1 turned out smaller than planned in the best way: Fabric's bundled launcher jar
 runs with a plain `-jar` like Paper, so the daemon needed no new launch machinery at

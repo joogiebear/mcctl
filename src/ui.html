@@ -1388,6 +1388,7 @@
             <select id="nLoader" name="loader">
               <option value="paper" selected>Paper</option>
               <option value="fabric">Fabric</option>
+              <option value="neoforge">NeoForge</option>
             </select>
             <div class="hint" id="nLoaderHint">Runs plugins</div>
           </div>
@@ -1440,7 +1441,7 @@
         <div class="field">
           <label for="pSearch">Modpack</label>
           <div class="row">
-            <input id="pSearch" type="search" placeholder="Search Modrinth — server-ready Fabric packs" autocomplete="off">
+            <input id="pSearch" type="search" placeholder="Search Modrinth — server-ready Fabric and NeoForge packs" autocomplete="off">
             <button type="button" id="bPackSearch">Search</button>
           </div>
           <div class="hint">The pack decides the Minecraft version, the loader and the mods. You pick a name and how much memory it gets.</div>
@@ -1908,9 +1909,9 @@ function renderServer(row) {
   if (!row) return;
   $('#vServer').dataset.status = row.status;
   $('#srvName').textContent = row.name;
-  // The same tab manages plugins/ on a Paper server and mods/ on a Fabric one; its name
+  // The same tab manages plugins/ on a Paper server and mods/ on a modded one; its name
   // follows, because "Plugins" on a server that cannot load any would be a small lie.
-  $('#tabPlugins').lastChild.nodeValue = (row.loader === 'fabric') ? 'Mods' : 'Plugins';
+  $('#tabPlugins').lastChild.nodeValue = ((row.loader ?? 'paper') === 'paper') ? 'Plugins' : 'Mods';
 
   const st = $('#srvState');
   if (row.status === 'running' && row.startedAt) {
@@ -3000,7 +3001,9 @@ async function renderPlugins(opts) {
   how.textContent = (data.running
     ? 'The server is running, so everything here takes effect the next time it starts.'
     : 'Applies the next time the server starts.')
-    + (data.gameVersion ? ' Only builds for ' + data.gameVersion + ' are offered.' : '');
+    + (data.gameVersion
+      ? ' Builds for ' + data.gameVersion + ' are preferred; anything else installs with a note.'
+      : '');
   body.append(how);
 
   // A server a pack built says so, because the answer to "how do my friends join" is the
@@ -4927,6 +4930,7 @@ $('#formNew').onsubmit = async (e) => {
       loader: loader,
       paperVersion: loader === 'paper' ? version : null,
       fabricVersion: loader === 'fabric' ? version : null,
+      neoforgeVersion: loader === 'neoforge' ? version : null,
       memory: form.get('memory') || '4G',
       port: form.get('port') || null,
       onlineMode: form.get('onlineMode') !== 'offline',
@@ -5012,7 +5016,7 @@ async function packSearch() {
   if (!found.results.length) {
     const none = document.createElement('div');
     none.className = 'hint';
-    none.textContent = 'No server-ready Fabric packs match that.';
+    none.textContent = 'No server-ready Fabric or NeoForge packs match that.';
     results.append(none);
     return;
   }
@@ -5226,8 +5230,10 @@ async function loadVersions(loader) {
   const sel = $('#nVersion');
   $('#nVersionHint').textContent = loader === 'fabric'
     ? 'Downloads the Fabric server launcher, which fetches the rest on first start.'
-    : 'Downloads the newest stable Paper build.';
-  $('#nLoaderHint').textContent = loader === 'fabric' ? 'Runs mods' : 'Runs plugins';
+    : loader === 'neoforge'
+      ? 'Runs the NeoForge installer, which downloads its libraries. Takes a few minutes.'
+      : 'Downloads the newest stable Paper build.';
+  $('#nLoaderHint').textContent = loader === 'paper' ? 'Runs plugins' : 'Runs mods';
   if (!versionLists[loader]) {
     sel.disabled = true;
     sel.textContent = '';
@@ -5241,7 +5247,8 @@ async function loadVersions(loader) {
       sel.textContent = '';
       const bad = document.createElement('option');
       bad.value = '';
-      bad.textContent = 'Could not reach ' + (loader === 'fabric' ? 'FabricMC' : 'PaperMC');
+      bad.textContent = 'Could not reach '
+        + (loader === 'fabric' ? 'FabricMC' : loader === 'neoforge' ? 'the NeoForge maven' : 'PaperMC');
       sel.append(bad);
       // A dead end is not an empty dropdown. Creating needs the download; adding a server you
       // already have does not, and that is a real way forward rather than an instruction to

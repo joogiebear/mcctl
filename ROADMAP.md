@@ -32,12 +32,11 @@ user accounts, a remote web panel - stay off it on purpose.
 
 ## Later
 
-- **Fabric servers and Modrinth modpacks** *(0.6.x)* — Fabric as a first-class loader
-  with a Mods tab, and "From a modpack" in Add-a-server: every server-side file the
-  pack lists downloaded and checksummed before the instance exists, the pack's loader
-  pinned, overrides applied, pack-owned mods held to the pack's versions, and the
-  client-pack link shown for joining players, and pack updates that may only touch what
-  the old pack owned. Remaining (docs/modpacks-plan.md): NeoForge.
+- **Modded servers, complete** *(0.6.x; docs/modpacks-plan.md)* — Fabric and NeoForge
+  as first-class loaders with a Mods tab, "From a modpack" in Add-a-server for both,
+  pack updates that may only touch what the old pack owned, and the server's version
+  treated as a preference rather than a wall: search shows the loader's whole
+  ecosystem, and a mismatched build installs with the author's version claim stated.
 - **A Share screen.** The honest answer to "how do my friends join?": the LAN address
   plainly, UPnP as an explicit opt-in, and real guidance for Tailscale / playit.gg for
   play over the internet. Exposure stays a deliberate user decision; this makes it an

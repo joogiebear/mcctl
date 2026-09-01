@@ -205,14 +205,18 @@ const DISABLED = '.disabled'
  * and a different Modrinth facet, because a plugin will not load as a mod or vice versa.
  */
 export function contentKindFor(inst) {
-  return loaderOf(inst) === 'fabric'
+  const loader = loaderOf(inst)
+  return loader === 'fabric' || loader === 'neoforge'
     ? { dir: 'mods', kind: 'mods', word: 'mod', projectType: 'mod', hangar: false }
     : { dir: 'plugins', kind: 'plugins', word: 'plugin', projectType: 'plugin', hangar: true }
 }
 
 /** The Modrinth loader facet for this instance's content. */
 export function loadersFor(inst) {
-  return loaderOf(inst) === 'fabric' ? ['fabric'] : LOADERS
+  const loader = loaderOf(inst)
+  if (loader === 'fabric') return ['fabric']
+  if (loader === 'neoforge') return ['neoforge']
+  return LOADERS
 }
 
 function pluginsDir(inst) {
@@ -269,11 +273,61 @@ function moveManaged(inst, from, to) {
   }
 }
 
-/** The Minecraft version this server runs, read from its jar's filename; null when unclear. */
+/** The Minecraft version this server runs: recorded when the registry knows it, else read
+ * from the jar's filename; null when unclear. */
 export function mcVersionOf(inst) {
+  if (inst?.mcVersion) return String(inst.mcVersion)
   const m = /^(?:paper|purpur|folia|spigot|craftbukkit)-(\d+\.\d+(?:\.\d+)?)/i.exec(inst.jar || '')
     ?? /^fabric-server-mc\.(\d+\.\d+(?:\.\d+)?)-/i.exec(inst.jar || '')
   return m ? m[1] : null
+}
+
+/**
+ * Just enough TOML for a NeoForge mod manifest - the first [[mods]] block's scalar fields,
+ * the same way plugin.yml got a YAML-lite. `${file.jarVersion}` is the one indirection worth
+ * chasing: it means "my version is in the jar manifest", and that is where it is read from.
+ */
+export function parseModsToml(text, { jarVersion = null } = {}) {
+  const lines = String(text).split(/\r?\n/)
+  const start = lines.findIndex((l) => l.trim() === '[[mods]]')
+  if (start === -1) return null
+  const out = {}
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (line.startsWith('[')) break
+    const m = /^(\w+)\s*=\s*(.+)$/.exec(line)
+    if (!m) continue
+    let value = m[2].trim()
+    if (value.startsWith("'''") || value.startsWith('"""')) {
+      const quote = value.slice(0, 3)
+      let body = value.slice(3)
+      while (i + 1 < lines.length && !body.includes(quote)) body += `\n${lines[++i]}`
+      value = body.slice(0, body.indexOf(quote)).trim()
+    } else {
+      value = value.replace(/\s#.*$/, '').trim()
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1)
+      }
+    }
+    out[m[1]] = value
+  }
+  let version = out.version ?? null
+  if (version && version.includes('${')) version = jarVersion
+  return {
+    name: out.displayName || out.modId,
+    version,
+    description: out.description,
+    authors: out.authors ? [out.authors] : [],
+  }
+}
+
+function readNeoforgeManifest(full) {
+  const raw = readZipEntry(full, 'META-INF/neoforge.mods.toml') ?? readZipEntry(full, 'META-INF/mods.toml')
+  if (!raw) return null
+  let jarVersion = null
+  const mf = readZipEntry(full, 'META-INF/MANIFEST.MF')
+  if (mf) jarVersion = /^Implementation-Version:\s*(.+)$/m.exec(mf.toString('utf8'))?.[1]?.trim() ?? null
+  return parseModsToml(raw.toString('utf8'), { jarVersion })
 }
 
 /** What a Fabric mod's own manifest says, mapped to the same shape plugin.yml yields. */
@@ -325,7 +379,7 @@ export function listPlugins(inst) {
     try {
       const yml = readZipEntry(full, 'plugin.yml') ?? readZipEntry(full, 'paper-plugin.yml')
       if (yml) meta = parsePluginYml(yml.toString('utf8'))
-      else meta = readFabricManifest(full) ?? {}
+      else meta = readFabricManifest(full) ?? readNeoforgeManifest(full) ?? {}
     } catch {
       /* an unreadable jar is still listed by filename */
     }
@@ -417,13 +471,19 @@ async function modrinth(pathname, init) {
   return res.json()
 }
 
-/** Search Modrinth for content this kind of server can load - plugins or mods by loader. */
-export async function searchPlugins(query, { gameVersion = null, limit = 20, loaders = LOADERS, projectType = 'plugin' } = {}) {
+/**
+ * Search Modrinth for content this kind of server can load - plugins or mods by loader.
+ *
+ * <p>Deliberately NOT filtered by game version. Hiding everything that does not list the
+ * server's exact version hid half the ecosystem behind sparse metadata; the version is a
+ * preference applied when a build is PICKED, where a mismatch can be said instead of
+ * silently pre-empted. People choose what to run; mcctl states the claim.
+ */
+export async function searchPlugins(query, { limit = 20, loaders = LOADERS, projectType = 'plugin' } = {}) {
   const facets = [
     [`project_type:${projectType}`],
     loaders.map((l) => `categories:${l}`),
   ]
-  if (gameVersion) facets.push([`versions:${gameVersion}`])
   const params = new URLSearchParams({
     query: String(query ?? ''),
     facets: JSON.stringify(facets),
@@ -447,13 +507,12 @@ export async function searchPlugins(query, { gameVersion = null, limit = 20, loa
  * unsupported, on a loader mcctl can run (Fabric, until the NeoForge phase lands). A pack
  * that is client-only would install fine and then be an empty world with none of its point.
  */
-export async function searchModpacks(query, { gameVersion = null, limit = 20 } = {}) {
+export async function searchModpacks(query, { limit = 20 } = {}) {
   const facets = [
     ['project_type:modpack'],
     ['server_side:required', 'server_side:optional'],
-    ['categories:fabric'],
+    ['categories:fabric', 'categories:neoforge'],
   ]
-  if (gameVersion) facets.push([`versions:${gameVersion}`])
   const params = new URLSearchParams({
     query: String(query ?? ''),
     facets: JSON.stringify(facets),
@@ -617,14 +676,20 @@ export async function installPlugin(inst, projectId, { gameVersion = null } = {}
   const loaders = loadersFor(inst)
   const { word } = contentKindFor(inst)
   const params = new URLSearchParams({ loaders: JSON.stringify(loaders) })
-  if (gameVersion) params.set('game_versions', JSON.stringify([gameVersion]))
   const versions = await modrinth(`/project/${encodeURIComponent(projectId)}/version?${params}`)
-  const version = pickVersion(versions, { gameVersion, loaders })
-  if (!version) {
-    fail(gameVersion
-      ? `no build of that ${word} supports ${gameVersion} on a ${loaders[0]} server`
-      : `no build of that ${word} supports a ${loaders[0]} server`)
+  // The server's version is a preference, not a wall: an exact match wins, and failing one
+  // the newest build for the right loader installs WITH the mismatch stated - the same deal
+  // Hangar's sparse version lists already get.
+  let version = pickVersion(versions, { gameVersion, loaders })
+  let versionNote = null
+  if (!version && gameVersion) {
+    version = pickVersion(versions, { loaders })
+    if (version) {
+      const claims = version.game_versions[version.game_versions.length - 1] ?? 'other versions'
+      versionNote = `Its newest build lists ${claims}, not ${gameVersion} - it may run anyway, but that is its author's claim, not mcctl's.`
+    }
   }
+  if (!version) fail(`no build of that ${word} supports a ${loaders[0]} server`)
   const file = primaryFile(version)
   if (!file) fail('that version has no downloadable file')
 
@@ -656,7 +721,7 @@ export async function installPlugin(inst, projectId, { gameVersion = null } = {}
     version: version.version_number,
     installedAt: new Date().toISOString(),
   })
-  return { installed: name, version: version.version_number, size: bytes.length }
+  return { installed: name, version: version.version_number, size: bytes.length, versionNote }
 }
 
 /**

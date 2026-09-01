@@ -199,6 +199,7 @@ export async function newInstance(
     java = 'java',
     onlineMode = true,
     loader = 'paper',
+    mcVersion = null,
   } = {},
 ) {
   validateName(name)
@@ -240,15 +241,17 @@ export async function newInstance(
     sourceJar = tpl.jar ?? null
   }
 
-  // Resolve the server jar and place it in the instance directory.
+  // Resolve the server jar and place it in the instance directory. NeoForge is the one loader
+  // with no jar to place: its installer lays the server down AFTER the instance exists, and
+  // the caller records the starter jar it produces.
   const chosenJar = jar ?? sourceJar
-  if (!chosenJar) {
+  if (!chosenJar && loader !== 'neoforge') {
     fail(
       `no server jar specified.\n` +
         `  Pick one with --jar <file>. Available: ${listJars().map((j) => j.name).join(', ') || '(none - use "mcctl jars import <path>")'}`,
     )
   }
-  placeJar(dir, chosenJar)
+  if (chosenJar) placeJar(dir, chosenJar)
 
   const { port: finalPort, rconPort: finalRcon } = await allocatePorts({ port, rconPort })
   const rconPassword = randomPassword()
@@ -289,10 +292,12 @@ export async function newInstance(
 
   const cfg = {
     dir,
-    jar: path.basename(chosenJar),
+    jar: chosenJar ? path.basename(chosenJar) : 'server.jar',
     java,
     memory,
     loader,
+    // Recorded when the jar name cannot carry it (NeoForge's starter is just "server.jar").
+    ...(mcVersion ? { mcVersion } : {}),
     port: finalPort,
     rcon: { port: finalRcon, password: rconPassword },
     createdAt: new Date().toISOString(),
@@ -341,9 +346,12 @@ export async function adoptInstance(name, dir, { jar = null, memory = '4G', java
     jar: chosen,
     java,
     memory,
-    // Guessed from the jar the way a person would: a Fabric launcher names itself. Anything
-    // else is treated as the Paper family, which is what every adopted server has been so far.
-    loader: /^fabric-server/i.test(chosen) ? 'fabric' : 'paper',
+    // Guessed the way a person would: a Fabric launcher names itself, and a NeoForge server
+    // carries its libraries tree. Anything else is treated as the Paper family, which is what
+    // every adopted server has been so far.
+    loader: /^fabric-server/i.test(chosen) ? 'fabric'
+      : fs.existsSync(path.join(abs, 'libraries', 'net', 'neoforged')) ? 'neoforge'
+      : 'paper',
     port,
     rcon: { port: rconPort, password: rconPassword },
     createdAt: new Date().toISOString(),

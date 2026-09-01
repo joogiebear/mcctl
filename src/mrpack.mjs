@@ -19,6 +19,7 @@ import os from 'node:os'
 
 import { modrinthRequest, pickVersion, primaryFile, extractZip, recordManaged, readManaged, forgetManaged, readZipEntry } from './plugins.mjs'
 import * as fabric from './fabric.mjs'
+import * as neoforge from './neoforge.mjs'
 import * as create from './create.mjs'
 import { getInstance, removeInstance, updateInstance } from './registry.mjs'
 import { createSnapshot } from './backup.mjs'
@@ -40,13 +41,17 @@ export function parseIndex(index) {
   const deps = index.dependencies ?? {}
   const mc = deps.minecraft
   if (!mc) fail('the pack names no Minecraft version')
-  for (const other of ['neoforge', 'forge', 'quilt-loader']) {
+  for (const other of ['forge', 'quilt-loader']) {
     if (deps[other]) {
-      fail(`this pack is built for ${other.replace('-loader', '')}, which mcctl cannot run yet - Fabric packs only for now`)
+      fail(`this pack is built for ${other.replace('-loader', '')}, which mcctl cannot run - Fabric and NeoForge packs only`)
     }
   }
-  const fabricLoader = deps['fabric-loader']
-  if (!fabricLoader) fail('the pack names no Fabric loader version')
+  const loader = deps['fabric-loader']
+    ? { kind: 'fabric', version: deps['fabric-loader'] }
+    : deps.neoforge
+      ? { kind: 'neoforge', version: deps.neoforge }
+      : null
+  if (!loader) fail('the pack names no loader mcctl can run (Fabric or NeoForge)')
 
   const files = index.files
     .filter((f) => f.env?.server !== 'unsupported')
@@ -67,10 +72,27 @@ export function parseIndex(index) {
     name: index.name || 'modpack',
     versionId: index.versionId || null,
     mc,
-    fabricLoader,
+    loader,
     files,
     skipped: index.files.length - files.length,
   }
+}
+
+/**
+ * Put the pack's loader in place. Fabric is a launcher jar fetched before the instance
+ * exists; NeoForge is an installer run INTO the instance, so it can only happen after -
+ * which is why this takes the instance dir and answers with the jar name to record.
+ */
+async function installLoader(inst, index, onProgress) {
+  if (index.loader.kind === 'fabric') {
+    onProgress({ message: `Fetching Fabric ${index.loader.version} for ${index.mc}`, percent: null })
+    const launcher = await fabric.fetchLauncher(index.mc, { loader: index.loader.version })
+    create.placeJar(inst.dir, launcher.name)
+    return launcher.name
+  }
+  const installer = await neoforge.fetchInstaller(index.loader.version, { onProgress })
+  await neoforge.installServer(inst.dir, installer.path, { java: inst.java, onProgress })
+  return 'server.jar'
 }
 
 async function download(url, { timeoutMs = 180000 } = {}) {
@@ -86,9 +108,10 @@ async function download(url, { timeoutMs = 180000 } = {}) {
 
 /** The newest installable release of a pack, or a readable refusal. */
 async function resolvePackVersion(projectId) {
-  const versions = await modrinthRequest(`/project/${encodeURIComponent(projectId)}/version?${new URLSearchParams({ loaders: JSON.stringify(['fabric']) })}`)
-  const version = pickVersion(versions, { loaders: ['fabric'] })
-  if (!version) fail('that pack has no Fabric release mcctl can install')
+  const RUNNABLE = ['fabric', 'neoforge']
+  const versions = await modrinthRequest(`/project/${encodeURIComponent(projectId)}/version?${new URLSearchParams({ loaders: JSON.stringify(RUNNABLE) })}`)
+  const version = pickVersion(versions, { loaders: RUNNABLE })
+  if (!version) fail('that pack has no Fabric or NeoForge release mcctl can install')
   const packFile = primaryFile(version)
   if (!packFile) fail('that pack version has no downloadable file')
   return { version, packFile }
@@ -146,16 +169,23 @@ export async function createFromModpack(name, projectId, {
   const { tmp, mrpack, index } = await fetchPackArchive(packFile, onProgress)
 
   // ---- everything the pack needs, downloaded and verified up front ----------
-  onProgress({ message: `Fetching Fabric ${index.fabricLoader} for ${index.mc}`, percent: null })
-  const launcher = await fabric.fetchLauncher(index.mc, { loader: index.fabricLoader })
+  // Fabric's launcher and NeoForge's installer both cache into the jars store here, so the
+  // loader step after the instance exists is a cache hit, not a fresh gamble.
+  if (index.loader.kind === 'fabric') {
+    onProgress({ message: `Fetching Fabric ${index.loader.version} for ${index.mc}`, percent: null })
+    await fabric.fetchLauncher(index.mc, { loader: index.loader.version })
+  } else {
+    await neoforge.fetchInstaller(index.loader.version, { onProgress })
+  }
 
   const staged = await stagePackFiles(index, onProgress)
 
   // ---- only now does the instance exist -------------------------------------
   onProgress({ message: 'Creating the server', percent: null })
   const inst = await create.newInstance(name, {
-    jar: launcher.name,
-    loader: 'fabric',
+    jar: null,
+    loader: index.loader.kind,
+    mcVersion: index.mc,
     memory,
     port,
     onlineMode,
@@ -164,6 +194,8 @@ export async function createFromModpack(name, projectId, {
   })
 
   try {
+    const jarName = await installLoader(inst, index, onProgress)
+    updateInstance(name, { jar: jarName })
     for (const f of staged) {
       const target = path.join(inst.dir, ...f.path.split('/'))
       fs.mkdirSync(path.dirname(target), { recursive: true })
@@ -191,7 +223,7 @@ export async function createFromModpack(name, projectId, {
       versionNumber: version.version_number,
       name: index.name,
       mc: index.mc,
-      fabricLoader: index.fabricLoader,
+      loader: index.loader,
       installedAt: new Date().toISOString(),
       files: [...index.files.map((f) => f.path), ...laid, ...laidServer],
       skippedClientOnly: index.skipped,
@@ -215,11 +247,16 @@ export async function createFromModpack(name, projectId, {
     pack: index.name,
     packVersion: version.version_number,
     mc: index.mc,
-    fabricLoader: index.fabricLoader,
+    loader: index.loader,
     files: index.files.length,
     skippedClientOnly: index.skipped,
     port: inst.port,
   }
+}
+
+/** An older record wrote fabricLoader; a newer one writes loader. Read either. */
+function loaderOfRecord(pack) {
+  return pack.loader ?? (pack.fabricLoader ? { kind: 'fabric', version: pack.fabricLoader } : null)
 }
 
 /** The pack record for an instance, or null for a server no pack built. */
@@ -297,8 +334,14 @@ export async function updatePack(name, { onProgress = () => {} } = {}) {
 
   const { tmp, mrpack, index } = await fetchPackArchive(packFile, onProgress)
   try {
-    onProgress({ message: `Fetching Fabric ${index.fabricLoader} for ${index.mc}`, percent: null })
-    const launcher = await fabric.fetchLauncher(index.mc, { loader: index.fabricLoader })
+    // Warm the loader artifact into the store now, so the install step after the snapshot is
+    // a cache hit rather than a fresh download that could fail mid-change.
+    if (index.loader.kind === 'fabric') {
+      onProgress({ message: `Fetching Fabric ${index.loader.version} for ${index.mc}`, percent: null })
+      await fabric.fetchLauncher(index.mc, { loader: index.loader.version })
+    } else {
+      await neoforge.fetchInstaller(index.loader.version, { onProgress })
+    }
     const staged = await stagePackFiles(index, onProgress)
 
     onProgress({ message: 'Snapshotting before anything changes', percent: null })
@@ -323,11 +366,13 @@ export async function updatePack(name, { onProgress = () => {} } = {}) {
       fs.rmSync(path.join(inst.dir, ...p.split('/')), { force: true })
     }
 
-    // ---- the launcher, the registry, and the records ------------------------
-    if (launcher.name !== inst.jar) {
-      create.placeJar(inst.dir, launcher.name)
-      updateInstance(name, { jar: launcher.name })
+    // ---- the loader, the registry, and the records --------------------------
+    const oldLoader = loaderOfRecord(pack)
+    if (!oldLoader || index.loader.kind !== oldLoader.kind || index.loader.version !== oldLoader.version) {
+      const jarName = await installLoader(inst, index, onProgress)
+      if (jarName !== inst.jar) updateInstance(name, { jar: jarName })
     }
+    updateInstance(name, { mcVersion: index.mc, loader: index.loader.kind })
     for (const [file, entry] of Object.entries(readManaged(inst).managed)) {
       if (entry.source === 'modpack' && !fs.existsSync(path.join(inst.dir, contentPathFor(inst, file)))) {
         forgetManaged(inst, file)
@@ -349,7 +394,7 @@ export async function updatePack(name, { onProgress = () => {} } = {}) {
       versionNumber: version.version_number,
       name: index.name,
       mc: index.mc,
-      fabricLoader: index.fabricLoader,
+      loader: index.loader,
       installedAt: new Date().toISOString(),
       files: newOwned,
       skippedClientOnly: index.skipped,
@@ -360,7 +405,7 @@ export async function updatePack(name, { onProgress = () => {} } = {}) {
       to: version.version_number,
       mc: index.mc,
       mcChanged: index.mc !== pack.mc,
-      fabricLoader: index.fabricLoader,
+      loader: index.loader,
       files: index.files.length,
       removed: removals.length,
       snapshot: snap.file,
@@ -372,5 +417,5 @@ export async function updatePack(name, { onProgress = () => {} } = {}) {
 
 /** Where a managed-store filename actually lives for this instance's content kind. */
 function contentPathFor(inst, file) {
-  return path.join(inst.loader === 'fabric' ? 'mods' : 'plugins', file)
+  return path.join(inst.loader === 'fabric' || inst.loader === 'neoforge' ? 'mods' : 'plugins', file)
 }
