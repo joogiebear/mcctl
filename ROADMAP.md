@@ -44,11 +44,15 @@ user accounts, a remote web panel - stay off it on purpose.
   on one drive fail together — and a **scheduled verify** action, so backup integrity
   runs on a clock and failures reach the webhook.
 
-## Later
+- **Log intelligence** *(v0.8.0)* — src/diagnose.mjs recognises the known failure shapes
+  (port taken, EULA, wrong Java, out of memory or disk, missing plugin/mod dependencies,
+  duplicate plugins, corrupt worlds, ticking crashes, watchdog stalls, missing jars) and
+  says the fix wherever the failure surfaces: a strip under the panel's vitals, advice on
+  a failed `mcctl start`, `mcctl why <name>`, and the daemon's crash webhook naming the
+  likely cause. Minecraft's own crash reports are surfaced beside them, with their
+  Description line, one click from the folder.
 
-- **Log intelligence.** The console already classifies levels; recognising the common
-  failure shapes (missing Vault, wrong Java, port in use) and saying so is the next step.
-  A crash-report viewer belongs here too.
+## Later
 
 ## After 1.0
 

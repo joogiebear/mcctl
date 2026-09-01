@@ -525,9 +525,9 @@
   /* ---- server view ------------------------------------------------------ */
 
   .server {
-    /* head, vitals, notice, body. The body is the nav and the panes side by side; the command bar
-       belongs to the console rather than to the server, so it lives inside that pane. */
-    grid-template-rows: auto auto auto minmax(0, 1fr);
+    /* head, vitals, notice, diagnosis, body. The body is the nav and the panes side by side; the
+       command bar belongs to the console rather than to the server, so it lives inside that pane. */
+    grid-template-rows: auto auto auto auto minmax(0, 1fr);
     grid-template-columns: minmax(0, 1fr);
     background: linear-gradient(180deg, var(--surface-hi), var(--surface) 160px);
     border: 1px solid var(--line);
@@ -1380,6 +1380,7 @@
 
       <dl class="vitals-bar" id="srvVitals"></dl>
       <div id="srvNotice"></div>
+      <div id="srvDiag"></div>
 
       <div class="srv-body">
       <nav class="srv-nav" role="tablist" aria-orientation="vertical" aria-label="Server sections">
@@ -2064,6 +2065,67 @@ function renderServer(row) {
   $('#cmd').disabled = !live;
   $('#bSend').disabled = !live;
   $('#cmd').placeholder = live ? 'Send a server command — try list' : 'Start the server to send commands';
+
+  loadDiagnosis(row);
+}
+
+// ------------------------------------------------------------- diagnosis ----
+
+/**
+ * The console's known failure shapes, said in words under the vitals.
+ *
+ * <p>Fetched only when something about the run changes - a poll that re-asked every four
+ * seconds would be asking a question whose answer cannot have changed. Findings wear fault
+ * red when the server is down (this is why) and warning amber when it is up (it survived
+ * this, but you should know).
+ */
+let diagKey = '';
+
+async function loadDiagnosis(row) {
+  const key = [row.name, row.status, row.exitCode ?? '', row.startedAt ?? ''].join('|');
+  if (key === diagKey) return;
+  diagKey = key;
+  const box = $('#srvDiag');
+  let data;
+  try {
+    data = await api('/instances/' + encodeURIComponent(row.name) + '/diagnose');
+  } catch {
+    box.textContent = '';
+    diagKey = '';
+    return;
+  }
+  if (state.current !== row.name) return;
+  box.textContent = '';
+
+  for (const f of data.findings.slice(0, 2)) {
+    const n = document.createElement('div');
+    n.className = 'notice ' + (row.status === 'running' ? 'warn' : 'fault');
+    const b = document.createElement('b');
+    b.textContent = f.title;
+    const s = document.createElement('span');
+    s.textContent = f.advice;
+    n.append(b, s);
+    box.append(n);
+  }
+
+  if (data.crashes.count) {
+    const n = document.createElement('div');
+    n.className = 'notice warn';
+    const b = document.createElement('b');
+    b.textContent = data.crashes.count === 1 ? '1 crash report' : data.crashes.count + ' crash reports';
+    const s = document.createElement('span');
+    s.textContent = (data.crashes.newest.description || data.crashes.newest.file)
+      + '  ·  ' + ago(data.crashes.newest.mtime);
+    const open = document.createElement('button');
+    open.className = 'ghost';
+    open.type = 'button';
+    open.style.cssText = 'padding:2px 8px;font-size:12px;flex:none;margin-left:auto';
+    open.textContent = 'Open folder';
+    open.onclick = () => post('/instances/' + encodeURIComponent(row.name) + '/reveal', { sub: 'crash-reports' })
+      .catch((e) => toast(e.message, 'bad'));
+    n.append(b, s, open);
+    box.append(n);
+  }
 }
 
 // With servers registered but none selected, the hero would be lying if it still said "no servers
@@ -2291,6 +2353,8 @@ function select(name) {
   $('#pluginsBody').dataset.for = '';
   $('#worldsBody').dataset.for = '';
   $('#performanceBody').dataset.for = '';
+  $('#srvDiag').textContent = '';
+  diagKey = '';
   renderServer(state.rows.find((r) => r.name === name));
   showPane(state.pane);
   renderLog();

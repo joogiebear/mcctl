@@ -19,6 +19,7 @@ import * as fabric from './src/fabric.mjs'
 import * as mrpack from './src/mrpack.mjs'
 import * as neoforge from './src/neoforge.mjs'
 import * as worlds from './src/worlds.mjs'
+import { diagnose, crashReports } from './src/diagnose.mjs'
 import { readState, clearState } from './src/control.mjs'
 import * as sup from './src/supervisor.mjs'
 import { rconExec, stripColors } from './src/rcon.mjs'
@@ -105,6 +106,46 @@ function cmdStatus(positional) {
   out(table(rows.map(([k, v]) => [`${k}:`, v])))
 }
 
+/** The console's known failure shapes, printed as advice. Shared by start-failure and `why`. */
+function printFindings(name) {
+  const inst = getInstance(name)
+  const findings = diagnose(sup.tailLog(name, 400), {
+    port: inst.port,
+    memory: inst.memory,
+    dir: inst.dir,
+    crashDir: path.join(inst.dir, 'crash-reports'),
+  })
+  for (const f of findings) {
+    out('')
+    out(`>> ${f.title}`)
+    out(`   ${f.advice}`)
+  }
+  return findings.length
+}
+
+/**
+ * The question a dead server actually raises, answered from its own console. Reads the
+ * known failure shapes out of the last run and lists Minecraft's own crash reports; when
+ * nothing matches, it says so instead of guessing.
+ */
+function cmdWhy(positional) {
+  const name = requireName(positional, 'why')
+  const inst = getInstance(name)
+  const found = printFindings(name)
+  if (!found) {
+    out('Nothing mcctl recognises in the recent console. The last lines of the log are the')
+    out(`next place to look: mcctl logs ${name} -n 60 --grep " ERROR]| WARN]|Exception"`)
+  }
+  const crashes = crashReports(inst, { limit: 5 })
+  if (crashes.reports.length) {
+    out('')
+    out(`Crash reports (${crashes.reports.length} newest, in ${crashes.dir}):`)
+    for (const r of crashes.reports) {
+      out(`  ${r.file}  ${r.description ? `- ${r.description}` : ''}`)
+    }
+  }
+}
+
 // --------------------------------------------------------------- lifecycle
 
 async function cmdStart(positional, flags) {
@@ -127,6 +168,7 @@ async function cmdStart(positional, flags) {
   }
   if (res.failed) {
     out(`Server did not reach ready state: ${res.reason}`)
+    printFindings(name)
     out('')
     out('Last 25 console lines:')
     for (const line of sup.tailLog(name, 25)) out(`  ${line}`)
@@ -1420,6 +1462,7 @@ OTHER
   mcctl launchers [name]             Write start/console/stop .bat files
   mcctl jars                         List stored server jars
   mcctl jars import <path> [--as x]  Add a server jar to the store
+  mcctl why <name>                   Say what is wrong with a server, from its own console
   mcctl doctor                       Check environment, ports, EULA, disk, stale state
 `)
 }
@@ -1468,6 +1511,7 @@ const COMMANDS = {
   upgrade: cmdUpgrade,
   pack: cmdPack,
   worlds: cmdWorlds,
+  why: cmdWhy,
   launchers: cmdLaunchers,
   ui: cmdUi,
   panel: cmdUi,

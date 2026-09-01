@@ -21,6 +21,7 @@ import { writeJson } from './util.mjs'
 import { startSampler, metricsFile } from './metrics.mjs'
 import { crashVerdict, CRASH_LIMIT, CRASH_WINDOW_MS } from './crashguard.mjs'
 import { notifyInstance } from './notify.mjs'
+import { diagnose } from './diagnose.mjs'
 
 const name = process.argv[2]
 if (!name) {
@@ -85,6 +86,7 @@ let stopping = false
 let stopSent = false
 let respawnTimer = null
 let stopSampler = () => {}
+let recent = ''
 const stopWaiters = []
 const crashes = []
 
@@ -116,6 +118,15 @@ function launch({ first }) {
 
   child.stdout.pipe(out, { end: false })
   child.stderr.pipe(out, { end: false })
+
+  // A ring of the child's last output, kept so the moment it dies the daemon can say WHY -
+  // the child is gone by then, and the daemon is the only thing still holding its last words.
+  recent = ''
+  const remember = (chunk) => {
+    recent = (recent + chunk.toString()).slice(-32768)
+  }
+  child.stdout.on('data', remember)
+  child.stderr.on('data', remember)
 
   // Watch this run's output until the server reports ready, so a recovery can say "back up"
   // rather than merely "trying". Only recoveries notify - a person starting their own server
@@ -207,6 +218,18 @@ function onExit(code, signal) {
   const crashed = (code !== 0 && code !== null) || Boolean(signal)
   if (crashed && !stopping) crashes.push(Date.now())
 
+  // Name the likely cause while the evidence is at hand. One finding, in the console and on
+  // the webhook - a person woken by "crashed" should not have to open a log to learn "out of
+  // memory" when the daemon already knows.
+  let cause = ''
+  if (crashed && !stopping) {
+    const finding = diagnose(recent.split(/\r?\n/), { port: inst.port, memory: inst.memory, dir: inst.dir })[0]
+    if (finding) {
+      cause = ` Likely cause: ${finding.title.toLowerCase()}.`
+      out.write(`[mcctl] likely cause: ${finding.title} — ${finding.advice}\n`)
+    }
+  }
+
   // Freshly read, so flipping auto-restart off in the panel counts from the very next exit
   // rather than from the next manual start.
   let enabled = Boolean(inst.autoRestart)
@@ -222,7 +245,7 @@ function onExit(code, signal) {
   if (verdict.kind === 'restart') {
     const wait = Math.round(verdict.delayMs / 1000)
     out.write(`[mcctl] crash ${verdict.recent} of ${CRASH_LIMIT} allowed per ${CRASH_WINDOW_MS / 60000} minutes — restarting in ${wait}s\n`)
-    tell(`crashed (exit ${signal || code}). Restarting in ${wait}s.`)
+    tell(`crashed (exit ${signal || code}).${cause} Restarting in ${wait}s.`)
     // The state keeps running:true while the timer runs, so readState reports "stopping" rather
     // than "stopped" - a start racing into this window would collide with the respawn.
     state.restarting = true
@@ -252,7 +275,7 @@ function onExit(code, signal) {
   // Staying down. A crash with auto-restart off is still worth a message - it is the one case
   // where the server is dead and nothing is going to do anything about it.
   if (crashed && !stopping) {
-    tell(`crashed (exit ${signal || code}) and is staying down — auto-restart is off.`)
+    tell(`crashed (exit ${signal || code}) and is staying down — auto-restart is off.${cause}`)
   }
   shutDown(code, signal)
 }

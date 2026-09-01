@@ -210,18 +210,22 @@ export async function destroy(name, { purge = false, snapshot = true } = {}) {
   return { name, purged: purge, snapshot: snapshotFile, tasksRemoved }
 }
 
-/** Open an instance's folder in the system file manager. */
-export function reveal(name) {
+/** Open an instance's folder (or one named subfolder of it) in the system file manager. */
+export function reveal(name, sub = null) {
   const inst = getInstance(name)
+  // A fixed allowlist, not a path: sub arrives over HTTP, and "open a folder in Explorer"
+  // must never become "open anything on the machine".
+  const SUBS = new Set(['crash-reports', 'plugins', 'mods', 'logs'])
+  const target = sub && SUBS.has(sub) ? path.join(inst.dir, sub) : inst.dir
   const [cmd, args] =
-    process.platform === 'win32' ? ['explorer.exe', [inst.dir]]
-    : process.platform === 'darwin' ? ['open', [inst.dir]]
-    : ['xdg-open', [inst.dir]]
+    process.platform === 'win32' ? ['explorer.exe', [target]]
+    : process.platform === 'darwin' ? ['open', [target]]
+    : ['xdg-open', [target]]
   // explorer.exe exits non-zero even when it succeeds, so its result is deliberately not checked.
   try {
     spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref()
   } catch (err) {
-    throw new UserError(`could not open ${inst.dir}: ${err.message}`)
+    throw new UserError(`could not open ${target}: ${err.message}`)
   }
-  return inst.dir
+  return target
 }

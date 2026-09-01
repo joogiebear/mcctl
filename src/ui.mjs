@@ -23,6 +23,7 @@ import * as fabric from './fabric.mjs'
 import * as mrpack from './mrpack.mjs'
 import * as neoforge from './neoforge.mjs'
 import * as worlds from './worlds.mjs'
+import { diagnose, crashReports } from './diagnose.mjs'
 import { acceptableWebhook } from './notify.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -1001,6 +1002,23 @@ async function route(req, res) {
   if (seg[3] === 'upgrade') return handleUpgrade(req, res, name)
   if (seg[3] === 'pack') return handlePack(req, res, name)
   if (seg[3] === 'worlds') return handleWorlds(req, res, name, seg)
+
+  // What went wrong, in words: the known failure shapes found in this server's console,
+  // plus the crash reports Minecraft itself wrote.
+  if (seg[3] === 'diagnose' && req.method === 'GET') {
+    const inst = registry.getInstance(name)
+    const findings = diagnose(supervisor.tailLog(name, 400), {
+      port: inst.port,
+      memory: inst.memory,
+      dir: inst.dir,
+      crashDir: path.join(inst.dir, 'crash-reports'),
+    })
+    const crashes = crashReports(inst, { limit: 5 })
+    return json(res, 200, {
+      findings: findings.map(({ id, title, advice }) => ({ id, title, advice })),
+      crashes: { count: crashes.reports.length, newest: crashes.reports[0] ?? null, dir: crashes.dir },
+    })
+  }
   if (seg[3] === 'metrics') return handleMetrics(req, res, name, url)
 
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
@@ -1046,7 +1064,8 @@ async function route(req, res) {
     return json(res, 200, await manage.destroy(name, { purge: body.purge === true }))
   }
   if (seg[3] === 'reveal') {
-    return json(res, 200, { dir: manage.reveal(name) })
+    const body = await readBody(req)
+    return json(res, 200, { dir: manage.reveal(name, body.sub ? String(body.sub) : null) })
   }
   if (seg[3] === 'settings') {
     const body = await readBody(req)
