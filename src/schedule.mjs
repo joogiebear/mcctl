@@ -44,6 +44,10 @@ const EMPTY = { version: 1, tasks: {} }
  */
 export const ACTIONS = {
   backup: { label: 'Take a backup', needsRunning: false },
+  // A backup only exists at restore time; this reads every snapshot back on a clock so a
+  // corrupt one is found the week it happened, and the webhook hears about it at 3am
+  // instead of nobody hearing about it on the day it mattered.
+  verify: { label: 'Verify the backups', needsRunning: false },
   command: { label: 'Run a server command', needsRunning: true },
   restart: { label: 'Restart the server', needsRunning: false },
   stop: { label: 'Stop the server', needsRunning: true },

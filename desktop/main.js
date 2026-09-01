@@ -149,6 +149,20 @@ ipcMain.handle('mcctl:pickFolder', async (_e, { title } = {}) => {
   return res.canceled ? null : res.filePaths[0]
 })
 
+// A file chooser, for world archives. Windows cannot offer files AND folders in one native
+// dialog, so this picks files; the page keeps its text field for pasting a folder path.
+ipcMain.handle('mcctl:pickFile', async (_e, { title } = {}) => {
+  const res = await dialog.showOpenDialog(win, {
+    title: title || 'Choose a file',
+    properties: ['openFile'],
+    filters: [
+      { name: 'World archives', extensions: ['zip', 'gz', 'tgz'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  })
+  return res.canceled ? null : res.filePaths[0]
+})
+
 /**
  * Is Java installed?
  *

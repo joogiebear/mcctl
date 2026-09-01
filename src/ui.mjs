@@ -22,6 +22,7 @@ import * as upgrade from './upgrade.mjs'
 import * as fabric from './fabric.mjs'
 import * as mrpack from './mrpack.mjs'
 import * as neoforge from './neoforge.mjs'
+import * as worlds from './worlds.mjs'
 import { acceptableWebhook } from './notify.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -223,6 +224,7 @@ async function handleBackups(req, res, name, seg) {
       snapshots: backup.listSnapshots(name),
       dir: path.join(LAYOUT.backupsDir, name),
       root: LAYOUT.backupsDir,
+      mirror: backup.mirrorRoot(),
       scopes: backup.SCOPES,
       running: supervisor.isRunning(name),
       auto: auto && {
@@ -249,7 +251,13 @@ async function handleBackups(req, res, name, seg) {
       label: body.label ? String(body.label).slice(0, 40) : 'manual',
       running,
     })
-    return json(res, 200, { created: path.basename(out.file), size: out.size, members: out.members })
+    return json(res, 200, {
+      created: path.basename(out.file),
+      size: out.size,
+      members: out.members,
+      mirrored: out.mirrored,
+      mirrorError: out.mirrorError,
+    })
   }
 
   if (action === 'restore') {
@@ -372,6 +380,42 @@ async function handleUpgrade(req, res, name) {
     running: supervisor.isRunning(name),
   })
   return json(res, 200, { ...result, running: supervisor.isRunning(name) })
+}
+
+/**
+ * Worlds: what the instance holds, switched, imported, exported, deleted.
+ *
+ * <p>The dangerous gates live in worlds.mjs - a running server cannot switch, export its
+ * live world, or delete - so this stays a thin translation layer, the way players.mjs's
+ * routes are.
+ */
+async function handleWorlds(req, res, name, seg) {
+  const inst = registry.getInstance(name)
+  const verb = seg[4] ?? null
+
+  if (req.method === 'GET' && !verb) {
+    return json(res, 200, {
+      ...worlds.listWorlds(inst),
+      running: supervisor.isRunning(name),
+    })
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+  const body = await readBody(req)
+
+  if (verb === 'activate') {
+    return json(res, 200, worlds.activateWorld(inst, String(body.name)))
+  }
+  if (verb === 'import') {
+    if (!body.source || !body.name) return json(res, 400, { error: 'a source path and a name are required' })
+    return json(res, 200, await worlds.importWorld(inst, String(body.source), { name: String(body.name) }))
+  }
+  if (verb === 'export') {
+    return json(res, 200, await worlds.exportWorld(inst, String(body.name)))
+  }
+  if (verb === 'delete') {
+    return json(res, 200, worlds.deleteWorld(inst, String(body.name)))
+  }
+  return json(res, 404, { error: 'not found' })
 }
 
 /**
@@ -640,12 +684,15 @@ function safeInstance(row) {
   // read from the file. The panel badges it: an offline server behaves differently for any plugin
   // that keys data by UUID, and its logs get bug reports refused.
   let onlineMode = null
+  let levelName = null
   try {
-    onlineMode = readProps(path.join(row.dir, 'server.properties')).get('online-mode') !== 'false'
+    const props = readProps(path.join(row.dir, 'server.properties'))
+    onlineMode = props.get('online-mode') !== 'false'
+    levelName = props.get('level-name') || 'world'
   } catch {
     /* a directory that has gone missing is already reported through status */
   }
-  return { ...safe, rconPort: rcon?.port ?? null, onlineMode }
+  return { ...safe, rconPort: rcon?.port ?? null, onlineMode, levelName }
 }
 
 /**
@@ -730,8 +777,21 @@ async function route(req, res) {
   // it still only takes effect on restart, and the response says so rather than implying otherwise.
   if (seg[1] === 'settings' && req.method === 'POST') {
     const body = await readBody(req)
+    // The mirror reads live from settings, so unlike backupsDir it needs no restart.
+    if (Object.hasOwn(body, 'backupsMirrorDir')) {
+      const raw = String(body.backupsMirrorDir ?? '').trim()
+      if (!raw) {
+        settings.save({ backupsMirrorDir: null })
+        return json(res, 200, { backupsMirrorDir: null })
+      }
+      const dir = path.resolve(raw)
+      const writable = settings.checkWritable(dir)
+      if (!writable.ok) return json(res, 400, { error: `mcctl cannot write to ${dir}: ${writable.error}` })
+      settings.save({ backupsMirrorDir: dir })
+      return json(res, 200, { backupsMirrorDir: dir })
+    }
     if (!Object.hasOwn(body, 'backupsDir')) {
-      return json(res, 400, { error: 'only backupsDir can be set from here' })
+      return json(res, 400, { error: 'only backupsDir and backupsMirrorDir can be set from here' })
     }
     const raw = String(body.backupsDir ?? '').trim()
     if (!raw) {
@@ -940,6 +1000,7 @@ async function route(req, res) {
   if (seg[3] === 'plugins') return handlePlugins(req, res, name, seg, url)
   if (seg[3] === 'upgrade') return handleUpgrade(req, res, name)
   if (seg[3] === 'pack') return handlePack(req, res, name)
+  if (seg[3] === 'worlds') return handleWorlds(req, res, name, seg)
   if (seg[3] === 'metrics') return handleMetrics(req, res, name, url)
 
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })

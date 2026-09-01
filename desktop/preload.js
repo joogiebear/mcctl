@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('mcctlDesktop', {
   /** Native folder chooser. Resolves to an absolute path, or null if cancelled. */
   pickFolder: (title) => ipcRenderer.invoke('mcctl:pickFolder', { title }),
 
+  /** Native file-or-folder chooser (for world archives). Absolute path, or null if cancelled. */
+  pickFile: (title) => ipcRenderer.invoke('mcctl:pickFile', { title }),
+
   /** Current and default locations, for the setup screen. */
   getSetup: () => ipcRenderer.invoke('mcctl:getSetup'),
 

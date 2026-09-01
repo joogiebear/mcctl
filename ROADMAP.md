@@ -35,13 +35,17 @@ user accounts, a remote web panel - stay off it on purpose.
   ecosystem, and a mismatched build installs with the author's version claim stated.
 - **Form controls with depth** *(v0.6.6)* — carved fields, an owned select chevron,
   drawn radios, troughed switches; the wizard matches the panel.
+- **Worlds** *(v0.7.0)* — a Worlds tab and `mcctl worlds`: every world listed with the
+  active one named (and shown in the vitals), import a downloaded map from a zip or
+  folder (found wherever it is nested, never overwriting), export one as a zip, switch
+  which world runs, delete with the truth stated (only the active world is ever in
+  snapshots). Plus the batch's two riders: a **backup mirror** — every snapshot copied
+  to a second location as it is taken, deletions following, because servers and backups
+  on one drive fail together — and a **scheduled verify** action, so backup integrity
+  runs on a clock and failures reach the webhook.
 
 ## Later
 
-- **World import and export.** Drop a downloaded map into a server; export a world as an
-  archive to share. Thin wrappers over what backup.mjs already does.
-- **Scheduled verify.** A `verify` action for the scheduler, so backup integrity is
-  checked on a clock and failures arrive over the webhook.
 - **Log intelligence.** The console already classifies levels; recognising the common
   failure shapes (missing Vault, wrong Java, port in use) and saying so is the next step.
   A crash-report viewer belongs here too.

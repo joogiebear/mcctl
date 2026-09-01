@@ -3,7 +3,50 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { BACKUPS_DIR } from './paths.mjs'
 import { readProps, worldDirs } from './props.mjs'
+import * as settings from './settings.mjs'
 import { fail, stamp, humanBytes, writeJson, readJson, UserError } from './util.mjs'
+
+/**
+ * The mirror: a second location every snapshot is copied to as it is taken.
+ *
+ * <p>This closes the oldest risk in the tool: servers and their snapshots on one drive
+ * means one disk failure takes both the thing and its way back. Read live from settings
+ * rather than resolved at startup, so turning it on needs no restart - and a mirror that
+ * cannot be written never fails the backup that just succeeded: the primary snapshot is
+ * real, and the failure to copy it is reported, loudly, as exactly that.
+ */
+export function mirrorRoot() {
+  const dir = settings.load().backupsMirrorDir
+  return dir ? path.resolve(dir) : null
+}
+
+function mirrorCopy(name, file) {
+  const root = mirrorRoot()
+  if (!root) return { mirrored: null, mirrorError: null }
+  try {
+    const dir = path.join(root, name)
+    fs.mkdirSync(dir, { recursive: true })
+    const dest = path.join(dir, path.basename(file))
+    fs.copyFileSync(file, dest)
+    const manifest = file.replace(/\.tar\.gz$/, '.json')
+    if (fs.existsSync(manifest)) fs.copyFileSync(manifest, dest.replace(/\.tar\.gz$/, '.json'))
+    return { mirrored: dest, mirrorError: null }
+  } catch (err) {
+    return { mirrored: null, mirrorError: `the snapshot is safe, but mirroring it failed: ${err.message}` }
+  }
+}
+
+/** Deletions keep the mirror in step - a retention limit that only thins one side is not one. */
+function mirrorRemove(name, snapName) {
+  const root = mirrorRoot()
+  if (!root) return
+  try {
+    fs.rmSync(path.join(root, name, snapName), { force: true })
+    fs.rmSync(path.join(root, name, snapName.replace(/\.tar\.gz$/, '.json')), { force: true })
+  } catch {
+    /* a mirror that cannot be tidied is rediscovered at the next copy */
+  }
+}
 
 export const SCOPES = ['plugins', 'worlds', 'config', 'standard', 'full']
 
@@ -18,7 +61,7 @@ export const SCOPES = ['plugins', 'worlds', 'config', 'standard', 'full']
  * <p>Excluding it costs nothing: it is a lock, it is regenerated on the next start, and restoring
  * a stale one would be actively wrong.
  */
-const EXCLUDE_ARGS = ['--exclude', 'session.lock']
+export const EXCLUDE_ARGS = ['--exclude', 'session.lock']
 
 const ROOT_CONFIG_FILES = [
   'server.properties',
@@ -94,7 +137,7 @@ function tarBinary() {
   return fs.existsSync(system32) ? system32 : 'tar'
 }
 
-function runTar(args, cwd) {
+export function runTar(args, cwd) {
   return new Promise((resolve, reject) => {
     const child = spawn(tarBinary(), args, { cwd, windowsHide: true })
     let stderr = ''
@@ -163,7 +206,8 @@ export async function createSnapshot(inst, { scope = 'standard', label = null, r
       .slice(0, 10),
   }
   writeJson(path.join(backupDir(inst.name), `${base}.json`), manifest)
-  return { file, size, members, manifest }
+  const { mirrored, mirrorError } = mirrorCopy(inst.name, file)
+  return { file, size, members, manifest, mirrored, mirrorError }
 }
 
 export function listSnapshots(name) {
@@ -304,6 +348,7 @@ export function removeSnapshot(name, ref) {
   const snap = resolveSnapshot(name, ref)
   fs.rmSync(snap.path, { force: true })
   fs.rmSync(snap.path.replace(/\.tar\.gz$/, '.json'), { force: true })
+  mirrorRemove(name, snap.name)
   return { removed: snap.name, size: snap.size }
 }
 
@@ -331,6 +376,7 @@ export function pruneSnapshots(name, keep, { only = null, taskId = null } = {}) 
   for (const snap of remove) {
     fs.rmSync(snap.path, { force: true })
     fs.rmSync(snap.path.replace(/\.tar\.gz$/, '.json'), { force: true })
+    mirrorRemove(name, snap.name)
   }
   return remove
 }

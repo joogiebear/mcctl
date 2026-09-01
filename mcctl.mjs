@@ -18,6 +18,7 @@ import * as upgrade from './src/upgrade.mjs'
 import * as fabric from './src/fabric.mjs'
 import * as mrpack from './src/mrpack.mjs'
 import * as neoforge from './src/neoforge.mjs'
+import * as worlds from './src/worlds.mjs'
 import { readState, clearState } from './src/control.mjs'
 import * as sup from './src/supervisor.mjs'
 import { rconExec, stripColors } from './src/rcon.mjs'
@@ -533,6 +534,8 @@ async function cmdBackup(positional, flags) {
     const res = await backup.createSnapshot(inst, { scope, label: flags.label ?? null, running })
     out(`Wrote ${res.file} (${humanBytes(res.size)})`)
     out(`  included: ${res.members.join(', ')}`)
+    if (res.mirrored) out(`  mirrored: ${res.mirrored}`)
+    if (res.mirrorError) out(`  WARNING: ${res.mirrorError}`)
     if (res.manifest.warnings.length) {
       out('  tar warnings (normal for a live server):')
       for (const w of res.manifest.warnings) out(`    ${w}`)
@@ -663,6 +666,7 @@ function cmdConfig(positional, flags) {
       ['instances:', l.instancesDir + (l.separateInstances ? '   (separate location)' : '')],
       ['jars:', l.jarsDir],
       ['backups:', l.backupsDir],
+      ['backup mirror:', backup.mirrorRoot() ?? '(none - one disk failure takes servers and snapshots together)'],
       ['templates:', l.templatesDir],
       ['run state:', l.runDir],
     ]))
@@ -691,6 +695,25 @@ function cmdConfig(positional, flags) {
     out('')
     out('Takes effect on the next command. Existing servers do NOT move — the registry stores')
     out('their absolute paths, so they keep running where they are; only new ones land here.')
+    return
+  }
+
+  if (sub === 'set-backup-mirror') {
+    const arg = positional[1]
+    if (!arg) fail('usage: mcctl config set-backup-mirror <path>|off')
+    if (arg.toLowerCase() === 'off') {
+      settings.save({ backupsMirrorDir: null })
+      out('Mirroring turned off. Copies already made stay where they are.')
+      return
+    }
+    const abs = path.resolve(arg)
+    const check = settings.checkWritable(abs)
+    if (!check.ok) fail(`cannot write to ${abs}
+  ${check.error}`)
+    settings.save({ backupsMirrorDir: abs })
+    out(`Every new snapshot, for every server, now also copies to ${abs}.`)
+    out('Ideally that is another drive - the point is that one disk failure cannot take')
+    out('the servers and their backups together. Retention deletions follow the mirror.')
     return
   }
 
@@ -828,6 +851,68 @@ async function cmdPack(positional, flags) {
   }
 
   fail('usage: mcctl pack <name> [update --yes]')
+}
+
+/** Worlds: list, switch, import, export, delete. The panel's Worlds tab, for a terminal. */
+async function cmdWorlds(positional, flags) {
+  const name = requireName(positional, 'worlds')
+  const inst = getInstance(name)
+  const sub = positional[1] ?? 'list'
+
+  if (sub === 'list') {
+    const data = worlds.listWorlds(inst)
+    if (!data.worlds.length) {
+      out(`No worlds in ${inst.dir}. The server generates one on first start, or: mcctl worlds ${name} import <zip-or-folder> --as <name>`)
+      return
+    }
+    const t = [['WORLD', 'ACTIVE', 'DIMENSIONS', 'SIZE']]
+    for (const w of data.worlds) {
+      t.push([w.name, w.active ? 'yes' : '', w.dimensions.join(', ') || '-', w.sizeHuman])
+    }
+    out(table(t))
+    return
+  }
+
+  if (sub === 'use') {
+    const target = positional[2]
+    if (!target) fail(`usage: mcctl worlds ${name} use <world>`)
+    worlds.activateWorld(inst, target)
+    out(`${target} is now the active world. Takes effect on the next start.`)
+    return
+  }
+
+  if (sub === 'import') {
+    const source = positional[2]
+    if (!source) fail(`usage: mcctl worlds ${name} import <zip-or-folder> --as <name>`)
+    const asName = flags.as
+      ?? path.basename(String(source)).replace(/\.(zip|tar\.gz|tgz)$/i, '').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 32)
+    const res = await worlds.importWorld(inst, source, { name: asName })
+    out(`Imported "${res.name}" (${res.sizeHuman}${res.dimensions.length ? `, with ${res.dimensions.join(' and ')}` : ''}).`)
+    out(`Make it the active world with: mcctl worlds ${name} use ${res.name}`)
+    return
+  }
+
+  if (sub === 'export') {
+    const target = positional[2] ?? worlds.listWorlds(inst).active
+    const res = await worlds.exportWorld(inst, target)
+    out(`Exported ${res.members.join(', ')} to:`)
+    out(`  ${res.file}  (${res.sizeHuman})`)
+    return
+  }
+
+  if (sub === 'delete') {
+    const target = positional[2]
+    if (!target) fail(`usage: mcctl worlds ${name} delete <world> --yes`)
+    if (!flags.yes) {
+      fail(`deleting "${target}" is permanent: only the ACTIVE world is ever in snapshots, so an
+  inactive world has no way back unless it was exported. Re-run with --yes.`)
+    }
+    const res = worlds.deleteWorld(inst, target)
+    out(`Deleted ${res.removed.join(', ')}.`)
+    return
+  }
+
+  fail('usage: mcctl worlds <name> [use <world> | import <src> --as <name> | export [world] | delete <world> --yes]')
 }
 
 /** List a server's plugins, or flip one on or off. The panel's Plugins tab, for a terminal. */
@@ -1137,6 +1222,21 @@ async function runTask(id) {
         if (gone.length) pruned = `, pruned ${gone.length} over the limit of ${action.keep}`
       }
       record('ok', `${res.file} (${humanBytes(res.size)})${pruned}`)
+    } else if (action.type === 'verify') {
+      const snaps = backup.listSnapshots(instance)
+      if (!snaps.length) return record('skipped', 'no snapshots to verify yet')
+      const failed = []
+      for (const s of snaps) {
+        const r = await backup.verifySnapshot(instance, s.name)
+        if (!r.ok) failed.push(`${s.name}: ${r.problems[0]}`)
+      }
+      if (failed.length) {
+        process.exitCode = 1
+        const detail = `${failed.length} of ${snaps.length} snapshots failed: ${failed.join('; ')}`
+        await alert(detail)
+        return record('FAILED', detail)
+      }
+      record('ok', `all ${snaps.length} snapshots read back whole`)
     } else if (action.type === 'command') {
       if (!running) return record('skipped', 'the server was not running, so nothing was sent')
       await sup.sendConsole(instance, action.line)
@@ -1286,6 +1386,8 @@ INSTANCES
                                      auto-restart=on|off, webhook=<url>|off
   mcctl props <name> [key=value...]  Read or edit server.properties
   mcctl plugins <name>               List plugins; flip one with: plugins <name> disable <x>
+  mcctl worlds <name>                List worlds; use <w>, import <src> --as <n>,
+                                     export [w], delete <w> --yes
   mcctl rm <name> [--purge --yes]    Unregister (and optionally delete files)
 
 SNAPSHOTS
@@ -1310,6 +1412,8 @@ OTHER
   mcctl config                       Show where servers, jars and backups live
   mcctl config set-root <path>       Move the data root (new servers only)
   mcctl config set-instances <path>  Put servers on a different drive
+  mcctl config set-backup-mirror <path>|off
+                                     Copy every new snapshot to a second drive too
   mcctl rename <old> <new>           Rename an instance (and its folder)
   mcctl rebuild <name> --yes         Reset worlds; keeps plugins unless --wipe-plugins
   mcctl reveal <name>                Open the instance folder in Explorer
@@ -1363,6 +1467,7 @@ const COMMANDS = {
   plugins: cmdPlugins,
   upgrade: cmdUpgrade,
   pack: cmdPack,
+  worlds: cmdWorlds,
   launchers: cmdLaunchers,
   ui: cmdUi,
   panel: cmdUi,
