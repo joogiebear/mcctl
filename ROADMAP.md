@@ -28,19 +28,16 @@ user accounts, a remote web panel - stay off it on purpose.
   elsewhere-hosted) are linked to rather than pretended at; a sparse version claim is
   offered with the mismatch said out loud.
 
-## Next
-
-## Later
-
 - **Modded servers, complete** *(0.6.x; docs/modpacks-plan.md)* — Fabric and NeoForge
   as first-class loaders with a Mods tab, "From a modpack" in Add-a-server for both,
   pack updates that may only touch what the old pack owned, and the server's version
   treated as a preference rather than a wall: search shows the loader's whole
   ecosystem, and a mismatched build installs with the author's version claim stated.
-- **A Share screen.** The honest answer to "how do my friends join?": the LAN address
-  plainly, UPnP as an explicit opt-in, and real guidance for Tailscale / playit.gg for
-  play over the internet. Exposure stays a deliberate user decision; this makes it an
-  informed one.
+- **Form controls with depth** *(v0.6.6)* — carved fields, an owned select chevron,
+  drawn radios, troughed switches; the wizard matches the panel.
+
+## Later
+
 - **World import and export.** Drop a downloaded map into a server; export a world as an
   archive to share. Thin wrappers over what backup.mjs already does.
 - **Scheduled verify.** A `verify` action for the scheduler, so backup integrity is
@@ -48,6 +45,16 @@ user accounts, a remote web panel - stay off it on purpose.
 - **Log intelligence.** The console already classifies levels; recognising the common
   failure shapes (missing Vault, wrong Java, port in use) and saying so is the next step.
   A crash-report viewer belongs here too.
+
+## After 1.0
+
+- **A Share screen** *(tabled 2026-09-01, owner's call — likely post-1.0)*. The honest
+  answer to "how do my friends join?", in tiers of increasing exposure: the LAN address
+  plainly; "direct" keeping a DNS record on the owner's own domain pointed at the home
+  IP with SRV for the port and UPnP as an explicit opt-in; "tunnel" via playit.gg or a
+  self-owned VPS relay, no ports opened and the home IP hidden. Exposure stays a
+  deliberate user decision; this screen's whole job is making it an informed one, with
+  whitelist and online-mode nudged on at the moment anything goes public.
 
 ## Reach
 
