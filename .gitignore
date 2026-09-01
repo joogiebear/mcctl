@@ -18,3 +18,5 @@ node_modules/
 
 # Jars pulled out of an instance's plugins folder (e.g. conflicting duplicates)
 _disabled/
+
+CLAUDE.local.md
