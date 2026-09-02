@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { spawnSync, execFile } from 'node:child_process'
 
 import { DATA_ROOT, ROOT, RUN_DIR } from './paths.mjs'
 import { readJson, writeJson, fail, validateName } from './util.mjs'
@@ -159,9 +159,9 @@ export function load() {
   return data
 }
 
-export function list() {
+export async function list() {
   const data = load()
-  const live = queryWindows()
+  const live = await queryWindows()
   return Object.entries(data.tasks)
     .map(([id, task]) => ({ id, ...task, windows: live.get(id) ?? null }))
     .sort((a, b) => a.instance.localeCompare(b.instance) || a.name.localeCompare(b.name))
@@ -170,16 +170,28 @@ export function list() {
 /**
  * The scheduler's answer, kept for a few seconds.
  *
- * <p>Asking Windows means starting PowerShell, which is the better part of a second. The panel
- * asks on every Backups tab load and every Scheduler tab load, and the Backups tab asks just to
- * find its own one task. A three-second memory turns a burst of those into one spawn. Any write
- * to the scheduler forgets it, so a task just made or removed never shows its old state.
+ * <p>Asking Windows means starting PowerShell and loading its ScheduledTasks module, which is
+ * the better part of a second on a good day and several on a cold one. The panel asks on every
+ * Backups tab load and every Scheduler tab load, and the Backups tab asks just to find its own
+ * one task. A three-second memory turns a burst of those into one spawn, and a burst that lands
+ * while one is in flight joins it rather than starting a second PowerShell. Any write to the
+ * scheduler forgets it, so a task just made or removed never shows its old state.
+ *
+ * <p>Asked asynchronously. The panel is one process, and a synchronous PowerShell held every
+ * other request - and the console stream - for as long as it took, which read on the page as
+ * the whole panel hesitating whenever the Backups tab opened.
  */
 let windowsCache = { at: 0, rows: null }
+let windowsInFlight = null
+// Bumped by every write. A query that was already running when a task was changed answers
+// about the scheduler as it was, and must not be remembered as the scheduler as it is.
+let windowsGeneration = 0
 const WINDOWS_CACHE_MS = 3000
 
 function forgetWindows() {
   windowsCache = { at: 0, rows: null }
+  windowsInFlight = null
+  windowsGeneration++
 }
 
 /**
@@ -190,40 +202,58 @@ function forgetWindows() {
  * in Task Scheduler - shows as null rather than as working.
  */
 function queryWindows() {
-  if (windowsCache.rows && Date.now() - windowsCache.at < WINDOWS_CACHE_MS) return windowsCache.rows
-  const out = new Map()
-  windowsCache = { at: Date.now(), rows: out }
-  const ps = spawnSync(
-    'powershell',
-    ['-NoProfile', '-Command',
-      `Get-ScheduledTask -TaskPath '\\${TASK_FOLDER}\\' -ErrorAction SilentlyContinue | ` +
-      'ForEach-Object { $i = $_ | Get-ScheduledTaskInfo; ' +
-      // Round-trip ("o") rather than [string]. Casting a DateTime to a string gives whatever the
-      // machine's locale prints, and on a machine that writes 31/08/2026 the panel's Date() saw an
-      // invalid date and fell back to showing the raw text. ISO parses the same everywhere, and the
-      // page formats it into the reader's own locale afterwards.
-      '[pscustomobject]@{ name=$_.TaskName; state=[string]$_.State; ' +
-      'lastRun=$(if ($i.LastRunTime) { $i.LastRunTime.ToString("o") }); ' +
-      'lastResult=$i.LastTaskResult; ' +
-      'nextRun=$(if ($i.NextRunTime) { $i.NextRunTime.ToString("o") }) } } | ' +
-      // No -AsArray: that needs PowerShell 6+, and Windows ships 5.1. A single task therefore
-      // comes back as an object rather than a one-element array, which is handled below.
-      'ConvertTo-Json -Compress'],
-    { encoding: 'utf8', windowsHide: true, timeout: 30000 },
-  )
-  if (ps.status !== 0 || !ps.stdout.trim()) return out
-  try {
-    const parsed = JSON.parse(ps.stdout)
-    for (const row of Array.isArray(parsed) ? parsed : [parsed]) {
-      // Task Scheduler reports a task that has never run as having run in 1999. Passing that on
-      // would put "Nov 30 1999" in front of someone as the last time their backup happened.
-      if (row.lastRun && new Date(row.lastRun).getFullYear() < 2000) row.lastRun = null
-      out.set(row.name, row)
-    }
-  } catch {
-    /* nothing usable from the scheduler; every task reports as unknown */
+  if (windowsCache.rows && Date.now() - windowsCache.at < WINDOWS_CACHE_MS) {
+    return Promise.resolve(windowsCache.rows)
   }
-  return out
+  if (windowsInFlight) return windowsInFlight
+  // Everywhere but Windows there is no scheduler to ask, and spawning powershell to find that
+  // out would cost a failed spawn per call.
+  if (process.platform !== 'win32') {
+    windowsCache = { at: Date.now(), rows: new Map() }
+    return Promise.resolve(windowsCache.rows)
+  }
+  const generation = windowsGeneration
+  const query = new Promise((resolve) => {
+    execFile(
+      'powershell',
+      ['-NoProfile', '-NonInteractive', '-Command',
+        `Get-ScheduledTask -TaskPath '\\${TASK_FOLDER}\\' -ErrorAction SilentlyContinue | ` +
+        'ForEach-Object { $i = $_ | Get-ScheduledTaskInfo; ' +
+        // Round-trip ("o") rather than [string]. Casting a DateTime to a string gives whatever the
+        // machine's locale prints, and on a machine that writes 31/08/2026 the panel's Date() saw an
+        // invalid date and fell back to showing the raw text. ISO parses the same everywhere, and the
+        // page formats it into the reader's own locale afterwards.
+        '[pscustomobject]@{ name=$_.TaskName; state=[string]$_.State; ' +
+        'lastRun=$(if ($i.LastRunTime) { $i.LastRunTime.ToString("o") }); ' +
+        'lastResult=$i.LastTaskResult; ' +
+        'nextRun=$(if ($i.NextRunTime) { $i.NextRunTime.ToString("o") }) } } | ' +
+        // No -AsArray: that needs PowerShell 6+, and Windows ships 5.1. A single task therefore
+        // comes back as an object rather than a one-element array, which is handled below.
+        'ConvertTo-Json -Compress'],
+      { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 4 * 1024 * 1024 },
+      (err, stdout) => {
+        const current = generation === windowsGeneration
+        if (current) windowsInFlight = null
+        const out = new Map()
+        if (current) windowsCache = { at: Date.now(), rows: out }
+        if (err || !String(stdout ?? '').trim()) return resolve(out)
+        try {
+          const parsed = JSON.parse(stdout)
+          for (const row of Array.isArray(parsed) ? parsed : [parsed]) {
+            // Task Scheduler reports a task that has never run as having run in 1999. Passing that
+            // on would put "Nov 30 1999" in front of someone as the last time their backup happened.
+            if (row.lastRun && new Date(row.lastRun).getFullYear() < 2000) row.lastRun = null
+            out.set(row.name, row)
+          }
+        } catch {
+          /* nothing usable from the scheduler; every task reports as unknown */
+        }
+        resolve(out)
+      },
+    )
+  })
+  windowsInFlight = query
+  return query
 }
 
 /**

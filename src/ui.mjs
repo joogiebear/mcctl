@@ -1,7 +1,9 @@
 import http from 'node:http'
-import { readFileSync } from 'node:fs'
+import fs, { readFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { monitorEventLoopDelay } from 'node:perf_hooks'
 
 import * as supervisor from './supervisor.mjs'
 import * as registry from './registry.mjs'
@@ -25,7 +27,7 @@ import * as neoforge from './neoforge.mjs'
 import * as worlds from './worlds.mjs'
 import { diagnose, crashReports } from './diagnose.mjs'
 import { acceptableWebhook } from './notify.mjs'
-import { fail, UserError } from './util.mjs'
+import { fail, refreshProcessTable, UserError } from './util.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -40,6 +42,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
  * step, and no dependency that can rot between the day this is written and the day it is needed.
  */
 export function serve({ port = 8770, host = '127.0.0.1', open = true } = {}) {
+  guardProcess()
+  watchEventLoop()
+  // The first read of the process table is synchronous by design (see util.mjs). Taken now,
+  // while nothing is waiting on it, rather than inside the first poll.
+  refreshProcessTable()
+
   const server = http.createServer(async (req, res) => {
     try {
       if (!isLocalRequest(req)) {
@@ -58,7 +66,7 @@ export function serve({ port = 8770, host = '127.0.0.1', open = true } = {}) {
       // A refusal ("the server is running", "that is not a port") is the person's to fix and
       // answers 400; anything else is mcctl's fault and answers 500. Both used to be 500.
       const refusal = err instanceof UserError || err?.userFacing === true
-      json(res, refusal ? 400 : 500, { error: err?.message ?? String(err) })
+      json(res, refusal ? 400 : 500, { error: err?.message ?? String(err), ...(err?.code ? { code: err.code } : {}) })
     }
   })
 
@@ -72,6 +80,204 @@ export function serve({ port = 8770, host = '127.0.0.1', open = true } = {}) {
       resolve({ server, url, port: bound })
     })
   })
+}
+
+/**
+ * The panel's own log: what went wrong in the panel process, and when it stalled.
+ *
+ * <p>The console log is the server's; the daemon log is the daemon's. Until this existed the
+ * panel process had nowhere to say anything, so a stall or a swallowed failure was invisible to
+ * the person reporting "it hesitates sometimes" and to whoever read the report. Appended, never
+ * rotated: it only gets a line when something is wrong, and it is included in the diagnostics.
+ */
+export function panelLog(msg) {
+  try {
+    fs.mkdirSync(LAYOUT.runDir, { recursive: true })
+    fs.appendFile(path.join(LAYOUT.runDir, 'panel.log'), `[${new Date().toISOString()}] ${msg}\n`, () => {})
+  } catch {
+    /* a log line lost is not worth an error */
+  }
+}
+
+/**
+ * Do not die on a promise nobody caught.
+ *
+ * <p>Node's default for an unhandled rejection is to exit the process. Here that process is the
+ * panel - and in the desktop app, the whole application window - so one forgotten catch on a
+ * webhook, a mirror copy or a stream write after the socket closed took everything down with no
+ * message. The servers survive either way; the panel should too. Logged, so the leak is found.
+ */
+let guarded = false
+function guardProcess() {
+  if (guarded) return
+  guarded = true
+  process.on('unhandledRejection', (reason) => {
+    panelLog(`unhandled rejection: ${reason?.stack ?? reason?.message ?? String(reason)}`)
+  })
+}
+
+/**
+ * Notice when the panel stops answering.
+ *
+ * <p>Everything the panel does runs on one event loop, so anything synchronous - a child
+ * process waited on, a directory walked - holds every request and the console stream for as
+ * long as it takes. That is exactly the "weird hesitation" nobody can reproduce on demand.
+ * Sampled every second and written to the panel log whenever the loop was held for longer
+ * than a quarter of a second, so a report of a stutter comes with the time and the size of it.
+ */
+const LAG_LOG_MS = 250
+function watchEventLoop() {
+  const h = monitorEventLoopDelay({ resolution: 20 })
+  h.enable()
+  const timer = setInterval(() => {
+    const worst = Math.round(h.max / 1e6)
+    h.reset()
+    if (worst >= LAG_LOG_MS) panelLog(`event loop held for ${worst}ms`)
+  }, 1000)
+  timer.unref()
+}
+
+/** The last lines of the panel log, for the diagnostics bundle. */
+function panelLogTail(count) {
+  try {
+    const lines = fs.readFileSync(path.join(LAYOUT.runDir, 'panel.log'), 'utf8').split(/\r?\n/).filter(Boolean)
+    return lines.slice(-count)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Everything a bug report needs, as one block of text.
+ *
+ * <p>Without this a report is a screenshot and "it doesn't work". With it, it is the version,
+ * the Java, where things live, every server with its status, the panel's own log, and the last
+ * lines of the console for the server being looked at. Nothing secret goes in: no RCON
+ * password, and no webhook URL - a Discord webhook is a credential, and this text is meant to
+ * be pasted somewhere public.
+ */
+function packageInfo() {
+  try {
+    return JSON.parse(readFileSync(path.join(HERE, '..', 'package.json'), 'utf8'))
+  } catch {
+    // A checkout without package.json is still a checkout.
+    return {}
+  }
+}
+
+/**
+ * Where this project lives on GitHub, from package.json's `repository`.
+ *
+ * <p>One field, read rather than repeated: the desktop's update feed, the issue template and the
+ * feedback links all have to agree on it, and a fork that changes it in one place should not be
+ * sending its users' reports to this one.
+ */
+export function projectUrl() {
+  const repo = String(packageInfo().repository ?? '')
+  const m = /^(?:github:)?([\w.-]+\/[\w.-]+?)(?:\.git)?$/.exec(repo) ?? /github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(repo)
+  return m ? `https://github.com/${m[1]}` : null
+}
+
+/**
+ * Where ideas and questions go. Discussions for now; a Discord invite belongs here the day one
+ * exists, which is why it is a single string rather than derived from the repository.
+ */
+const IDEAS_URL = () => `${projectUrl()}/discussions`
+
+async function diagnostics(instanceName, { short = false } = {}) {
+  const lines = []
+  const add = (k, v) => lines.push(`${k}: ${v}`)
+  const version = packageInfo().version ?? 'unknown'
+  lines.push('== mcctl diagnostics ==')
+  add('mcctl', version)
+  add('node', process.version + (process.versions.electron ? ` (electron ${process.versions.electron})` : ''))
+  add('os', `${process.platform} ${os.release()} ${os.arch()}, ${os.cpus().length} cores, ${Math.round(os.totalmem() / 1073741824)} GB`)
+  add('generated', new Date().toISOString())
+  const jv = await java.health()
+  add('java', jv.found && jv.path ? `${jv.version} (${jv.reason})${jv.onPath ? '' : ` at ${jv.path}, not on PATH`}` : jv.message)
+  for (const other of jv.others ?? []) {
+    if (other.path !== jv.path) add('java (also)', `${other.version} at ${other.path}`)
+  }
+  lines.push('')
+  lines.push('== where things live ==')
+  for (const k of ['dataRoot', 'instancesDir', 'jarsDir', 'backupsDir', 'runDir']) add(k, LAYOUT[k])
+  lines.push('')
+  lines.push('== servers ==')
+  const all = registry.listInstances()
+  if (!all.length) lines.push('(none)')
+  for (const i of all) {
+    let row
+    try {
+      row = supervisor.statusOf(i.name)
+    } catch (err) {
+      row = { ...i, status: `unknown (${err?.message ?? err})` }
+    }
+    lines.push(`- ${row.name}: ${row.status}, ${row.loader ?? 'paper'}${row.mcVersion ? ` ${row.mcVersion}` : ''}, `
+      + `${row.memory}, port ${row.port}, jar ${row.jar}`
+      + `${row.javaPid ? `, java pid ${row.javaPid}` : ''}${row.autoRestart ? ', auto-restart' : ''}`
+      + `${row.lastError ? `, last error: ${row.lastError}` : ''}`)
+  }
+  const tail = panelLogTail(short ? 5 : 20)
+  lines.push('')
+  lines.push(`== panel log (last ${short ? 5 : 20}) ==`)
+  lines.push(...(tail.length ? tail : ['(empty)']))
+  if (instanceName && registry.hasInstance(instanceName)) {
+    const inst = registry.getInstance(instanceName)
+    const recent = supervisor.tailLog(instanceName, 60)
+    const findings = diagnose(supervisor.tailLog(instanceName, 400), {
+      port: inst.port, memory: inst.memory, dir: inst.dir, crashDir: path.join(inst.dir, 'crash-reports'),
+    })
+    lines.push('')
+    lines.push(`== ${instanceName}: diagnosis ==`)
+    lines.push(...(findings.length ? findings.map((f) => `- ${f.title}: ${f.advice}`) : ['(nothing recognised)']))
+    // The console tail is the part that does not fit in a URL; the short form leaves it to the
+    // clipboard, and the issue body says so.
+    if (!short) {
+      lines.push('')
+      lines.push(`== ${instanceName}: console (last 60) ==`)
+      lines.push(...(recent.length ? recent : ['(empty)']))
+    }
+  }
+  return lines.join('\n') + '\n'
+}
+
+/**
+ * The two doors of the Feedback sheet, as URLs the page opens in the real browser.
+ *
+ * <p>A bug report opens GitHub's new-issue form already filled in: the template, a title, and
+ * the short diagnostics in the body. Browsers and GitHub both cap a URL at a few thousand
+ * characters, so the body carries what fits - version, Java, servers, the panel log tail and
+ * the diagnosis - and the full bundle goes to the clipboard for pasting under it. The person
+ * only has to say what they were doing. Nothing is sent by mcctl itself; the browser hop is
+ * the consent.
+ */
+async function feedback(instanceName, { title = '' } = {}) {
+  const home = projectUrl()
+  if (!home) return { bug: null, ideas: null, full: '' }
+  const short = await diagnostics(instanceName, { short: true })
+  const full = await diagnostics(instanceName)
+  const body = [
+    '**What happened**',
+    '',
+    '<!-- What you did, what you expected, what you got instead. -->',
+    '',
+    '**Diagnostics**',
+    '',
+    '```',
+    short.trimEnd(),
+    '```',
+    '',
+    '<!-- The full diagnostics, console lines included, are on your clipboard: paste them here. -->',
+    '',
+  ].join('\n')
+  const params = new URLSearchParams({ template: 'bug_report.md', labels: 'bug', title, body })
+  let bug = `${home}/issues/new?${params}`
+  // Over the limit, the body is trimmed to what always fits rather than the link failing.
+  if (bug.length > 7500) {
+    params.set('body', body.slice(0, 7500 - `${home}/issues/new?`.length - 400) + '\n```\n\n(trimmed - paste the full diagnostics from your clipboard)\n')
+    bug = `${home}/issues/new?${params}`
+  }
+  return { bug, ideas: IDEAS_URL(), full }
 }
 
 /**
@@ -226,7 +432,7 @@ async function handleBackups(req, res, name, seg) {
   const action = seg[4] ?? null
 
   if (req.method === 'GET') {
-    const auto = autoBackupTask(name)
+    const auto = await autoBackupTask(name)
     return json(res, 200, {
       snapshots: backup.listSnapshots(name),
       dir: path.join(LAYOUT.backupsDir, name),
@@ -286,7 +492,7 @@ async function handleBackups(req, res, name, seg) {
   }
 
   if (action === 'auto') {
-    const existing = autoBackupTask(name)
+    const existing = await autoBackupTask(name)
     if (body.enabled === false) {
       if (existing) schedule.remove(existing.id)
       return json(res, 200, { auto: null })
@@ -320,8 +526,8 @@ async function handleBackups(req, res, name, seg) {
  * Backups tab has only ever created this task under one name, so a task with that exact name and
  * no owner is one of ours, and anything else is left alone.
  */
-function autoBackupTask(name) {
-  const mine = schedule.list().filter((t) => t.instance === name && t.action.type === 'backup')
+async function autoBackupTask(name) {
+  const mine = (await schedule.list()).filter((t) => t.instance === name && t.action.type === 'backup')
   return mine.find((t) => t.owner === schedule.OWNER_BACKUPS)
     ?? mine.find((t) => !t.owner && t.name === 'Automatic backup')
     ?? null
@@ -402,7 +608,7 @@ async function handleWorlds(req, res, name, seg) {
 
   if (req.method === 'GET' && !verb) {
     return json(res, 200, {
-      ...worlds.listWorlds(inst),
+      ...(await worlds.listWorlds(inst)),
       running: supervisor.isRunning(name),
     })
   }
@@ -592,7 +798,7 @@ async function handleSchedules(req, res, name, seg) {
   const id = seg[4] ?? null
   const verb = seg[5] ?? null
 
-  const mine = () => schedule.list().filter((t) => t.instance === name)
+  const mine = async () => (await schedule.list()).filter((t) => t.instance === name)
 
   const shape = (t) => ({
     id: t.id,
@@ -613,7 +819,7 @@ async function handleSchedules(req, res, name, seg) {
 
   if (req.method === 'GET') {
     return json(res, 200, {
-      tasks: mine().map(shape),
+      tasks: (await mine()).map(shape),
       runs: schedule.recentRuns(name),
       actions: Object.entries(schedule.ACTIONS).map(([type, meta]) => ({
         type, label: meta.label, needsRunning: meta.needsRunning,
@@ -649,7 +855,7 @@ async function handleSchedules(req, res, name, seg) {
   }
 
   // Every id-addressed route below acts on a task, so the ownership check happens once, here.
-  const owned = mine().find((t) => t.id === id)
+  const owned = (await mine()).find((t) => t.id === id)
   if (!owned) return json(res, 404, { error: `"${name}" has no scheduled task "${id}"` })
 
   if (!verb) {
@@ -659,12 +865,12 @@ async function handleSchedules(req, res, name, seg) {
       schedule: body.schedule,
       enabled: body.enabled,
     })
-    return json(res, 200, shape(mine().find((t) => t.id === id)))
+    return json(res, 200, shape((await mine()).find((t) => t.id === id)))
   }
 
   if (verb === 'enable') {
     schedule.setEnabled(id, body.enabled !== false)
-    return json(res, 200, shape(mine().find((t) => t.id === id)))
+    return json(res, 200, shape((await mine()).find((t) => t.id === id)))
   }
 
   if (verb === 'run') {
@@ -702,7 +908,7 @@ function safeInstance(row) {
   } catch {
     /* a directory that has gone missing is already reported through status */
   }
-  return { ...safe, rconPort: rcon?.port ?? null, onlineMode, levelName }
+  return { ...safe, rconPort: rcon?.port ?? null, onlineMode, levelName, javaNeeds: java.requiredMajor(plugins.mcVersionOf(row)) }
 }
 
 /**
@@ -777,7 +983,42 @@ async function route(req, res) {
   // Java is the one thing mcctl needs and cannot provide. Asked here so the panel can say so up
   // front instead of letting it surface as "spawn java ENOENT" after a fifty-megabyte download.
   if (seg[1] === 'health' && req.method === 'GET') {
-    return json(res, 200, { java: java.probe(), javaDownload: java.DOWNLOAD_URL })
+    return json(res, 200, { java: await java.health(), javaDownload: java.DOWNLOAD_URL })
+  }
+
+  // ---- what Java each version needs, next to what is installed -----------------
+  if (seg[1] === 'java' && seg[2] === 'needs' && req.method === 'GET') {
+    const versions = String(url.searchParams.get('versions') ?? '').split(',').filter(Boolean).slice(0, 500)
+    const { best } = await java.discover()
+    const needs = {}
+    for (const v of versions) needs[v] = java.requiredMajor(v)
+    return json(res, 200, { needs, have: best?.major ?? null, download: java.DOWNLOAD_URL })
+  }
+
+  // ---- every Java on this machine, for the per-server picker ----------------
+  if (seg[1] === 'java' && seg.length === 2 && req.method === 'GET') {
+    const { best, onPath, all } = await java.discover()
+    return json(res, 200, {
+      best: best?.path ?? null,
+      onPath: onPath.found ? { major: onPath.major, version: onPath.version } : null,
+      found: all.map(({ path: p, source, major, version, reason }) => ({ path: p, source, major, version, reason })),
+      download: java.DOWNLOAD_URL,
+    })
+  }
+
+  // ---- the feedback doors: prefilled issue, discussions, full bundle ---------
+  if (seg[1] === 'feedback' && req.method === 'GET') {
+    return json(res, 200, await feedback(url.searchParams.get('instance'), {
+      title: String(url.searchParams.get('title') ?? '').slice(0, 120),
+    }))
+  }
+
+  // ---- a bug report's worth of facts, as text ------------------------------
+  if (seg[1] === 'diagnostics' && req.method === 'GET') {
+    const text = await diagnostics(url.searchParams.get('instance'))
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(text)
+    return
   }
 
   // ---- where everything lives, for the settings screen ----------------------
@@ -927,6 +1168,12 @@ async function route(req, res) {
       if (body.loader === 'neoforge') {
         if (!body.neoforgeVersion) return json(res, 400, { error: 'a Minecraft version is required for a NeoForge server' })
         const result = await neoforge.createServer(String(body.name), String(body.neoforgeVersion), {
+          java: await java.pickJava({
+            explicit: body.java ? String(body.java) : null,
+            needs: java.requiredMajor(String(body.neoforgeVersion)),
+            force: body.force === true,
+            what: `Minecraft ${body.neoforgeVersion}`,
+          }),
           memory: body.memory || '4G',
           port: body.port ? Number(body.port) : null,
           onlineMode: body.onlineMode !== false,
@@ -951,10 +1198,20 @@ async function route(req, res) {
           message: 'Downloading the server jar',
         })
       }
+      // Which Java, decided before the download: the one named, or the newest installed that
+      // the version can run on. A version nothing here can run is refused now, not at first
+      // start - unless the page asked to go ahead anyway.
+      const chosenJava = await java.pickJava({
+        explicit: body.java ? String(body.java) : null,
+        needs: version ? java.requiredMajor(String(version)) : null,
+        force: body.force === true,
+        what: version ? `Minecraft ${version}` : 'this version',
+      })
       if (version) {
         const label = sources.labelFor(loader)
         jobUpdate(jobId, { stage: 'resolve', percent: null, message: `Finding ${label} ${version}` })
-        const fetched = await sources.fetchJar(loader, String(version), { onProgress })
+        // BuildTools compiles with a JDK: hand it the same Java the server will get.
+        const fetched = await sources.fetchJar(loader, String(version), { onProgress, java: chosenJava })
         jar = fetched.name
         mcVersion = String(version)
       } else if (loader !== 'paper') {
@@ -963,6 +1220,7 @@ async function route(req, res) {
       jobUpdate(jobId, { stage: 'create', percent: null, message: 'Setting up the server folder' })
       const inst = await create.newInstance(String(body.name), {
         jar,
+        java: chosenJava,
         loader,
         mcVersion,
         memory: body.memory || '4G',
@@ -1108,7 +1366,16 @@ async function route(req, res) {
       patch.jar = String(body.jar)
       create.placeJar(registry.getInstance(name).dir, patch.jar)
     }
-    if (body.java) patch.java = String(body.java)
+    if (body.java) {
+      // Asked its version before it is recorded. A path that cannot be run would otherwise sit in
+      // the registry and fail at the next start, which is when nobody is looking at this screen.
+      // Any Java that runs is accepted, whatever its version: a test server for an old plugin may
+      // want 17 on purpose, and which Java a server runs on is the person's call, not this one's.
+      const bin = String(body.java).trim()
+      const state = await java.probe(bin)
+      if (!state.found) return json(res, 400, { error: `${bin} could not be run: ${state.message}` })
+      patch.java = bin
+    }
     if (Object.hasOwn(body, 'autoRestart')) patch.autoRestart = body.autoRestart === true
     if (Object.hasOwn(body, 'webhook')) {
       const url = String(body.webhook ?? '').trim()

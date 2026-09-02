@@ -867,6 +867,7 @@
     -webkit-appearance: none;
     flex: none;
     width: 34px; height: 20px;
+    padding: 0;
     margin: 0;
     border-radius: 999px;
     background: var(--sunken);
@@ -1163,6 +1164,9 @@
   .choice input {
     appearance: none;
     width: 16px; height: 16px;
+    /* The shared input rule pads every field by 7px 10px. On a 16px box that padding alone is
+       larger than the box, so it stretched into a 23x17 pill and pushed the dot low and left. */
+    padding: 0;
     margin: 0;
     grid-row: 1 / 3; align-self: center;
     border-radius: 50%;
@@ -1175,14 +1179,20 @@
   }
   .choice input::after {
     content: '';
-    width: 7px; height: 7px;
+    width: 6px; height: 6px;
     border-radius: 50%;
-    background: var(--lapis);
+    background: #eaf0ff;
     transform: scale(0);
     transition: transform .12s ease-out;
   }
-  .choice input:checked { border-color: var(--lapis); }
-  .choice input:checked::after { transform: scale(1); box-shadow: 0 0 7px rgba(91, 132, 255, .55); }
+  /* Checked fills the whole circle, the way the switch fills its trough: the choice is a
+     lapis disc with a light dot, not a ring with something small in it. */
+  .choice input:checked {
+    border-color: var(--lapis);
+    background: linear-gradient(180deg, #4a63d9, var(--lapis-dim));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .15), 0 0 7px rgba(91, 132, 255, .45);
+  }
+  .choice input:checked::after { transform: scale(1); }
   .choice b { font-size: 13.5px; font-weight: 600; }
   .choice span { font-size: 12.5px; color: var(--ink-3); line-height: 1.45; }
 
@@ -1322,6 +1332,7 @@
   <span class="grow"></span>
   <span class="ver" id="appver"></span>
   <button id="bUpdate" class="ghost" hidden>Check for updates</button>
+  <button id="bFeedback" class="ghost">Feedback</button>
   <button id="bSettings" class="ghost">Settings</button>
 </header>
 
@@ -1489,6 +1500,7 @@
             <label for="nVersion">Minecraft version</label>
             <select id="nVersion" name="version"><option value="">Loading versions…</option></select>
             <div class="hint" id="nVersionHint">Downloads the newest stable Paper build.</div>
+            <div class="inline-warn" id="nJavaWarn" hidden></div>
           </div>
           <div class="field" style="flex:1">
             <label for="nMem">Memory</label>
@@ -1597,6 +1609,35 @@
       </form>
     </div>
 
+    <!-- ============ feedback ============================================= -->
+    <div class="view sheet" id="vFeedback">
+      <div class="sheet-head">
+        <h1>Feedback</h1>
+        <span class="grow"></span>
+        <button class="ghost" id="bFbClose">Close</button>
+      </div>
+      <div class="sheet-body wide">
+        <p class="hint" style="margin:0">
+          mcctl is in beta and reports are read. Both doors open GitHub in your browser; nothing is
+          sent from here on its own.
+        </p>
+        <div class="doors">
+          <button class="door" id="dBug">
+            <b>Something broke</b>
+            <span>Opens a bug report with the version, Java, server status and the panel log already
+              filled in, and puts the full diagnostics on your clipboard to paste under it. No
+              passwords, no webhook.</span>
+          </button>
+          <button class="door" id="dIdea">
+            <b>An idea or a question</b>
+            <span>Opens the project's discussions. A feature you wish it had, a question about how
+              something works, a server kind it should support.</span>
+          </button>
+        </div>
+        <p class="hint" id="fbNote" style="margin:0"></p>
+      </div>
+    </div>
+
     <!-- ============ settings ============================================= -->
     <div class="view sheet" id="vSettings">
       <div class="sheet-head">
@@ -1617,6 +1658,15 @@
         <div>
           <h2>About</h2>
           <dl class="kv" id="setAbout"></dl>
+        </div>
+        <div>
+          <h2>Reporting a problem</h2>
+          <p class="hint" style="margin:0 0 12px">
+            Copies the version, the Java found, where things live, every server's status, the
+            panel's own log and the last console lines of the selected server. No passwords and
+            no webhook. Paste it into a GitHub issue.
+          </p>
+          <div class="row"><button class="ghost" id="bDiag">Copy diagnostics</button></div>
         </div>
       </div>
     </div>
@@ -1680,7 +1730,11 @@ async function api(path, opt) {
   const res = await fetch('/api' + path, opt);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || (res.status + ' ' + res.statusText));
+    const err = new Error(body.error || (res.status + ' ' + res.statusText));
+    // A refusal the page can do something about carries a code: "java-too-old" gets a
+    // "create anyway" rather than a dead end.
+    if (body.code) err.code = body.code;
+    throw err;
   }
   return res.json();
 }
@@ -1810,7 +1864,7 @@ function ask(opts) {
   });
 }
 
-const VIEW_EL = { empty: '#vEmpty', server: '#vServer', add: '#vAdd', settings: '#vSettings' };
+const VIEW_EL = { empty: '#vEmpty', server: '#vServer', add: '#vAdd', settings: '#vSettings', feedback: '#vFeedback' };
 
 function show(view) {
   state.view = view;
@@ -2126,7 +2180,15 @@ async function loadDiagnosis(row) {
     open.textContent = 'Open folder';
     open.onclick = () => post('/instances/' + encodeURIComponent(row.name) + '/reveal', { sub: 'crash-reports' })
       .catch((e) => toast(e.message, 'bad'));
-    n.append(b, s, open);
+    // Most bug reports are born here, at the crash, and this is when someone is most willing to
+    // send one. The report opens named for the crash and with the diagnosis attached.
+    const report = document.createElement('button');
+    report.className = 'ghost';
+    report.type = 'button';
+    report.style.cssText = 'padding:2px 8px;font-size:12px;flex:none';
+    report.textContent = 'Report';
+    report.onclick = () => reportBug({ title: 'Crash: ' + (data.crashes.newest.description || 'server crashed').slice(0, 80) });
+    n.append(b, s, open, report);
     box.append(n);
   }
 }
@@ -4942,6 +5004,118 @@ async function renderServerSettings() {
     }
   };
 
+  // ---- which Java runs it ------------------------------------------------------
+  // Per server, not per machine. Someone testing a plugin against 1.20.4 and 26.1 side by side
+  // needs 17 on one and 25 on the other, so the picker lists every Java found on the box and
+  // takes a path for one it did not find. Each server keeps its own choice.
+  const jv = document.createElement('div');
+  jv.className = 'section set-group';
+  {
+    const head = document.createElement('div');
+    head.className = 'set-head';
+    const mark = document.createElement('span');
+    mark.className = 'mark';
+    mark.append(icon('play'));
+    const h = document.createElement('h3');
+    h.textContent = 'Java';
+    const blurb = document.createElement('p');
+    blurb.textContent = 'Which Java this server runs on. Each server chooses its own, so different '
+      + 'Minecraft versions can run on the Java they need.';
+    head.append(mark, h, blurb);
+    jv.append(head);
+  }
+  const jvField = document.createElement('div');
+  jvField.className = 'field';
+  const jvLabel = document.createElement('label');
+  jvLabel.textContent = 'Runs on';
+  const jvSelect = document.createElement('select');
+  const jvCustom = document.createElement('input');
+  jvCustom.className = 'mono';
+  jvCustom.autocomplete = 'off';
+  jvCustom.spellcheck = false;
+  jvCustom.placeholder = 'C:\\Program Files\\Java\\jdk-17\\bin\\java.exe';
+  jvCustom.hidden = true;
+  const jvHint = document.createElement('div');
+  jvHint.className = 'hint';
+  jvHint.textContent = 'Looking for installed Javas…';
+  jvField.append(jvLabel, jvSelect, jvCustom, jvHint);
+  jv.append(jvField);
+  const jvRow = document.createElement('div');
+  jvRow.className = 'row';
+  const jvApply = document.createElement('button');
+  jvApply.textContent = 'Apply';
+  jvApply.disabled = true;
+  jvRow.append(jvApply);
+  jv.append(jvRow);
+  body.append(jv);
+
+  const current = row.java || 'java';
+  api('/java').then((found) => {
+    if (body.dataset.for !== row.name) return;
+    jvSelect.textContent = '';
+    const addOpt = (value, text) => {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = text;
+      jvSelect.append(o);
+      return o;
+    };
+    let matched = false;
+    const needs = row.javaNeeds;
+    for (const f of found.found) {
+      const where = f.path === 'java' ? 'on PATH' : f.path;
+      const tooOld = needs && f.major < needs;
+      const o = addOpt(f.path, 'Java ' + f.major + '  ·  ' + where + (tooOld ? '  ·  too old for this server' : ''));
+      if (f.path === current) { o.selected = true; matched = true; }
+    }
+    if (!found.found.some((f) => f.path === 'java')) {
+      const o = addOpt('java', 'Whatever "java" resolves to on PATH');
+      if (current === 'java') { o.selected = true; matched = true; }
+    }
+    const custom = addOpt('__custom', 'A path of my own…');
+    if (!matched) {
+      custom.selected = true;
+      jvCustom.hidden = false;
+      jvCustom.value = current;
+    }
+    const needLine = needs ? 'This server runs Minecraft that needs Java ' + needs + ' or newer. ' : '';
+    jvHint.textContent = found.found.length
+      ? needLine + 'Found ' + found.found.length + (found.found.length === 1 ? ' Java' : ' Javas') + ' on this machine. '
+        + 'Installed one somewhere else? Pick the last option and paste the path to java.exe.'
+      : needLine + 'No Java was found on PATH or in the usual install folders. Paste the path to java.exe, or get one from ' + found.download;
+    jvApply.disabled = false;
+  }).catch((e) => {
+    jvHint.textContent = 'Could not look for Javas: ' + e.message;
+    jvSelect.textContent = '';
+    const o = document.createElement('option');
+    o.value = '__custom';
+    o.textContent = 'A path of my own…';
+    jvSelect.append(o);
+    jvCustom.hidden = false;
+    jvCustom.value = current;
+    jvApply.disabled = false;
+  });
+  jvSelect.onchange = () => {
+    jvCustom.hidden = jvSelect.value !== '__custom';
+    if (!jvCustom.hidden) jvCustom.focus();
+  };
+  jvApply.onclick = async () => {
+    const chosen = jvSelect.value === '__custom' ? jvCustom.value.trim() : jvSelect.value;
+    if (!chosen) { toast('Pick a Java, or paste the path to one.', 'bad'); return; }
+    jvApply.disabled = true;
+    try {
+      await post('/instances/' + encodeURIComponent(row.name) + '/settings', { java: chosen });
+      toast(row.status === 'running'
+        ? 'Saved. The server switches Java the next time it starts.'
+        : 'Saved. This server now runs on ' + (chosen === 'java' ? 'the Java on PATH.' : chosen), 'good');
+      await refresh();
+    } catch (e) {
+      toast(e.message, 'bad');
+    } finally {
+      jvApply.disabled = false;
+    }
+  };
+
   // ---- the server software itself -------------------------------------------
   // Off the network until asked: the card shows what is installed from the registry alone, and
   // only the button talks to PaperMC.
@@ -5387,6 +5561,8 @@ $('#aName').oninput = () => checkName($('#aName'), $('#aNameBad'));
 $('#nMem').oninput = () => checkMemory($('#nMem'), $('#nMemBad'));
 $('#aMem').oninput = () => checkMemory($('#aMem'), $('#aMemBad'));
 
+// Set for one submit after "Create anyway" on a Java refusal, then cleared.
+let forceJava = false;
 $('#formNew').onsubmit = async (e) => {
   e.preventDefault();
   if (!checkName($('#nName'), $('#nNameBad'))) { $('#nName').focus(); return; }
@@ -5430,7 +5606,9 @@ $('#formNew').onsubmit = async (e) => {
       port: form.get('port') || null,
       onlineMode: form.get('onlineMode') !== 'offline',
       jobId: jobId,
+      force: forceJava,
     });
+    forceJava = false;
     jobs.close();
     $('#newProg').hidden = true;
     $('#bCreate').disabled = false;
@@ -5444,12 +5622,24 @@ $('#formNew').onsubmit = async (e) => {
     select(inst.name);
     toast('Created ' + inst.name + ' on port ' + inst.port + '.', 'good');
   } catch (err) {
+    forceJava = false;
     jobs.close();
     bar.classList.remove('indet');
     bar.style.width = '0';
     msg.textContent = err.message;
     $('#bCreate').disabled = false;
     $('#newHint').textContent = '';
+    if (err.code === 'java-too-old') {
+      // The refusal is about a certainty - the class files will not load on that Java - but
+      // the person may be about to install one, or know something this table does not.
+      const go = await ask({
+        title: 'No Java here can run this version',
+        text: err.message + ' The server will not start until it has a Java that fits; you can choose one under Settings → Java.',
+        confirmLabel: 'Create anyway',
+      });
+      if (go) { forceJava = true; e.target.requestSubmit(); }
+      return;
+    }
     toast(err.message, 'bad');
   }
 };
@@ -5712,6 +5902,86 @@ function renderSettings() {
 $('#bSettings').onclick = () => { renderSettings(); show('settings'); };
 $('#bSetClose').onclick = back;
 
+// -------------------------------------------------------------- feedback ---
+
+/** A link out to the real browser: the desktop's https-only bridge, or a new tab. */
+function openOutside(url) {
+  if (desktop) return desktop.openExternal(url);
+  window.open(url, '_blank', 'noopener');
+}
+
+/**
+ * A bug report, mostly written already.
+ *
+ * The core builds a new-issue URL carrying the short diagnostics and copies the full bundle to
+ * the clipboard first, so the report lands with the facts attached and the person only has to
+ * say what they were doing. Called from the Feedback sheet and from the "Report" link beside a
+ * crash, which passes a title so the report starts named for what it is about.
+ */
+async function reportBug({ title = '' } = {}) {
+  const q = new URLSearchParams();
+  if (state.current) q.set('instance', state.current);
+  if (title) q.set('title', title);
+  let data;
+  try {
+    data = await api('/feedback?' + q);
+  } catch (e) {
+    toast('Could not gather diagnostics: ' + e.message, 'bad');
+    return;
+  }
+  if (!data.bug) {
+    toast('This build does not know where its project lives, so it cannot open a report.', 'bad');
+    return;
+  }
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(data.full);
+    copied = true;
+  } catch {
+    /* the short form is in the issue already; the browser refusing the clipboard costs the tail */
+  }
+  openOutside(data.bug);
+  toast(copied
+    ? 'Bug report opened in your browser. The full diagnostics are on your clipboard - paste them in.'
+    : 'Bug report opened in your browser.', 'good');
+}
+
+$('#bFeedback').onclick = () => {
+  $('#fbNote').textContent = state.current
+    ? 'A bug report will include the last console lines of ' + state.current + '.'
+    : 'Select a server first if the problem is about one - its console lines go into the report.';
+  show('feedback');
+};
+$('#bFbClose').onclick = back;
+$('#dBug').onclick = () => reportBug();
+$('#dIdea').onclick = async () => {
+  try {
+    const data = await api('/feedback');
+    if (data.ideas) openOutside(data.ideas);
+  } catch (e) {
+    toast(e.message, 'bad');
+  }
+};
+
+// The bundle is plain text from the core; the page only carries it to the clipboard. A prompt
+// with the text selected is the fallback for a browser that refuses clipboard writes.
+$('#bDiag').onclick = async () => {
+  const b = $('#bDiag');
+  b.disabled = true;
+  try {
+    const q = state.current ? '?instance=' + encodeURIComponent(state.current) : '';
+    const res = await fetch('/api/diagnostics' + q);
+    if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+    const text = await res.text();
+    await navigator.clipboard.writeText(text);
+    toast('Diagnostics copied. Paste them into your bug report.', 'good');
+  } catch (e) {
+    toast('Could not copy diagnostics: ' + e.message, 'bad');
+  } finally {
+    b.disabled = false;
+  }
+};
+
 // -------------------------------------------------------------- versions ---
 
 // Nothing can be created until the version list arrives or fails, so the button says so instead of
@@ -5751,6 +6021,50 @@ async function loadSoftware() {
     if (s.id === current) o.selected = true;
     sel.append(o);
   }
+}
+
+/**
+ * What Java each version needs, said in the dropdown and under it.
+ *
+ * Asked once per loader after the versions arrive. Each option gains "· Java 21"; when the
+ * selected version needs more than the newest Java on this machine, the hint under the
+ * dropdown says so with the download link, before anyone presses Create and waits on a
+ * download only to be told at the end.
+ */
+const javaNeedsByLoader = {};
+async function annotateJavaNeeds(loader) {
+  const sel = $('#nVersion');
+  const list = versionLists[loader];
+  if (!list || !list.length) return;
+  if (!javaNeedsByLoader[loader]) {
+    try {
+      javaNeedsByLoader[loader] = await api('/java/needs?versions=' + encodeURIComponent(list.join(',')));
+    } catch {
+      return;
+    }
+  }
+  if ($('#nLoader').value !== loader) return;
+  const info = javaNeedsByLoader[loader];
+  for (const o of sel.options) {
+    const n = info.needs[o.value];
+    if (n && !/· Java/.test(o.textContent)) o.textContent += '  · Java ' + n;
+  }
+  const say = () => {
+    const n = info.needs[sel.value];
+    const warn = $('#nJavaWarn');
+    if (!n || info.have == null || info.have >= n) { warn.hidden = true; return; }
+    warn.hidden = false;
+    warn.textContent = '';
+    warn.append('Minecraft ' + sel.value + ' needs Java ' + n + '. The newest Java found on this machine is '
+      + info.have + '. ');
+    const a = document.createElement('a');
+    a.href = info.download;
+    a.textContent = 'Get Java ' + n;
+    a.onclick = (e) => { e.preventDefault(); openOutside(info.download); };
+    warn.append(a, document.createTextNode(' first, or create it anyway and point it at a Java of your own afterwards.'));
+  };
+  sel.onchange = say;
+  say();
 }
 
 async function loadVersions(loader) {
@@ -5800,6 +6114,7 @@ async function loadVersions(loader) {
     if (i === 0) o.selected = true;
     sel.append(o);
   });
+  annotateJavaNeeds(loader);
   sel.disabled = false;
   $('#bCreate').disabled = false;
 }
@@ -5928,7 +6243,7 @@ if (desktop) {
 // Escape closes whatever is on top. The dialog handles itself, so this is for the sheets.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || $('#dlg').open) return;
-  if (state.view === 'add' || state.view === 'settings') back();
+  if (state.view === 'add' || state.view === 'settings' || state.view === 'feedback') back();
 });
 
 show('empty');

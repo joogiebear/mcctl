@@ -24,3 +24,16 @@ jobs:
         run: |
           node mcctl.mjs help
           node mcctl.mjs list
+
+  # The same suite on Linux, in well under a minute. Nearly every module is portable, the
+  # Windows-only paths guard themselves, and a contributor on Linux gets an answer before the
+  # Windows runner has finished booting. Windows above remains the run that counts.
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test
+        run: npm test

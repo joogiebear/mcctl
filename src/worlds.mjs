@@ -20,7 +20,7 @@ import { BACKUPS_DIR } from './paths.mjs'
 import { readProps, writeProps } from './props.mjs'
 import { readState } from './control.mjs'
 import { runTar, EXCLUDE_ARGS } from './backup.mjs'
-import { fail, dirSize, humanBytes, stamp, validateName } from './util.mjs'
+import { fail, dirSizeAsync, humanBytes, stamp, validateName } from './util.mjs'
 
 /** The dimension companions a Bukkit-family server keeps beside a world. */
 const DIM_SUFFIXES = ['_nether', '_the_end']
@@ -43,11 +43,20 @@ function safeWorldName(name) {
   return n
 }
 
+/** The world the server saves into, as server.properties names it. */
+export function activeWorld(inst) {
+  return readProps(path.join(inst.dir, 'server.properties')).get('level-name') || 'world'
+}
+
 /**
  * Every world this instance holds. The active one first, then alphabetical; dimension
  * companions are folded into their world's row rather than listed as worlds of their own.
+ *
+ * <p>Async for the sizes alone. A mature world is tens of thousands of region, entity and poi
+ * files, and walking them synchronously held the whole panel - every request, and the console
+ * stream - for the seconds it took whenever the Worlds tab opened.
  */
-export function listWorlds(inst) {
+export async function listWorlds(inst) {
   let entries = []
   try {
     entries = fs.readdirSync(inst.dir, { withFileTypes: true })
@@ -57,7 +66,7 @@ export function listWorlds(inst) {
   const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name)
   const worldDirsHere = new Set(dirs.filter((d) => isWorldDir(path.join(inst.dir, d))))
 
-  const active = readProps(path.join(inst.dir, 'server.properties')).get('level-name') || 'world'
+  const active = activeWorld(inst)
   const rows = []
   for (const name of worldDirsHere) {
     // A companion belongs to its base world's row when the base is a world here too.
@@ -65,8 +74,8 @@ export function listWorlds(inst) {
     if (suffix && worldDirsHere.has(name.slice(0, -suffix.length))) continue
 
     const dims = DIM_SUFFIXES.filter((s) => worldDirsHere.has(`${name}${s}`))
-    const size = [name, ...dims.map((s) => `${name}${s}`)]
-      .reduce((total, d) => total + dirSize(path.join(inst.dir, d)), 0)
+    let size = 0
+    for (const d of [name, ...dims.map((s) => `${name}${s}`)]) size += await dirSizeAsync(path.join(inst.dir, d))
     rows.push({
       name,
       active: name === active,
@@ -183,8 +192,8 @@ export async function importWorld(inst, source, { name } = {}) {
       }
     }
 
-    const size = [name, ...dims.map((d) => `${name}_${d}`)]
-      .reduce((total, d) => total + dirSize(path.join(inst.dir, d)), 0)
+    let size = 0
+    for (const d of [name, ...dims.map((d) => `${name}_${d}`)]) size += await dirSizeAsync(path.join(inst.dir, d))
     return { name, dimensions: dims, size, sizeHuman: humanBytes(size) }
   } finally {
     if (tmp) fs.rmSync(tmp, { recursive: true, force: true })
@@ -205,7 +214,7 @@ export async function exportWorld(inst, name) {
   if (!isWorldDir(path.join(inst.dir, name))) {
     fail(`"${name}" is not a world in ${inst.dir}`)
   }
-  const { active } = listWorlds(inst)
+  const active = activeWorld(inst)
   const { status } = readState(inst.name)
   if (name === active && (status === 'running' || status === 'stopping')) {
     fail(`"${name}" is the world the running server is saving into - stop the server first, or take a backup instead`)
@@ -238,7 +247,7 @@ export function deleteWorld(inst, name) {
   if (status === 'running' || status === 'stopping') {
     fail(`"${inst.name}" is running - stop it before deleting worlds`)
   }
-  const { active } = listWorlds(inst)
+  const active = activeWorld(inst)
   if (name === active) {
     fail(`"${name}" is the active world - switch to another world first, or use rebuild to reset it`)
   }

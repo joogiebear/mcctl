@@ -4,10 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import {
-  humanBytes, humanDuration, table, validateName, stamp, randomPassword,
-  readJson, writeJson, UserError,
-} from '../src/util.mjs'
+import { humanBytes, humanDuration, table, validateName, stamp, randomPassword, readJson, writeJson, UserError, dirSize, dirSizeAsync, sameProcess, refreshProcessTable } from '../src/util.mjs'
 
 test('bytes read at the right unit, whole below 1 KB', () => {
   assert.equal(humanBytes(0), '0 B')
@@ -58,4 +55,34 @@ test('writeJson round-trips and leaves no .tmp behind', () => {
   writeJson(file, { version: 1, instances: {} })
   assert.deepEqual(readJson(file), { version: 1, instances: {} })
   assert.ok(!fs.existsSync(`${file}.tmp`), 'the temp file should have been renamed away')
+})
+
+// ---- the things that must not hold the event loop --------------------------
+
+test('dirSizeAsync agrees with dirSize', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcctl-size-'))
+  fs.mkdirSync(path.join(dir, 'region', 'deeper'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'level.dat'), 'x'.repeat(10))
+  fs.writeFileSync(path.join(dir, 'region', 'r.0.0.mca'), 'y'.repeat(300))
+  fs.writeFileSync(path.join(dir, 'region', 'deeper', 'z'), 'z'.repeat(7))
+  assert.equal(await dirSizeAsync(dir), 317)
+  assert.equal(await dirSizeAsync(dir), dirSize(dir))
+  assert.equal(await dirSizeAsync(path.join(dir, 'missing')), 0)
+})
+
+// The first read is synchronous so a one-shot CLI call is right first time; after that the
+// table refreshes in the background and a read never waits on a child process.
+test('the process table refreshes without blocking and keeps knowing this process', async () => {
+  const me = path.basename(process.execPath)
+  assert.equal(sameProcess(process.pid, me), true)
+  const started = Date.now()
+  const table = await refreshProcessTable()
+  assert.ok(table instanceof Map)
+  assert.ok(table.has(process.pid), 'this process is in the table it just read')
+  assert.equal(sameProcess(process.pid, 'java'), false, `after a refresh (${Date.now() - started}ms) the image is still checked`)
+  // Two refreshes in flight are one child process, not two.
+  const a = refreshProcessTable()
+  const b = refreshProcessTable()
+  assert.equal(a, b)
+  await a
 })

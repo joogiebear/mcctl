@@ -13,7 +13,14 @@ Zero dependencies — plain Node 20+ and the `tar` that ships with Windows.
   [Temurin 25](https://adoptium.net/temurin/releases/?version=25) is a good default, and a JDK
   rather than a JRE if you want Spigot or CraftBukkit built here.
   The desktop app checks for it on first run and the panel says so in a banner if it is missing;
-  `mcctl doctor` reports it from the command line.
+  `mcctl doctor` reports it from the command line. mcctl looks for Java on PATH **and** in the
+  usual install folders (Program Files, the per-user Programs folder, `JAVA_HOME`), so a Java that
+  the installer did not add to PATH, or one added after mcctl was already running, is still found
+  and used. Each server can also be pointed at a specific Java with `mcctl set <name> java=<path>`.
+  mcctl knows which Java each Minecraft version needs (17 for 1.18 to 1.20.4, 21 for 1.20.5 and
+  1.21, 25 for 26.x) and picks the newest installed Java that fits when a server is created; a
+  version nothing installed can run is refused before the download, with the download link.
+  `--force` on `new` and `start` goes ahead anyway.
 - **Node 20+**, for the CLI. The desktop app carries its own runtime and does not need it.
 - **Windows 10/11** for the desktop app. The CLI runs anywhere Node does.
 
@@ -311,6 +318,10 @@ This is built for **localhost and LAN only**.
   **Settings…** on a server. The panel badges any server running that way.
 - Nothing here opens firewall ports or touches your router. Exposing a server to
   the internet is a deliberate, separate decision.
+- **The panel cannot be bound to another address.** There is no `--host` flag, on purpose:
+  the panel has no login, and a panel reachable from another machine is a server console
+  reachable from another machine. If you want to manage a server from elsewhere, remote into
+  the machine that runs it. A remote panel is out of scope (see [ROADMAP.md](ROADMAP.md)).
 - The panel is an **unauthenticated local HTTP server that can start processes and type into a
   server console**. Binding to `127.0.0.1` stops other machines reaching it; it does not stop the
   browser already on this one. So every request must also carry a loopback `Host` — which is what
@@ -395,6 +406,17 @@ marked and sorted first, which has to be asked of the server: a player's file is
 they log out, so a screen reading only files says "has never joined" about somebody standing in
 front of you. Changes go through the console while the server runs and into its files when it does
 not — editing a file under a live server is reverted the next time it saves.
+
+**Feedback**, in the header, is two doors. *Something broke* opens a GitHub bug report with the
+version, Java, server status and panel log already in it, and puts the full diagnostics on the
+clipboard for pasting under it. *An idea or a question* opens the project's discussions. Nothing is
+sent from mcctl on its own; the browser hop is the consent. A crash notice under a server's vitals
+has a **Report** link that does the same, named for the crash.
+
+**Settings → Copy diagnostics** puts a bug report's worth of facts on the clipboard: the version,
+the Java found, where things live, every server's status, the panel's own log (`run/panel.log`,
+which records every time the panel process was held up for more than a quarter of a second) and
+the last console lines of the selected server. It never includes an RCON password or a webhook URL.
 
 **Performance** — processor and memory over the last minute, five minutes, half hour, hour or four
 hours, sampled every ten seconds. Both scales follow the data, because a fixed 0–100% processor

@@ -23,23 +23,23 @@ function fakeInstance({ active = 'world' } = {}) {
 
 // ---- listing ----------------------------------------------------------------
 
-test('worlds are folders with a level.dat; companions fold into their base row', () => {
+test('worlds are folders with a level.dat; companions fold into their base row', async () => {
   const inst = fakeInstance({ active: 'rpg' })
   world(inst.dir, 'rpg')
   world(inst.dir, 'rpg_nether')
   world(inst.dir, 'old')
   fs.mkdirSync(path.join(inst.dir, 'plugins'))
-  const data = listWorlds(inst)
+  const data = await listWorlds(inst)
   assert.equal(data.active, 'rpg')
   assert.deepEqual(data.worlds.map((w) => [w.name, w.active, w.dimensions]),
     [['rpg', true, ['nether']], ['old', false, []]])
   assert.ok(data.worlds[0].size > 0)
 })
 
-test('a companion with no base world of its own is listed as a world', () => {
+test('a companion with no base world of its own is listed as a world', async () => {
   const inst = fakeInstance()
   world(inst.dir, 'orphan_nether')
-  assert.deepEqual(listWorlds(inst).worlds.map((w) => w.name), ['orphan_nether'])
+  assert.deepEqual((await listWorlds(inst)).worlds.map((w) => w.name), ['orphan_nether'])
 })
 
 // ---- finding a world inside a download --------------------------------------
@@ -100,12 +100,12 @@ test('a source with no world in it is a readable refusal', async () => {
 
 // ---- switching and deleting -------------------------------------------------
 
-test('activate writes level-name; a non-world target is refused', () => {
+test('activate writes level-name; a non-world target is refused', async () => {
   const inst = fakeInstance({ active: 'world' })
   world(inst.dir, 'world')
   world(inst.dir, 'better')
   activateWorld(inst, 'better')
-  assert.equal(listWorlds(inst).active, 'better')
+  assert.equal((await listWorlds(inst)).active, 'better')
   assert.throws(() => activateWorld(inst, 'plugins'), UserError)
   assert.throws(() => activateWorld(inst, '..'), UserError)
 })
