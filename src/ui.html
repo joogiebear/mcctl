@@ -1322,6 +1322,7 @@
   <span class="grow"></span>
   <span class="ver" id="appver"></span>
   <button id="bUpdate" class="ghost" hidden>Check for updates</button>
+  <button id="bFeedback" class="ghost">Feedback</button>
   <button id="bSettings" class="ghost">Settings</button>
 </header>
 
@@ -1597,6 +1598,35 @@
       </form>
     </div>
 
+    <!-- ============ feedback ============================================= -->
+    <div class="view sheet" id="vFeedback">
+      <div class="sheet-head">
+        <h1>Feedback</h1>
+        <span class="grow"></span>
+        <button class="ghost" id="bFbClose">Close</button>
+      </div>
+      <div class="sheet-body wide">
+        <p class="hint" style="margin:0">
+          mcctl is in beta and reports are read. Both doors open GitHub in your browser; nothing is
+          sent from here on its own.
+        </p>
+        <div class="doors">
+          <button class="door" id="dBug">
+            <b>Something broke</b>
+            <span>Opens a bug report with the version, Java, server status and the panel log already
+              filled in, and puts the full diagnostics on your clipboard to paste under it. No
+              passwords, no webhook.</span>
+          </button>
+          <button class="door" id="dIdea">
+            <b>An idea or a question</b>
+            <span>Opens the project's discussions. A feature you wish it had, a question about how
+              something works, a server kind it should support.</span>
+          </button>
+        </div>
+        <p class="hint" id="fbNote" style="margin:0"></p>
+      </div>
+    </div>
+
     <!-- ============ settings ============================================= -->
     <div class="view sheet" id="vSettings">
       <div class="sheet-head">
@@ -1819,7 +1849,7 @@ function ask(opts) {
   });
 }
 
-const VIEW_EL = { empty: '#vEmpty', server: '#vServer', add: '#vAdd', settings: '#vSettings' };
+const VIEW_EL = { empty: '#vEmpty', server: '#vServer', add: '#vAdd', settings: '#vSettings', feedback: '#vFeedback' };
 
 function show(view) {
   state.view = view;
@@ -2135,7 +2165,15 @@ async function loadDiagnosis(row) {
     open.textContent = 'Open folder';
     open.onclick = () => post('/instances/' + encodeURIComponent(row.name) + '/reveal', { sub: 'crash-reports' })
       .catch((e) => toast(e.message, 'bad'));
-    n.append(b, s, open);
+    // Most bug reports are born here, at the crash, and this is when someone is most willing to
+    // send one. The report opens named for the crash and with the diagnosis attached.
+    const report = document.createElement('button');
+    report.className = 'ghost';
+    report.type = 'button';
+    report.style.cssText = 'padding:2px 8px;font-size:12px;flex:none';
+    report.textContent = 'Report';
+    report.onclick = () => reportBug({ title: 'Crash: ' + (data.crashes.newest.description || 'server crashed').slice(0, 80) });
+    n.append(b, s, open, report);
     box.append(n);
   }
 }
@@ -5721,6 +5759,67 @@ function renderSettings() {
 $('#bSettings').onclick = () => { renderSettings(); show('settings'); };
 $('#bSetClose').onclick = back;
 
+// -------------------------------------------------------------- feedback ---
+
+/** A link out to the real browser: the desktop's https-only bridge, or a new tab. */
+function openOutside(url) {
+  if (desktop) return desktop.openExternal(url);
+  window.open(url, '_blank', 'noopener');
+}
+
+/**
+ * A bug report, mostly written already.
+ *
+ * The core builds a new-issue URL carrying the short diagnostics and copies the full bundle to
+ * the clipboard first, so the report lands with the facts attached and the person only has to
+ * say what they were doing. Called from the Feedback sheet and from the "Report" link beside a
+ * crash, which passes a title so the report starts named for what it is about.
+ */
+async function reportBug({ title = '' } = {}) {
+  const q = new URLSearchParams();
+  if (state.current) q.set('instance', state.current);
+  if (title) q.set('title', title);
+  let data;
+  try {
+    data = await api('/feedback?' + q);
+  } catch (e) {
+    toast('Could not gather diagnostics: ' + e.message, 'bad');
+    return;
+  }
+  if (!data.bug) {
+    toast('This build does not know where its project lives, so it cannot open a report.', 'bad');
+    return;
+  }
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(data.full);
+    copied = true;
+  } catch {
+    /* the short form is in the issue already; the browser refusing the clipboard costs the tail */
+  }
+  openOutside(data.bug);
+  toast(copied
+    ? 'Bug report opened in your browser. The full diagnostics are on your clipboard - paste them in.'
+    : 'Bug report opened in your browser.', 'good');
+}
+
+$('#bFeedback').onclick = () => {
+  $('#fbNote').textContent = state.current
+    ? 'A bug report will include the last console lines of ' + state.current + '.'
+    : 'Select a server first if the problem is about one - its console lines go into the report.';
+  show('feedback');
+};
+$('#bFbClose').onclick = back;
+$('#dBug').onclick = () => reportBug();
+$('#dIdea').onclick = async () => {
+  try {
+    const data = await api('/feedback');
+    if (data.ideas) openOutside(data.ideas);
+  } catch (e) {
+    toast(e.message, 'bad');
+  }
+};
+
 // The bundle is plain text from the core; the page only carries it to the clipboard. A prompt
 // with the text selected is the fallback for a browser that refuses clipboard writes.
 $('#bDiag').onclick = async () => {
@@ -5956,7 +6055,7 @@ if (desktop) {
 // Escape closes whatever is on top. The dialog handles itself, so this is for the sheets.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || $('#dlg').open) return;
-  if (state.view === 'add' || state.view === 'settings') back();
+  if (state.view === 'add' || state.view === 'settings' || state.view === 'feedback') back();
 });
 
 show('empty');

@@ -400,6 +400,12 @@ they log out, so a screen reading only files says "has never joined" about someb
 front of you. Changes go through the console while the server runs and into its files when it does
 not — editing a file under a live server is reverted the next time it saves.
 
+**Feedback**, in the header, is two doors. *Something broke* opens a GitHub bug report with the
+version, Java, server status and panel log already in it, and puts the full diagnostics on the
+clipboard for pasting under it. *An idea or a question* opens the project's discussions. Nothing is
+sent from mcctl on its own; the browser hop is the consent. A crash notice under a server's vitals
+has a **Report** link that does the same, named for the crash.
+
 **Settings → Copy diagnostics** puts a bug report's worth of facts on the clipboard: the version,
 the Java found, where things live, every server's status, the panel's own log (`run/panel.log`,
 which records every time the panel process was held up for more than a quarter of a second) and

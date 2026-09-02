@@ -21,6 +21,12 @@ as the whole panel stuttering. None of them does now.
 
 ## Reporting a problem
 
+- **Feedback**, in the header. *Something broke* opens a GitHub bug report
+  with the version, Java, server status and panel log already in it, and puts
+  the full diagnostics on the clipboard to paste under it. *An idea or a
+  question* opens the project's discussions. Nothing is sent from mcctl on
+  its own; the browser hop is the consent. A crash notice under a server's
+  vitals has a **Report** link that does the same, named for the crash.
 - **Settings → Copy diagnostics** puts a bug report's worth of facts on the
   clipboard: version, Java, where things live, every server's status, the
   panel's own log and the selected server's last console lines. Never an RCON

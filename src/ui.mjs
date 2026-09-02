@@ -156,15 +156,38 @@ function panelLogTail(count) {
  * password, and no webhook URL - a Discord webhook is a credential, and this text is meant to
  * be pasted somewhere public.
  */
-async function diagnostics(instanceName) {
+function packageInfo() {
+  try {
+    return JSON.parse(readFileSync(path.join(HERE, '..', 'package.json'), 'utf8'))
+  } catch {
+    // A checkout without package.json is still a checkout.
+    return {}
+  }
+}
+
+/**
+ * Where this project lives on GitHub, from package.json's `repository`.
+ *
+ * <p>One field, read rather than repeated: the desktop's update feed, the issue template and the
+ * feedback links all have to agree on it, and a fork that changes it in one place should not be
+ * sending its users' reports to this one.
+ */
+export function projectUrl() {
+  const repo = String(packageInfo().repository ?? '')
+  const m = /^(?:github:)?([\w.-]+\/[\w.-]+?)(?:\.git)?$/.exec(repo) ?? /github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(repo)
+  return m ? `https://github.com/${m[1]}` : null
+}
+
+/**
+ * Where ideas and questions go. Discussions for now; a Discord invite belongs here the day one
+ * exists, which is why it is a single string rather than derived from the repository.
+ */
+const IDEAS_URL = () => `${projectUrl()}/discussions`
+
+async function diagnostics(instanceName, { short = false } = {}) {
   const lines = []
   const add = (k, v) => lines.push(`${k}: ${v}`)
-  let version = 'unknown'
-  try {
-    version = JSON.parse(readFileSync(path.join(HERE, '..', 'package.json'), 'utf8')).version
-  } catch {
-    /* a checkout without package.json is still a checkout */
-  }
+  const version = packageInfo().version ?? 'unknown'
   lines.push('== mcctl diagnostics ==')
   add('mcctl', version)
   add('node', process.version + (process.versions.electron ? ` (electron ${process.versions.electron})` : ''))
@@ -191,9 +214,9 @@ async function diagnostics(instanceName) {
       + `${row.javaPid ? `, java pid ${row.javaPid}` : ''}${row.autoRestart ? ', auto-restart' : ''}`
       + `${row.lastError ? `, last error: ${row.lastError}` : ''}`)
   }
-  const tail = panelLogTail(20)
+  const tail = panelLogTail(short ? 5 : 20)
   lines.push('')
-  lines.push('== panel log (last 20) ==')
+  lines.push(`== panel log (last ${short ? 5 : 20}) ==`)
   lines.push(...(tail.length ? tail : ['(empty)']))
   if (instanceName && registry.hasInstance(instanceName)) {
     const inst = registry.getInstance(instanceName)
@@ -204,11 +227,54 @@ async function diagnostics(instanceName) {
     lines.push('')
     lines.push(`== ${instanceName}: diagnosis ==`)
     lines.push(...(findings.length ? findings.map((f) => `- ${f.title}: ${f.advice}`) : ['(nothing recognised)']))
-    lines.push('')
-    lines.push(`== ${instanceName}: console (last 60) ==`)
-    lines.push(...(recent.length ? recent : ['(empty)']))
+    // The console tail is the part that does not fit in a URL; the short form leaves it to the
+    // clipboard, and the issue body says so.
+    if (!short) {
+      lines.push('')
+      lines.push(`== ${instanceName}: console (last 60) ==`)
+      lines.push(...(recent.length ? recent : ['(empty)']))
+    }
   }
   return lines.join('\n') + '\n'
+}
+
+/**
+ * The two doors of the Feedback sheet, as URLs the page opens in the real browser.
+ *
+ * <p>A bug report opens GitHub's new-issue form already filled in: the template, a title, and
+ * the short diagnostics in the body. Browsers and GitHub both cap a URL at a few thousand
+ * characters, so the body carries what fits - version, Java, servers, the panel log tail and
+ * the diagnosis - and the full bundle goes to the clipboard for pasting under it. The person
+ * only has to say what they were doing. Nothing is sent by mcctl itself; the browser hop is
+ * the consent.
+ */
+async function feedback(instanceName, { title = '' } = {}) {
+  const home = projectUrl()
+  if (!home) return { bug: null, ideas: null, full: '' }
+  const short = await diagnostics(instanceName, { short: true })
+  const full = await diagnostics(instanceName)
+  const body = [
+    '**What happened**',
+    '',
+    '<!-- What you did, what you expected, what you got instead. -->',
+    '',
+    '**Diagnostics**',
+    '',
+    '```',
+    short.trimEnd(),
+    '```',
+    '',
+    '<!-- The full diagnostics, console lines included, are on your clipboard: paste them here. -->',
+    '',
+  ].join('\n')
+  const params = new URLSearchParams({ template: 'bug_report.md', labels: 'bug', title, body })
+  let bug = `${home}/issues/new?${params}`
+  // Over the limit, the body is trimmed to what always fits rather than the link failing.
+  if (bug.length > 7500) {
+    params.set('body', body.slice(0, 7500 - `${home}/issues/new?`.length - 400) + '\n```\n\n(trimmed - paste the full diagnostics from your clipboard)\n')
+    bug = `${home}/issues/new?${params}`
+  }
+  return { bug, ideas: IDEAS_URL(), full }
 }
 
 /**
@@ -915,6 +981,13 @@ async function route(req, res) {
   // front instead of letting it surface as "spawn java ENOENT" after a fifty-megabyte download.
   if (seg[1] === 'health' && req.method === 'GET') {
     return json(res, 200, { java: await java.probe(), javaDownload: java.DOWNLOAD_URL })
+  }
+
+  // ---- the feedback doors: prefilled issue, discussions, full bundle ---------
+  if (seg[1] === 'feedback' && req.method === 'GET') {
+    return json(res, 200, await feedback(url.searchParams.get('instance'), {
+      title: String(url.searchParams.get('title') ?? '').slice(0, 120),
+    }))
   }
 
   // ---- a bug report's worth of facts, as text ------------------------------
