@@ -25,6 +25,7 @@ import * as neoforge from './neoforge.mjs'
 import * as worlds from './worlds.mjs'
 import { diagnose, crashReports } from './diagnose.mjs'
 import { acceptableWebhook } from './notify.mjs'
+import { fail, UserError } from './util.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -46,7 +47,18 @@ export function serve({ port = 8770, host = '127.0.0.1', open = true } = {}) {
       }
       await route(req, res)
     } catch (err) {
-      json(res, 500, { error: err?.message ?? String(err) })
+      // A route that threw after starting a stream (the SSE routes write their headers first)
+      // cannot be answered with JSON: writeHead would throw ERR_HTTP_HEADERS_SENT from inside
+      // this catch, which is an unhandled rejection, which exits the process - and the desktop
+      // app's panel with it. Close the stream and let the page reconnect.
+      if (res.headersSent) {
+        res.end()
+        return
+      }
+      // A refusal ("the server is running", "that is not a port") is the person's to fix and
+      // answers 400; anything else is mcctl's fault and answers 500. Both used to be 500.
+      const refusal = err instanceof UserError || err?.userFacing === true
+      json(res, refusal ? 400 : 500, { error: err?.message ?? String(err) })
     }
   })
 
@@ -155,12 +167,6 @@ function coerceProp(spec, raw) {
   // Text. A newline would split the line and silently create a second key.
   if (/[\r\n]/.test(value)) fail(`${spec.key} cannot contain a line break`)
   return value
-}
-
-function fail(message) {
-  const err = new Error(message)
-  err.userFacing = true
-  throw err
 }
 
 /**
