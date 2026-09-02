@@ -761,7 +761,6 @@ function cmdRename(positional) {
   const res = manage.rename(from, to)
   out(`Renamed "${from}" -> "${to}"`)
   if (res.movedDir) out(`  directory moved to ${res.dir}`)
-  create.writeLaunchers(res)
 }
 
 async function cmdRebuild(positional, flags) {

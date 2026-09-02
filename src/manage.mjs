@@ -116,6 +116,25 @@ export function rename(oldName, newName) {
   removeInstance(oldName)
   putInstance(newName, cfg)
 
+  // The mirror is keyed by name too. Left behind, retention deletions would go looking under the
+  // new name and the old copies would sit there forever, unpruned and unfound.
+  const mirror = backup.mirrorRoot()
+  if (mirror && fs.existsSync(path.join(mirror, oldName)) && !fs.existsSync(path.join(mirror, newName))) {
+    try {
+      fs.renameSync(path.join(mirror, oldName), path.join(mirror, newName))
+    } catch {
+      /* the mirror is a second copy; a mirror that will not rename is not worth failing over */
+    }
+  }
+
+  // The .bat launchers carry the instance name. Rewritten here rather than by each caller, because
+  // the panel's rename forgot to and left a start.bat that started a server that no longer existed.
+  try {
+    writeLaunchers({ name: newName, dir: cfg.dir })
+  } catch {
+    /* launchers are a convenience; `mcctl launchers` repairs them */
+  }
+
   // Scheduled tasks name the instance they act on. Left behind, they keep firing at a server that
   // no longer answers to that name - nightly, into a log, failing, with nothing to explain why.
   // Last, and not allowed to fail the rename: the instance has already moved, and a scheduling
