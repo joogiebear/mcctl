@@ -19,6 +19,21 @@ as the whole panel stuttering. None of them does now.
 - **The Java check no longer blocks the page opening**, and it reports the
   version line rather than a `JAVA_TOOL_OPTIONS` notice when that is set.
 
+## Java, found where it is
+
+- **"Java is not installed" is no longer said to people who have it.** mcctl
+  looks in the usual install folders - Program Files, the per-user Programs
+  folder, `JAVA_HOME` - as well as PATH, so a Java the installer did not put
+  on PATH, or one installed after mcctl was already open, is found and used.
+- **Each server chooses its own Java.** A Java card in the server's Settings
+  tab lists every Java on the machine, or takes a path to one it did not
+  find. A test server for 1.20.4 can run on 17 while the one beside it runs
+  26.x on 25. A new server defaults to the newest usable Java found.
+- **Start checks the Java first.** A server whose Java cannot be run is
+  refused by name, with the way out, instead of dying fifteen seconds later
+  with `spawn java ENOENT` in a state file.
+- `mcctl doctor` and the diagnostics list every Java found.
+
 ## Reporting a problem
 
 - **Feedback**, in the header. *Something broke* opens a GitHub bug report

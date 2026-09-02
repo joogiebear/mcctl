@@ -13,7 +13,10 @@ Zero dependencies — plain Node 20+ and the `tar` that ships with Windows.
   [Temurin 25](https://adoptium.net/temurin/releases/?version=25) is a good default, and a JDK
   rather than a JRE if you want Spigot or CraftBukkit built here.
   The desktop app checks for it on first run and the panel says so in a banner if it is missing;
-  `mcctl doctor` reports it from the command line.
+  `mcctl doctor` reports it from the command line. mcctl looks for Java on PATH **and** in the
+  usual install folders (Program Files, the per-user Programs folder, `JAVA_HOME`), so a Java that
+  the installer did not add to PATH, or one added after mcctl was already running, is still found
+  and used. Each server can also be pointed at a specific Java with `mcctl set <name> java=<path>`.
 - **Node 20+**, for the CLI. The desktop app carries its own runtime and does not need it.
 - **Windows 10/11** for the desktop app. The CLI runs anywhere Node does.
 

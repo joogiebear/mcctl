@@ -4989,6 +4989,115 @@ async function renderServerSettings() {
     }
   };
 
+  // ---- which Java runs it ------------------------------------------------------
+  // Per server, not per machine. Someone testing a plugin against 1.20.4 and 26.1 side by side
+  // needs 17 on one and 25 on the other, so the picker lists every Java found on the box and
+  // takes a path for one it did not find. Each server keeps its own choice.
+  const jv = document.createElement('div');
+  jv.className = 'section set-group';
+  {
+    const head = document.createElement('div');
+    head.className = 'set-head';
+    const mark = document.createElement('span');
+    mark.className = 'mark';
+    mark.append(icon('play'));
+    const h = document.createElement('h3');
+    h.textContent = 'Java';
+    const blurb = document.createElement('p');
+    blurb.textContent = 'Which Java this server runs on. Each server chooses its own, so different '
+      + 'Minecraft versions can run on the Java they need.';
+    head.append(mark, h, blurb);
+    jv.append(head);
+  }
+  const jvField = document.createElement('div');
+  jvField.className = 'field';
+  const jvLabel = document.createElement('label');
+  jvLabel.textContent = 'Runs on';
+  const jvSelect = document.createElement('select');
+  const jvCustom = document.createElement('input');
+  jvCustom.className = 'mono';
+  jvCustom.autocomplete = 'off';
+  jvCustom.spellcheck = false;
+  jvCustom.placeholder = 'C:\\Program Files\\Java\\jdk-17\\bin\\java.exe';
+  jvCustom.hidden = true;
+  const jvHint = document.createElement('div');
+  jvHint.className = 'hint';
+  jvHint.textContent = 'Looking for installed Javas…';
+  jvField.append(jvLabel, jvSelect, jvCustom, jvHint);
+  jv.append(jvField);
+  const jvRow = document.createElement('div');
+  jvRow.className = 'row';
+  const jvApply = document.createElement('button');
+  jvApply.textContent = 'Apply';
+  jvApply.disabled = true;
+  jvRow.append(jvApply);
+  jv.append(jvRow);
+  body.append(jv);
+
+  const current = row.java || 'java';
+  api('/java').then((found) => {
+    if (body.dataset.for !== row.name) return;
+    jvSelect.textContent = '';
+    const addOpt = (value, text) => {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = text;
+      jvSelect.append(o);
+      return o;
+    };
+    let matched = false;
+    for (const f of found.found) {
+      const where = f.path === 'java' ? 'on PATH' : f.path;
+      const o = addOpt(f.path, 'Java ' + f.major + '  ·  ' + where);
+      if (f.path === current) { o.selected = true; matched = true; }
+    }
+    if (!found.found.some((f) => f.path === 'java')) {
+      const o = addOpt('java', 'Whatever "java" resolves to on PATH');
+      if (current === 'java') { o.selected = true; matched = true; }
+    }
+    const custom = addOpt('__custom', 'A path of my own…');
+    if (!matched) {
+      custom.selected = true;
+      jvCustom.hidden = false;
+      jvCustom.value = current;
+    }
+    jvHint.textContent = found.found.length
+      ? 'Found ' + found.found.length + (found.found.length === 1 ? ' Java' : ' Javas') + ' on this machine. '
+        + 'Installed one somewhere else? Pick the last option and paste the path to java.exe.'
+      : 'No Java was found on PATH or in the usual install folders. Paste the path to java.exe, or get one from ' + found.download;
+    jvApply.disabled = false;
+  }).catch((e) => {
+    jvHint.textContent = 'Could not look for Javas: ' + e.message;
+    jvSelect.textContent = '';
+    const o = document.createElement('option');
+    o.value = '__custom';
+    o.textContent = 'A path of my own…';
+    jvSelect.append(o);
+    jvCustom.hidden = false;
+    jvCustom.value = current;
+    jvApply.disabled = false;
+  });
+  jvSelect.onchange = () => {
+    jvCustom.hidden = jvSelect.value !== '__custom';
+    if (!jvCustom.hidden) jvCustom.focus();
+  };
+  jvApply.onclick = async () => {
+    const chosen = jvSelect.value === '__custom' ? jvCustom.value.trim() : jvSelect.value;
+    if (!chosen) { toast('Pick a Java, or paste the path to one.', 'bad'); return; }
+    jvApply.disabled = true;
+    try {
+      await post('/instances/' + encodeURIComponent(row.name) + '/settings', { java: chosen });
+      toast(row.status === 'running'
+        ? 'Saved. The server switches Java the next time it starts.'
+        : 'Saved. This server now runs on ' + (chosen === 'java' ? 'the Java on PATH.' : chosen), 'good');
+      await refresh();
+    } catch (e) {
+      toast(e.message, 'bad');
+    } finally {
+      jvApply.disabled = false;
+    }
+  };
+
   // ---- the server software itself -------------------------------------------
   // Off the network until asked: the card shows what is installed from the registry alone, and
   // only the button talks to PaperMC.

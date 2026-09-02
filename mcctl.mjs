@@ -338,7 +338,7 @@ async function cmdNew(positional, flags) {
     let lastLine = ''
     const res = await sources.fetchJar(id, version, {
       build: flags.build ?? null,
-      java: flags.java ?? 'java',
+      java: flags.java ?? null,
       onProgress: (p) => {
         if (p.message && p.message !== lastLine) {
           lastLine = p.message
@@ -349,7 +349,7 @@ async function cmdNew(positional, flags) {
     out(res.cached
       ? `Using stored ${res.name}.`
       : `Downloaded ${res.name}${res.build ? ` (build ${res.build})` : ''}${res.sizeHuman ? `, ${res.sizeHuman}` : ''}.`)
-    if (res.javaMajor && res.javaMajor > (await java.probe(flags.java ?? 'java')).major) {
+    if (res.javaMajor && res.javaMajor > ((await java.probe(flags.java ?? (await java.defaultJava()) ?? 'java')).major ?? 0)) {
       out(`  NOTE: Minecraft ${version} needs Java ${res.javaMajor}; the java found here is older. See: mcctl doctor`)
     }
     jar = res.name
@@ -386,7 +386,7 @@ async function cmdNew(positional, flags) {
     // choice rather than the default.
     onlineMode: !flags.offline,
     motd: flags.motd ?? null,
-    java: flags.java ?? 'java',
+    java: flags.java ?? null,
   })
   out(`Created instance "${inst.name}"`)
   out(table([
@@ -436,7 +436,7 @@ async function cmdAdopt(positional, flags) {
   const inst = await create.adoptInstance(name, dir, {
     jar: flags.jar ?? null,
     memory: flags.memory ?? '4G',
-    java: flags.java ?? 'java',
+    java: flags.java ?? null,
   })
   out(`Adopted "${inst.name}"`)
   out(table([
@@ -1330,9 +1330,12 @@ async function cmdDoctor() {
 
   // The same probe the panel and the first-run wizard use, so all three agree about what
   // counts as a usable Java.
-  const javaCheck = await java.probe()
+  const javaCheck = await java.health()
   if (!javaCheck.ok) problems.push(`java: ${javaCheck.message} ${java.DOWNLOAD_URL}`)
-  else notes.push(`java: ${javaCheck.version}`)
+  else notes.push(`java: ${javaCheck.version}${javaCheck.onPath ? '' : ` at ${javaCheck.path} (not on PATH)`}`)
+  for (const other of javaCheck.others ?? []) {
+    if (other.path !== javaCheck.path) notes.push(`java (also): ${other.version} at ${other.path}`)
+  }
 
   const tarCheck = spawnSync('tar', ['--version'], { encoding: 'utf8', windowsHide: true })
   if (tarCheck.error) problems.push('tar is not on PATH (needed for snapshots)')

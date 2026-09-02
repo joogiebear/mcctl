@@ -193,8 +193,11 @@ async function diagnostics(instanceName, { short = false } = {}) {
   add('node', process.version + (process.versions.electron ? ` (electron ${process.versions.electron})` : ''))
   add('os', `${process.platform} ${os.release()} ${os.arch()}, ${os.cpus().length} cores, ${Math.round(os.totalmem() / 1073741824)} GB`)
   add('generated', new Date().toISOString())
-  const jv = await java.probe()
-  add('java', jv.found ? `${jv.version} (${jv.reason})` : jv.message)
+  const jv = await java.health()
+  add('java', jv.found && jv.path ? `${jv.version} (${jv.reason})${jv.onPath ? '' : ` at ${jv.path}, not on PATH`}` : jv.message)
+  for (const other of jv.others ?? []) {
+    if (other.path !== jv.path) add('java (also)', `${other.version} at ${other.path}`)
+  }
   lines.push('')
   lines.push('== where things live ==')
   for (const k of ['dataRoot', 'instancesDir', 'jarsDir', 'backupsDir', 'runDir']) add(k, LAYOUT[k])
@@ -980,7 +983,18 @@ async function route(req, res) {
   // Java is the one thing mcctl needs and cannot provide. Asked here so the panel can say so up
   // front instead of letting it surface as "spawn java ENOENT" after a fifty-megabyte download.
   if (seg[1] === 'health' && req.method === 'GET') {
-    return json(res, 200, { java: await java.probe(), javaDownload: java.DOWNLOAD_URL })
+    return json(res, 200, { java: await java.health(), javaDownload: java.DOWNLOAD_URL })
+  }
+
+  // ---- every Java on this machine, for the per-server picker ----------------
+  if (seg[1] === 'java' && req.method === 'GET') {
+    const { best, onPath, all } = await java.discover()
+    return json(res, 200, {
+      best: best?.path ?? null,
+      onPath: onPath.found ? { major: onPath.major, version: onPath.version } : null,
+      found: all.map(({ path: p, source, major, version, reason }) => ({ path: p, source, major, version, reason })),
+      download: java.DOWNLOAD_URL,
+    })
   }
 
   // ---- the feedback doors: prefilled issue, discussions, full bundle ---------
@@ -1172,7 +1186,8 @@ async function route(req, res) {
       if (version) {
         const label = sources.labelFor(loader)
         jobUpdate(jobId, { stage: 'resolve', percent: null, message: `Finding ${label} ${version}` })
-        const fetched = await sources.fetchJar(loader, String(version), { onProgress })
+        // BuildTools compiles with a JDK: hand it the same Java the server will get.
+        const fetched = await sources.fetchJar(loader, String(version), { onProgress, java: (await java.defaultJava()) ?? 'java' })
         jar = fetched.name
         mcVersion = String(version)
       } else if (loader !== 'paper') {
@@ -1326,7 +1341,16 @@ async function route(req, res) {
       patch.jar = String(body.jar)
       create.placeJar(registry.getInstance(name).dir, patch.jar)
     }
-    if (body.java) patch.java = String(body.java)
+    if (body.java) {
+      // Asked its version before it is recorded. A path that cannot be run would otherwise sit in
+      // the registry and fail at the next start, which is when nobody is looking at this screen.
+      // Any Java that runs is accepted, whatever its version: a test server for an old plugin may
+      // want 17 on purpose, and which Java a server runs on is the person's call, not this one's.
+      const bin = String(body.java).trim()
+      const state = await java.probe(bin)
+      if (!state.found) return json(res, 400, { error: `${bin} could not be run: ${state.message}` })
+      patch.java = bin
+    }
     if (Object.hasOwn(body, 'autoRestart')) patch.autoRestart = body.autoRestart === true
     if (Object.hasOwn(body, 'webhook')) {
       const url = String(body.webhook ?? '').trim()

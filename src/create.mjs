@@ -5,6 +5,7 @@ import { getInstance, hasInstance, putInstance, usedPorts, defaultDir, parseMemo
 import { readProps, writeProps } from './props.mjs'
 import { fail, findFreePort, randomPassword, validateName, humanBytes } from './util.mjs'
 import { guessLoader } from './software.mjs'
+import { defaultJava } from './java.mjs'
 
 const DEFAULT_PORT = 25565
 const DEFAULT_RCON_PORT = 25575
@@ -197,7 +198,7 @@ export async function newInstance(
     rconPort = null,
     acceptEula = false,
     motd = null,
-    java = 'java',
+    java = null,
     onlineMode = true,
     loader = 'paper',
     mcVersion = null,
@@ -294,7 +295,9 @@ export async function newInstance(
   const cfg = {
     dir,
     jar: chosenJar ? path.basename(chosenJar) : 'server.jar',
-    java,
+    // Nobody chose one: the best Java on the machine, wherever it is - see java.mjs. 'java' by
+    // name is what a machine with nothing found gets, so the failure at start names it plainly.
+    java: java ?? (await defaultJava()) ?? 'java',
     memory,
     loader,
     // Recorded when the jar name cannot carry it (NeoForge's starter is just "server.jar").
@@ -314,7 +317,7 @@ export async function newInstance(
  * Ports and RCON credentials are read from its own server.properties so the
  * adopted server keeps behaving exactly as it did before.
  */
-export async function adoptInstance(name, dir, { jar = null, memory = '4G', java = 'java' } = {}) {
+export async function adoptInstance(name, dir, { jar = null, memory = '4G', java = null } = {}) {
   validateName(name)
   if (hasInstance(name)) fail(`instance "${name}" already exists`)
   parseMemoryGb(memory)
@@ -345,7 +348,7 @@ export async function adoptInstance(name, dir, { jar = null, memory = '4G', java
   const cfg = {
     dir: abs,
     jar: chosen,
-    java,
+    java: java ?? (await defaultJava()) ?? 'java',
     memory,
     // Guessed the way a person would: a Fabric launcher names itself, a NeoForge server carries
     // its libraries tree, and a Purpur, Folia, Spigot or vanilla jar says so in its name.

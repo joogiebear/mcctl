@@ -2,7 +2,8 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getInstance, assertInstanceDir } from './registry.mjs'
+import { getInstance, assertInstanceDir, updateInstance } from './registry.mjs'
+import * as java from './java.mjs'
 import { readState, clearState, controlRequest } from './control.mjs'
 import { consoleLog, daemonLog, runDir, stateFile } from './paths.mjs'
 import { readProps, writeProps } from './props.mjs'
@@ -42,10 +43,38 @@ export function assertEula(inst) {
   }
 }
 
+/**
+ * Make sure the Java a server is about to run on can actually be run.
+ *
+ * <p>Checked here, before the daemon is spawned, because the daemon's answer to a Java it cannot
+ * find is "spawn java ENOENT" in a state file, fifteen seconds later. A server on the bare name
+ * `java` whose PATH has stopped resolving it - the common case is the desktop app started before
+ * Java was installed - is moved onto the best Java found elsewhere on the machine, and the move
+ * is recorded so it holds. A server pointed at an explicit path that has gone is refused by name.
+ */
+async function ensureJava(inst) {
+  const bin = inst.java || 'java'
+  // A script standing in for the JVM (the lifecycle tests) is run by node, not asked its version.
+  if (/\.m?js$/i.test(bin)) return inst
+  const state = await java.probe(bin)
+  if (state.found) return inst
+  if (bin !== 'java') {
+    fail(`"${inst.name}" could not start: ${bin} could not be run (${state.message})\n`
+      + `  Point it at another Java with: mcctl set ${inst.name} java=<path-to-java.exe>`)
+  }
+  const found = await java.defaultJava()
+  if (!found || found === 'java') {
+    fail(`"${inst.name}" could not start: Java was not found on PATH or in the usual install folders.\n`
+      + `  Install it from ${java.DOWNLOAD_URL} - then restart mcctl, which reads PATH once at launch.`)
+  }
+  return updateInstance(inst.name, { java: found })
+}
+
 export async function start(name, { wait = true, timeout = 180000, sync = true } = {}) {
-  const inst = getInstance(name)
+  let inst = getInstance(name)
   assertInstanceDir(inst)
   assertEula(inst)
+  inst = await ensureJava(inst)
 
   const { status, state } = readState(name)
   if (status === 'running') fail(`instance "${name}" is already running (java pid ${state.javaPid})`)
