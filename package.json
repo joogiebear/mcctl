@@ -1,6 +1,6 @@
 {
   "name": "mcctl",
-  "version": "1.0.0",
+  "version": "0.7.0",
   "private": true,
   "description": "Local Minecraft server control plane - multi-instance supervisor with console capture, RCON, and snapshots",
   "type": "module",

@@ -481,7 +481,9 @@ monitor that is no longer plugged in.
 
 ### Checking a build before shipping it
 
-There is no CI on this repository, so the build checks itself:
+CI runs the test suite and a CLI smoke check on every push, but it cannot build,
+sign or publish - the signing profile lives on the release machine - so the
+build checks itself:
 
 ```bash
 cd desktop
