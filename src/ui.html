@@ -1179,14 +1179,20 @@
   }
   .choice input::after {
     content: '';
-    width: 7px; height: 7px;
+    width: 6px; height: 6px;
     border-radius: 50%;
-    background: var(--lapis);
+    background: #eaf0ff;
     transform: scale(0);
     transition: transform .12s ease-out;
   }
-  .choice input:checked { border-color: var(--lapis); }
-  .choice input:checked::after { transform: scale(1); box-shadow: 0 0 7px rgba(91, 132, 255, .55); }
+  /* Checked fills the whole circle, the way the switch fills its trough: the choice is a
+     lapis disc with a light dot, not a ring with something small in it. */
+  .choice input:checked {
+    border-color: var(--lapis);
+    background: linear-gradient(180deg, #4a63d9, var(--lapis-dim));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .15), 0 0 7px rgba(91, 132, 255, .45);
+  }
+  .choice input:checked::after { transform: scale(1); }
   .choice b { font-size: 13.5px; font-weight: 600; }
   .choice span { font-size: 12.5px; color: var(--ink-3); line-height: 1.45; }
 
