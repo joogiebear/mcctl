@@ -4,6 +4,7 @@ import path from 'node:path'
 import { BACKUPS_DIR } from './paths.mjs'
 import { readProps, worldDirs } from './props.mjs'
 import * as settings from './settings.mjs'
+import { rconExec } from './rcon.mjs'
 import { fail, stamp, humanBytes, writeJson, readJson, UserError } from './util.mjs'
 
 /**
@@ -162,7 +163,19 @@ export function runTar(args, cwd) {
   })
 }
 
-export async function createSnapshot(inst, { scope = 'standard', label = null, running = false, taskId = null } = {}) {
+/**
+ * Take a snapshot.
+ *
+ * <p>A RUNNING server is flushed first: `save-off` stops it writing chunks mid-archive, `save-all
+ * flush` pushes everything it holds in memory to disk, and `save-on` afterwards hands the world
+ * back. Without that a hot snapshot is a torn copy of a world mid-write. This lives here, not in
+ * the callers, because it used to live in exactly one caller - the CLI's `backup` command - while
+ * the panel's "back up now", the nightly scheduled backup, and the pre-upgrade snapshot all took
+ * unflushed copies and the README promised otherwise. A flush that cannot be done (RCON down) is
+ * reported in the result and the manifest rather than failing the snapshot: an unflushed copy is
+ * still worth more than none.
+ */
+export async function createSnapshot(inst, { scope = 'standard', label = null, running = false, taskId = null, flush = true } = {}) {
   const members = membersFor(inst, scope)
   if (!members.length) fail(`nothing to back up for scope "${scope}" in ${inst.dir}`)
 
@@ -170,7 +183,30 @@ export async function createSnapshot(inst, { scope = 'standard', label = null, r
   const base = `${slug}${scope}_${stamp()}`
   const file = path.join(backupDir(inst.name), `${base}.tar.gz`)
 
-  const { stderr } = await runTar(['-czf', file, ...EXCLUDE_ARGS, ...members], inst.dir)
+  let flushed = false
+  let flushWarning = null
+  if (running && flush) {
+    try {
+      await rconExec(inst, ['save-off', 'save-all flush'])
+      flushed = true
+    } catch (err) {
+      flushWarning = `could not flush the world before the snapshot (${err.message}); the copy may be torn`
+    }
+  }
+  let stderr
+  try {
+    ;({ stderr } = await runTar(['-czf', file, ...EXCLUDE_ARGS, ...members], inst.dir))
+  } finally {
+    // save-on whether or not tar succeeded: leaving a live server with saving off is worse than
+    // any failed backup.
+    if (flushed) {
+      try {
+        await rconExec(inst, ['save-on'])
+      } catch {
+        /* the server may have stopped mid-backup; nothing is left to turn back on */
+      }
+    }
+  }
 
   const size = fs.statSync(file).size
   // An empty archive is not a snapshot, and this one is load-bearing: rebuild and delete both take
@@ -197,17 +233,20 @@ export async function createSnapshot(inst, { scope = 'standard', label = null, r
     createdAt: new Date().toISOString(),
     size,
     serverWasRunning: running,
+    flushed,
     // bsdtar emits an undescribed "tar: (null)" alongside exit 1 when it
     // skips a file the running server has locked. That carries no signal.
-    warnings: stderr
-      .trim()
-      .split(/\r?\n/)
-      .filter((l) => l.trim() && !/^tar:\s*\(null\)$/.test(l.trim()))
-      .slice(0, 10),
+    warnings: [
+      ...(flushWarning ? [flushWarning] : []),
+      ...stderr
+        .trim()
+        .split(/\r?\n/)
+        .filter((l) => l.trim() && !/^tar:\s*\(null\)$/.test(l.trim())),
+    ].slice(0, 10),
   }
   writeJson(path.join(backupDir(inst.name), `${base}.json`), manifest)
   const { mirrored, mirrorError } = mirrorCopy(inst.name, file)
-  return { file, size, members, manifest, mirrored, mirrorError }
+  return { file, size, members, manifest, mirrored, mirrorError, flushed, flushWarning }
 }
 
 export function listSnapshots(name) {

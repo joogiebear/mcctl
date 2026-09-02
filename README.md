@@ -127,9 +127,15 @@ active world set, and config), `full` (everything except `cache/`, `libraries/`,
 
 Backing up a running server issues `save-off` / `save-all flush` over RCON first
 and `save-on` afterward, so a hot snapshot is coherent rather than a torn copy
-of a world mid-write.
+of a world mid-write. That happens inside the snapshot itself, so every path
+that takes one gets it: this command, the panel's Backups tab, a scheduled
+backup task, and the snapshot taken before a cross-version upgrade. If the
+flush cannot be done the snapshot is still taken and the manifest says so.
 
-`restore` refuses without `--yes` and prints what it would overwrite.
+`restore` refuses without `--yes` and prints what it would overwrite. It
+extracts over the instance in place and deletes nothing, so a file added after
+the snapshot was taken survives a restore. To get back to exactly what the
+snapshot holds, remove the members it lists first.
 
 `verify` is a restore minus the writes: listing the archive decompresses every
 block, so the gzip checksums are genuinely checked, and the entries are compared

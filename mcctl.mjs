@@ -561,35 +561,21 @@ async function cmdBackup(positional, flags) {
   const inst = getInstance(name)
   const scope = flags.scope ?? 'standard'
   const running = sup.isRunning(name)
+  const flush = flags.flush !== false
 
-  // Flushing to disk first makes a hot snapshot of a live world coherent.
-  if (running && flags.flush !== false) {
-    out('Flushing world to disk (save-all)...')
-    try {
-      await rconExec(inst, ['save-off', 'save-all flush'])
-    } catch (err) {
-      out(`  warning: could not flush via RCON (${err.message})`)
-    }
-  }
-  try {
-    out(`Snapshotting "${name}" (scope: ${scope})...`)
-    const res = await backup.createSnapshot(inst, { scope, label: flags.label ?? null, running })
-    out(`Wrote ${res.file} (${humanBytes(res.size)})`)
-    out(`  included: ${res.members.join(', ')}`)
-    if (res.mirrored) out(`  mirrored: ${res.mirrored}`)
-    if (res.mirrorError) out(`  WARNING: ${res.mirrorError}`)
-    if (res.manifest.warnings.length) {
-      out('  tar warnings (normal for a live server):')
-      for (const w of res.manifest.warnings) out(`    ${w}`)
-    }
-  } finally {
-    if (running && flags.flush !== false) {
-      try {
-        await rconExec(inst, ['save-on'])
-      } catch {
-        /* server may have stopped mid-backup */
-      }
-    }
+  // The flush itself lives in createSnapshot, so every caller gets it; this only narrates it.
+  if (running && flush) out('Flushing world to disk (save-all), then snapshotting...')
+  else out(`Snapshotting "${name}" (scope: ${scope})...`)
+  const res = await backup.createSnapshot(inst, { scope, label: flags.label ?? null, running, flush })
+  out(`Wrote ${res.file} (${humanBytes(res.size)})`)
+  out(`  included: ${res.members.join(', ')}`)
+  if (res.flushWarning) out(`  WARNING: ${res.flushWarning}`)
+  if (res.mirrored) out(`  mirrored: ${res.mirrored}`)
+  if (res.mirrorError) out(`  WARNING: ${res.mirrorError}`)
+  const tarWarnings = res.manifest.warnings.filter((w) => w !== res.flushWarning)
+  if (tarWarnings.length) {
+    out('  tar warnings (normal for a live server):')
+    for (const w of tarWarnings) out(`    ${w}`)
   }
   if (flags.keep) {
     const removed = backup.pruneSnapshots(name, Number(flags.keep))
