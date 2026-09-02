@@ -59,6 +59,52 @@
 
     /* The width of a lit edge. One thing uses it - a scheduled task Windows has never heard of. */
     --spine: 3px;
+
+    /* Type scale. Seven sizes, and every font-size in the panel is one of them. There used to be
+       seventeen, from 10px to 30px in half-pixel steps, and the panes that felt a half-step off
+       from each other were the ones that had picked 12.5px where their neighbour had 13px. */
+    --t-1: 11px;   /* labels, badges, and the smallest monospace facts */
+    --t-2: 12px;   /* hints, metadata, secondary lines */
+    --t-3: 13px;   /* controls, body text inside panes, the console */
+    --t-4: 14px;   /* the page's base size */
+    --t-5: 16px;   /* pane and dialog titles */
+    --t-6: 20px;   /* a server's name, a big number */
+    --t-7: 30px;   /* the one display heading */
+
+    /* Spacing, on a four-pixel grid. Padding inside a control keeps its own tuned values; these
+       are for the layout between things - pane padding, card padding, the gaps in a grid. */
+    --s-1: 4px;
+    --s-2: 8px;
+    --s-3: 12px;
+    --s-4: 16px;
+    --s-5: 20px;
+    --s-6: 24px;
+    --s-7: 32px;
+
+    /* The two radii the 10px and 6px did not cover: a tag or pill, and a dialog. */
+    --r-xs: 4px;
+    --r-lg: 12px;
+
+    /* Tones: ink, edge and fill for each of the state colours, so a good/bad/op pill, a danger
+       button, a notice and a banner all draw from one place instead of each pasting hex. A wash
+       is the translucent form for text sitting on the page; a fill is the solid form for a
+       control that needs an opaque body. */
+    --live-ink:   #9ff0c4;
+    --live-edge:  #22503a;
+    --live-fill:  #14261d;
+    --warn-ink:   #f4cd86;
+    --warn-edge:  rgba(240, 182, 77, .32);
+    --warn-wash:  rgba(240, 182, 77, .11);
+    --fault-ink:  #f7a49f;
+    --fault-fill: #2b1719;
+    --fault-wash: rgba(242, 100, 92, .11);
+    --lapis-ink:  #cdd9ff;
+    --lapis-edge: #33407a;
+    --lapis-fill: #171d33;
+
+    /* The lit top of a raised control, and the shade it goes to under the pointer. */
+    --raised-hi: #212737;
+    --hover:     #222839;
   }
 
   * { box-sizing: border-box; }
