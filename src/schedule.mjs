@@ -168,6 +168,21 @@ export function list() {
 }
 
 /**
+ * The scheduler's answer, kept for a few seconds.
+ *
+ * <p>Asking Windows means starting PowerShell, which is the better part of a second. The panel
+ * asks on every Backups tab load and every Scheduler tab load, and the Backups tab asks just to
+ * find its own one task. A three-second memory turns a burst of those into one spawn. Any write
+ * to the scheduler forgets it, so a task just made or removed never shows its old state.
+ */
+let windowsCache = { at: 0, rows: null }
+const WINDOWS_CACHE_MS = 3000
+
+function forgetWindows() {
+  windowsCache = { at: 0, rows: null }
+}
+
+/**
  * What Windows says about the tasks it is holding for us.
  *
  * <p>Read from the scheduler rather than remembered here, because the scheduler is the thing that
@@ -175,7 +190,9 @@ export function list() {
  * in Task Scheduler - shows as null rather than as working.
  */
 function queryWindows() {
+  if (windowsCache.rows && Date.now() - windowsCache.at < WINDOWS_CACHE_MS) return windowsCache.rows
   const out = new Map()
+  windowsCache = { at: Date.now(), rows: out }
   const ps = spawnSync(
     'powershell',
     ['-NoProfile', '-Command',
@@ -255,6 +272,7 @@ function triggerArgs(schedule) {
 }
 
 function schtasks(args) {
+  forgetWindows()
   const res = spawnSync('schtasks', args, { encoding: 'utf8', windowsHide: true, timeout: 30000 })
   if (res.error) fail(`could not run schtasks: ${res.error.message}`)
   if (res.status !== 0) fail(`schtasks failed: ${(res.stderr || res.stdout || '').trim()}`)
@@ -394,6 +412,7 @@ export function remove(id) {
 
   // Windows first: a definition without a trigger is inert, a trigger without a definition fires
   // into nothing and fails at 3am.
+  forgetWindows()
   const res = spawnSync('schtasks', ['/Delete', '/TN', `${TASK_FOLDER}\\${id}`, '/F'],
     { encoding: 'utf8', windowsHide: true, timeout: 30000 })
   const said = `${res.stderr || ''}${res.stdout || ''}`
