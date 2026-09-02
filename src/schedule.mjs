@@ -266,10 +266,17 @@ function schtasks(args) {
  *
  * <p>`/F` overwrites by name, which is what makes editing a task possible without it becoming a
  * different task: the id stays, so the run history written against it stays attached.
+ *
+ * <p>The shim path is wrapped in its own quotes before it reaches /TR. Node quotes an argument
+ * with spaces for the command line, but schtasks strips that layer and stores what is left bare -
+ * so for a Windows user called "John Smith" the task's command became `C:\Users\John` with
+ * arguments `Smith\AppData\...\backup.cmd`, and the nightly backup failed to find a program.
+ * Verified by creating a task from a path with spaces and reading the XML back: unquoted splits,
+ * quoted is stored whole.
  */
 function writeWindowsTask(id, task) {
   const shim = writeShim(id)
-  schtasks(['/Create', '/TN', `${TASK_FOLDER}\\${id}`, '/TR', shim, ...triggerArgs(task.schedule), '/F'])
+  schtasks(['/Create', '/TN', `${TASK_FOLDER}\\${id}`, '/TR', `"${shim}"`, ...triggerArgs(task.schedule), '/F'])
   // /Create always makes an enabled task, so a disabled one is disabled immediately afterwards
   // rather than being created in the state it is meant to be in. Windows offers no way to do the
   // latter through schtasks.
