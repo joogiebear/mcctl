@@ -1956,9 +1956,9 @@ function updateCard(el, row) {
     up.textContent = duration(Date.now() - row.startedAt);
     vitals.append(up, document.createTextNode(tail));
   } else {
-    vitals.append(document.createTextNode(STATE_TEXT[row.status] + tail));
+    vitals.append(document.createTextNode((STATE_TEXT[row.status] ?? row.status) + tail));
   }
-  el.title = row.name + ' — ' + STATE_TEXT[row.status] + (row.jar ? ' — ' + row.jar : '')
+  el.title = row.name + ' — ' + (STATE_TEXT[row.status] ?? row.status) + (row.jar ? ' — ' + row.jar : '')
     + (row.onlineMode === false ? ' — offline mode' : '');
   el.classList.toggle('offline', row.onlineMode === false);
 }
@@ -2014,7 +2014,7 @@ function renderServer(row) {
     st.textContent = 'Running \u00b7 up ' + duration(Date.now() - row.startedAt);
   } else {
     delete st.dataset.since;
-    st.textContent = STATE_TEXT[row.status];
+    st.textContent = STATE_TEXT[row.status] ?? row.status;
   }
 
   const vitals = $('#srvVitals');
@@ -5423,6 +5423,10 @@ $('#formNew').onsubmit = async (e) => {
     $('#bCreate').disabled = false;
     e.target.reset();
     $('#nMem').value = '4G';
+    // reset() put the loader back to Paper but left the version list and hints from whichever
+    // loader was chosen last, so a second create without touching the loader posted a Fabric
+    // version string against loader:'paper'.
+    loadVersions($('#nLoader').value);
     await refresh();
     select(inst.name);
     toast('Created ' + inst.name + ' on port ' + inst.port + '.', 'good');
