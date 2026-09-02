@@ -7,6 +7,8 @@ import { getInstance, hasInstance, putInstance, removeInstance } from './registr
 import * as backup from './backup.mjs'
 import * as supervisor from './supervisor.mjs'
 import * as schedule from './schedule.mjs'
+import { writeLaunchers } from './create.mjs'
+import { readProps, worldDirs } from './props.mjs'
 import { UserError, validateName } from './util.mjs'
 
 /** Written once, because every editor and shell between here and the file mangles it. */
@@ -149,7 +151,12 @@ export async function rebuild(name, { keepPlugins = true, snapshot = true } = {}
     snapshotFile = res?.file ?? res?.path ?? null
   }
 
-  const wipe = ['world', 'world_nether', 'world_the_end', 'logs', 'cache', 'crash-reports',
+  // The worlds are whatever level-name says they are, not "world". This list used to hardcode
+  // the default names, so a server running any other world - a downloaded map, say - was
+  // "rebuilt" with nothing removed and reported as such. The pre-rebuild snapshot above already
+  // read level-name; the wipe now reads the same line.
+  const props = readProps(path.join(inst.dir, 'server.properties'))
+  const wipe = [...worldDirs(props), 'logs', 'cache', 'crash-reports',
     'usercache.json', 'usernamecache.json', 'banned-ips.json', 'banned-players.json', 'ops.json',
     'whitelist.json', 'session.lock']
   if (!keepPlugins) wipe.push('plugins')
