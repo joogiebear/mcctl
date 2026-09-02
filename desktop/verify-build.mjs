@@ -142,7 +142,9 @@ function checkTokensMatch() {
   const grab = (file) => {
     let text
     try {
-      text = fs.readFileSync(file, 'utf8')
+      // Normalised, because autocrlf checks one file out with CRLF and leaves the other LF, and
+      // an identical palette must not fail the build over the line terminator.
+      text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
     } catch {
       return null
     }
