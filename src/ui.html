@@ -2144,13 +2144,51 @@ function renderEmptyFor(rows) {
   }
 }
 
+/**
+ * How many polls in a row have failed. One is a blip. Three is the backend gone - the panel process
+ * closed, or the desktop app's core wedged - and until this said so the page kept every card at
+ * "Running" with Start and Stop enabled, and the only symptom was the console going blank.
+ */
+let missedPolls = 0;
+let refreshing = false;
+
+function lostContact(on) {
+  const existing = $('#lostBanner');
+  if (!on) {
+    existing?.remove();
+    return;
+  }
+  if (existing) return;
+  const bar = document.createElement('div');
+  bar.id = 'lostBanner';
+  bar.className = 'banner';
+  bar.setAttribute('role', 'alert');
+  const b = document.createElement('b');
+  b.textContent = 'Lost contact with mcctl.';
+  const text = document.createElement('span');
+  text.className = 'grow';
+  text.textContent = ' The panel process has stopped or is not answering, so nothing shown here is current. '
+    + 'Your servers are separate processes and keep running.';
+  bar.append(b, text);
+  $('#banner').prepend(bar);
+}
+
 async function refresh() {
+  // One poll at a time. A stalled request otherwise piles up behind itself, and responses landing
+  // out of order overwrite newer rows with older ones.
+  if (refreshing) return;
+  refreshing = true;
   let rows;
   try {
     rows = await api('/instances');
   } catch {
-    return; // a poll that cannot reach the server is not news; the next one will say so if it matters
+    if (++missedPolls === 3) lostContact(true);
+    refreshing = false;
+    return;
   }
+  refreshing = false;
+  if (missedPolls >= 3) lostContact(false);
+  missedPolls = 0;
   state.rows = rows;
 
   if (state.current && !rows.some((r) => r.name === state.current)) {
