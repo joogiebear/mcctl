@@ -66,7 +66,11 @@ export function resolveRoots(overrides = {}) {
   const s = { ...load(), ...overrides }
 
   const legacy = fs.existsSync(path.join(CODE_ROOT, 'instances.json'))
-  const dataRoot = s.dataRoot ? path.resolve(s.dataRoot) : legacy ? CODE_ROOT : defaultDataRoot()
+  // MCCTL_DATA_ROOT wins over everything: it is how the lifecycle tests keep a real daemon, registry
+  // and run directory inside a scratch folder instead of the person's own servers. It is inherited
+  // by the daemons this process spawns, so they land in the same place.
+  const forced = process.env.MCCTL_DATA_ROOT
+  const dataRoot = forced ? path.resolve(forced) : s.dataRoot ? path.resolve(s.dataRoot) : legacy ? CODE_ROOT : defaultDataRoot()
 
   // separateInstances is the toggle: off (default) means servers live with everything else.
   const instancesDir = s.separateInstances && s.instancesDir

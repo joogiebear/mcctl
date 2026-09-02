@@ -22,7 +22,11 @@
 
 export const CRASH_WINDOW_MS = 10 * 60 * 1000
 export const CRASH_LIMIT = 3
-export const RESTART_DELAY_MS = 10 * 1000
+// Ten seconds: long enough for the port and the world's file locks to be released. The override
+// exists for the lifecycle tests, which would otherwise spend ten seconds per crash waiting on it.
+export const RESTART_DELAY_MS = Number(process.env.MCCTL_RESTART_DELAY_MS) > 0
+  ? Number(process.env.MCCTL_RESTART_DELAY_MS)
+  : 10 * 1000
 
 /**
  * Decide what to do about an exit. `crashes` is every crash timestamp so far, INCLUDING the

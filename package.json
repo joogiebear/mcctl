@@ -5,7 +5,7 @@
   "description": "Local Minecraft server control plane - multi-instance supervisor with console capture, RCON, and snapshots",
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test \"test/*.test.mjs\""
   },
   "bin": {
     "mcctl": "./mcctl.mjs"

@@ -98,8 +98,23 @@ function tell(message) {
   lastNotify = notifyInstance(inst, message, { log })
 }
 
-/** Marks the point where Paper has finished loading and is accepting joins. */
-const READY_RE = /Done \([\d.,]+s\)!/
+/**
+ * What to spawn for an instance's `java`.
+ *
+ * <p>Normally the binary named, with the JVM arguments as they are. A `java` that is a .mjs or .js
+ * file is run by this same Node with the JVM arguments passed through untouched - a script standing
+ * in for the JVM. That is what lets the lifecycle tests drive a real daemon, a real control pipe
+ * and a real console log without a 50 MB server jar and a JVM on the CI runner. Node would reject
+ * `-Xms4G` as a bad option if the script were named as `java` directly, which is why the daemon
+ * does the routing rather than the registry.
+ */
+function javaCommand(inst, args) {
+  const bin = inst.java || 'java'
+  if (/\.m?js$/i.test(bin)) {
+    return { cmd: process.execPath, args: [bin, ...args], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }
+  }
+  return { cmd: bin, args, env: process.env }
+}
 
 function launch({ first }) {
   // Re-read the registry on every launch, not just the first: memory edits, an auto-restart
@@ -107,14 +122,16 @@ function launch({ first }) {
   inst = getInstance(name)
   const jar = serverJarPath(inst)
   const flags = inst.jvmFlags?.length ? inst.jvmFlags : jvmFlagsFor(inst.memory)
-  const args = [`-Xms${inst.memory}`, `-Xmx${inst.memory}`, ...flags, '-jar', path.basename(jar), '--nogui']
+  const jvmArgs = [`-Xms${inst.memory}`, `-Xmx${inst.memory}`, ...flags, '-jar', path.basename(jar), '--nogui']
+  const { cmd, args, env } = javaCommand(inst, jvmArgs)
 
-  log(`starting ${inst.java || 'java'} ${args.join(' ')} (cwd=${inst.dir})${first ? '' : ' [auto-restart]'}`)
+  log(`starting ${cmd} ${args.join(' ')} (cwd=${inst.dir})${first ? '' : ' [auto-restart]'}`)
 
-  child = spawn(inst.java || 'java', args, {
+  child = spawn(cmd, args, {
     cwd: inst.dir,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
+    env,
   })
 
   child.stdout.pipe(out, { end: false })
