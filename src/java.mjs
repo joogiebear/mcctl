@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import fsSync from 'node:fs'
 import path from 'node:path'
+import { fail, UserError } from './util.mjs'
 
 /**
  * Is there a Java, and is it new enough?
@@ -239,4 +240,82 @@ export async function health() {
       ? `Java ${state.major} is installed${where}.${note}`
       : `${state.message}${where ? ` Found${where}.` : ''}${note}`,
   }
+}
+
+/**
+ * The Java a Minecraft version needs to run at all.
+ *
+ * <p>Mojang's own floor, which every server built on a version inherits - Paper, Purpur, Folia,
+ * Spigot, Fabric and NeoForge all load the same class files. Held here rather than fetched so
+ * the answer is the same offline, in the CLI and in the panel; vanilla's manifest carries the
+ * same number and agrees with this table. Unknown shapes answer null, which means "no check":
+ * a snapshot name or a fork's own numbering must not stop a person who knows what they are doing.
+ *
+ * <p>Too NEW is not checked. A modern Java runs an old server more often than not, and a refusal
+ * there would be a guess; too old is a certainty, because the class files will not load.
+ */
+export function requiredMajor(mc) {
+  // Digits and dots only: a snapshot like 25w14a is not a release and answers null.
+  const m = /^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(String(mc ?? '').trim())
+  if (!m) return null
+  const a = Number(m[1])
+  const b = m[2] == null ? 0 : Number(m[2])
+  const c = m[3] == null ? 0 : Number(m[3])
+  // Year-based versions, 26.1 onward, need 25.
+  if (a >= 25) return 25
+  if (a !== 1) return null
+  if (b >= 21) return 21
+  if (b === 20) return c >= 5 ? 21 : 17
+  if (b >= 18) return 17
+  if (b === 17) return 16
+  return 8
+}
+
+/** The newest Java on this machine that satisfies a requirement, or null. */
+export async function javaFor(needs) {
+  const { all } = await discover()
+  return all.find((j) => j.major >= needs) ?? null
+}
+
+/**
+ * Decide which Java a server gets, before anything is downloaded or launched.
+ *
+ * <p>Someone who named a Java gets that Java - it is run to make sure it exists, and refused
+ * only when it is certainly too old for the version and `force` was not given. Nobody naming
+ * one gets the newest installed Java that satisfies the version, which is how a 1.20.4 test
+ * server lands on 17 and the 26.x server beside it on 25 with no one choosing. When nothing
+ * installed is new enough the refusal names what is needed, what was found and where to get
+ * it; `force` goes ahead on the best there is, for the person who knows better.
+ *
+ * <p>A machine with no Java at all is not refused here: the panel's banner already says so,
+ * and start says it again by name. Creating the folder costs nothing.
+ */
+export async function pickJava({ explicit = null, needs = null, force = false, what = 'this version' } = {}) {
+  if (explicit) {
+    const state = await probe(explicit)
+    if (!state.found) fail(`${explicit} could not be run: ${state.message}`)
+    if (needs && state.major != null && state.major < needs && !force) {
+      throw tooOld(`${what} needs Java ${needs}, and ${explicit} is Java ${state.major}. `
+        + 'Pick a newer Java, or pass --force to use it anyway.', { needs, have: state.major })
+    }
+    return explicit
+  }
+  if (!needs) return (await defaultJava()) ?? 'java'
+  const fit = await javaFor(needs)
+  if (fit) return fit.path === 'java' ? 'java' : fit.path
+  const { best } = await discover()
+  if (!best) return 'java'
+  if (force) return best.path
+  throw tooOld(`${what} needs Java ${needs}. The newest Java on this machine is ${best.major}`
+    + `${best.path === 'java' ? '' : ` (${best.path})`}. Install Java ${needs} from ${DOWNLOAD_URL}, `
+    + 'or create it anyway and point it at a Java of your own afterwards.', { needs, have: best.major })
+}
+
+/** A refusal the panel can recognise and offer to override. */
+function tooOld(message, { needs, have }) {
+  const err = new UserError(message)
+  err.code = 'java-too-old'
+  err.needs = needs
+  err.have = have
+  return err
 }

@@ -1500,6 +1500,7 @@
             <label for="nVersion">Minecraft version</label>
             <select id="nVersion" name="version"><option value="">Loading versions…</option></select>
             <div class="hint" id="nVersionHint">Downloads the newest stable Paper build.</div>
+            <div class="inline-warn" id="nJavaWarn" hidden></div>
           </div>
           <div class="field" style="flex:1">
             <label for="nMem">Memory</label>
@@ -1729,7 +1730,11 @@ async function api(path, opt) {
   const res = await fetch('/api' + path, opt);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || (res.status + ' ' + res.statusText));
+    const err = new Error(body.error || (res.status + ' ' + res.statusText));
+    // A refusal the page can do something about carries a code: "java-too-old" gets a
+    // "create anyway" rather than a dead end.
+    if (body.code) err.code = body.code;
+    throw err;
   }
   return res.json();
 }
@@ -5056,9 +5061,11 @@ async function renderServerSettings() {
       return o;
     };
     let matched = false;
+    const needs = row.javaNeeds;
     for (const f of found.found) {
       const where = f.path === 'java' ? 'on PATH' : f.path;
-      const o = addOpt(f.path, 'Java ' + f.major + '  ·  ' + where);
+      const tooOld = needs && f.major < needs;
+      const o = addOpt(f.path, 'Java ' + f.major + '  ·  ' + where + (tooOld ? '  ·  too old for this server' : ''));
       if (f.path === current) { o.selected = true; matched = true; }
     }
     if (!found.found.some((f) => f.path === 'java')) {
@@ -5071,10 +5078,11 @@ async function renderServerSettings() {
       jvCustom.hidden = false;
       jvCustom.value = current;
     }
+    const needLine = needs ? 'This server runs Minecraft that needs Java ' + needs + ' or newer. ' : '';
     jvHint.textContent = found.found.length
-      ? 'Found ' + found.found.length + (found.found.length === 1 ? ' Java' : ' Javas') + ' on this machine. '
+      ? needLine + 'Found ' + found.found.length + (found.found.length === 1 ? ' Java' : ' Javas') + ' on this machine. '
         + 'Installed one somewhere else? Pick the last option and paste the path to java.exe.'
-      : 'No Java was found on PATH or in the usual install folders. Paste the path to java.exe, or get one from ' + found.download;
+      : needLine + 'No Java was found on PATH or in the usual install folders. Paste the path to java.exe, or get one from ' + found.download;
     jvApply.disabled = false;
   }).catch((e) => {
     jvHint.textContent = 'Could not look for Javas: ' + e.message;
@@ -5553,6 +5561,8 @@ $('#aName').oninput = () => checkName($('#aName'), $('#aNameBad'));
 $('#nMem').oninput = () => checkMemory($('#nMem'), $('#nMemBad'));
 $('#aMem').oninput = () => checkMemory($('#aMem'), $('#aMemBad'));
 
+// Set for one submit after "Create anyway" on a Java refusal, then cleared.
+let forceJava = false;
 $('#formNew').onsubmit = async (e) => {
   e.preventDefault();
   if (!checkName($('#nName'), $('#nNameBad'))) { $('#nName').focus(); return; }
@@ -5596,7 +5606,9 @@ $('#formNew').onsubmit = async (e) => {
       port: form.get('port') || null,
       onlineMode: form.get('onlineMode') !== 'offline',
       jobId: jobId,
+      force: forceJava,
     });
+    forceJava = false;
     jobs.close();
     $('#newProg').hidden = true;
     $('#bCreate').disabled = false;
@@ -5610,12 +5622,24 @@ $('#formNew').onsubmit = async (e) => {
     select(inst.name);
     toast('Created ' + inst.name + ' on port ' + inst.port + '.', 'good');
   } catch (err) {
+    forceJava = false;
     jobs.close();
     bar.classList.remove('indet');
     bar.style.width = '0';
     msg.textContent = err.message;
     $('#bCreate').disabled = false;
     $('#newHint').textContent = '';
+    if (err.code === 'java-too-old') {
+      // The refusal is about a certainty - the class files will not load on that Java - but
+      // the person may be about to install one, or know something this table does not.
+      const go = await ask({
+        title: 'No Java here can run this version',
+        text: err.message + ' The server will not start until it has a Java that fits; you can choose one under Settings → Java.',
+        confirmLabel: 'Create anyway',
+      });
+      if (go) { forceJava = true; e.target.requestSubmit(); }
+      return;
+    }
     toast(err.message, 'bad');
   }
 };
@@ -5999,6 +6023,50 @@ async function loadSoftware() {
   }
 }
 
+/**
+ * What Java each version needs, said in the dropdown and under it.
+ *
+ * Asked once per loader after the versions arrive. Each option gains "· Java 21"; when the
+ * selected version needs more than the newest Java on this machine, the hint under the
+ * dropdown says so with the download link, before anyone presses Create and waits on a
+ * download only to be told at the end.
+ */
+const javaNeedsByLoader = {};
+async function annotateJavaNeeds(loader) {
+  const sel = $('#nVersion');
+  const list = versionLists[loader];
+  if (!list || !list.length) return;
+  if (!javaNeedsByLoader[loader]) {
+    try {
+      javaNeedsByLoader[loader] = await api('/java/needs?versions=' + encodeURIComponent(list.join(',')));
+    } catch {
+      return;
+    }
+  }
+  if ($('#nLoader').value !== loader) return;
+  const info = javaNeedsByLoader[loader];
+  for (const o of sel.options) {
+    const n = info.needs[o.value];
+    if (n && !/· Java/.test(o.textContent)) o.textContent += '  · Java ' + n;
+  }
+  const say = () => {
+    const n = info.needs[sel.value];
+    const warn = $('#nJavaWarn');
+    if (!n || info.have == null || info.have >= n) { warn.hidden = true; return; }
+    warn.hidden = false;
+    warn.textContent = '';
+    warn.append('Minecraft ' + sel.value + ' needs Java ' + n + '. The newest Java found on this machine is '
+      + info.have + '. ');
+    const a = document.createElement('a');
+    a.href = info.download;
+    a.textContent = 'Get Java ' + n;
+    a.onclick = (e) => { e.preventDefault(); openOutside(info.download); };
+    warn.append(a, document.createTextNode(' first, or create it anyway and point it at a Java of your own afterwards.'));
+  };
+  sel.onchange = say;
+  say();
+}
+
 async function loadVersions(loader) {
   const sel = $('#nVersion');
   const sw = softwareById[loader] || softwareById.paper;
@@ -6046,6 +6114,7 @@ async function loadVersions(loader) {
     if (i === 0) o.selected = true;
     sel.append(o);
   });
+  annotateJavaNeeds(loader);
   sel.disabled = false;
   $('#bCreate').disabled = false;
 }

@@ -156,11 +156,12 @@ export function installServer(dir, installerPath, { java = 'java', onProgress = 
  * a half-built folder that looks created.
  */
 export async function createServer(name, mc, {
-  build = null, memory = '4G', port = null, onlineMode = true, onProgress = () => {},
+  build = null, memory = '4G', port = null, onlineMode = true, java = null, onProgress = () => {},
 } = {}) {
   const neoVersion = await resolveBuild(mc, build)
   const installer = await fetchInstaller(neoVersion, { onProgress })
   const inst = await create.newInstance(name, {
+    java,
     loader: 'neoforge',
     jar: null,
     mcVersion: mcOf(neoVersion),

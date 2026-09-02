@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getInstance, assertInstanceDir, updateInstance } from './registry.mjs'
 import * as java from './java.mjs'
+import { mcVersionOf } from './plugins.mjs'
 import { readState, clearState, controlRequest } from './control.mjs'
 import { consoleLog, daemonLog, runDir, stateFile } from './paths.mjs'
 import { readProps, writeProps } from './props.mjs'
@@ -52,29 +53,44 @@ export function assertEula(inst) {
  * Java was installed - is moved onto the best Java found elsewhere on the machine, and the move
  * is recorded so it holds. A server pointed at an explicit path that has gone is refused by name.
  */
-async function ensureJava(inst) {
+async function ensureJava(inst, { force = false } = {}) {
   const bin = inst.java || 'java'
   // A script standing in for the JVM (the lifecycle tests) is run by node, not asked its version.
   if (/\.m?js$/i.test(bin)) return inst
+  const needs = java.requiredMajor(mcVersionOf(inst))
   const state = await java.probe(bin)
-  if (state.found) return inst
+  if (state.found) {
+    // Runs, but is certainly too old for this version: the class files will not load, and the
+    // crash would say so in a stack trace fifteen seconds from now. A server on the bare name
+    // is moved to a Java that fits, if one is installed; a server someone pointed at a Java of
+    // their own is refused by name, with the way out - or started anyway with --force.
+    if (!needs || state.major == null || state.major >= needs || force) return inst
+    if (bin === 'java') {
+      const fit = await java.javaFor(needs)
+      if (fit && fit.path !== 'java') return updateInstance(inst.name, { java: fit.path })
+    }
+    fail(`"${inst.name}" runs Minecraft ${mcVersionOf(inst)}, which needs Java ${needs}, but ${bin} is Java ${state.major}.\n`
+      + `  Pick another in the panel under Settings → Java, or: mcctl set ${inst.name} java=<path-to-java.exe>\n`
+      + `  Install Java ${needs} from ${java.DOWNLOAD_URL}. To start on Java ${state.major} anyway: mcctl start ${inst.name} --force`)
+  }
   if (bin !== 'java') {
     fail(`"${inst.name}" could not start: ${bin} could not be run (${state.message})\n`
       + `  Point it at another Java with: mcctl set ${inst.name} java=<path-to-java.exe>`)
   }
-  const found = await java.defaultJava()
-  if (!found || found === 'java') {
+  const found = needs ? await java.javaFor(needs) : null
+  const fallback = found?.path ?? (await java.defaultJava())
+  if (!fallback || fallback === 'java') {
     fail(`"${inst.name}" could not start: Java was not found on PATH or in the usual install folders.\n`
       + `  Install it from ${java.DOWNLOAD_URL} - then restart mcctl, which reads PATH once at launch.`)
   }
-  return updateInstance(inst.name, { java: found })
+  return updateInstance(inst.name, { java: fallback })
 }
 
-export async function start(name, { wait = true, timeout = 180000, sync = true } = {}) {
+export async function start(name, { wait = true, timeout = 180000, sync = true, force = false } = {}) {
   let inst = getInstance(name)
   assertInstanceDir(inst)
   assertEula(inst)
-  inst = await ensureJava(inst)
+  inst = await ensureJava(inst, { force })
 
   const { status, state } = readState(name)
   if (status === 'running') fail(`instance "${name}" is already running (java pid ${state.javaPid})`)

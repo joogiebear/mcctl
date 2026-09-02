@@ -29,9 +29,18 @@ as the whole panel stuttering. None of them does now.
   tab lists every Java on the machine, or takes a path to one it did not
   find. A test server for 1.20.4 can run on 17 while the one beside it runs
   26.x on 25. A new server defaults to the newest usable Java found.
+- **mcctl knows what each version needs.** The version list in Add a server
+  says "Java 21" or "Java 25" beside every version, and warns underneath when
+  nothing installed is new enough - before the download, not after it. A new
+  server gets the newest installed Java that fits its version, so 1.20.4
+  lands on 17 and 26.x on 25 without anyone choosing. A version nothing here
+  can run is refused with the download link, and "Create anyway" is one click
+  for whoever is about to install it.
 - **Start checks the Java first.** A server whose Java cannot be run is
   refused by name, with the way out, instead of dying fifteen seconds later
-  with `spawn java ENOENT` in a state file.
+  with `spawn java ENOENT` in a state file. A Java that is certainly too old
+  for the server's version is refused the same way, or swapped for one that
+  fits when the server was on plain `java`; `mcctl start --force` overrides.
 - `mcctl doctor` and the diagnostics list every Java found.
 
 ## Reporting a problem

@@ -66,7 +66,7 @@ export function serve({ port = 8770, host = '127.0.0.1', open = true } = {}) {
       // A refusal ("the server is running", "that is not a port") is the person's to fix and
       // answers 400; anything else is mcctl's fault and answers 500. Both used to be 500.
       const refusal = err instanceof UserError || err?.userFacing === true
-      json(res, refusal ? 400 : 500, { error: err?.message ?? String(err) })
+      json(res, refusal ? 400 : 500, { error: err?.message ?? String(err), ...(err?.code ? { code: err.code } : {}) })
     }
   })
 
@@ -908,7 +908,7 @@ function safeInstance(row) {
   } catch {
     /* a directory that has gone missing is already reported through status */
   }
-  return { ...safe, rconPort: rcon?.port ?? null, onlineMode, levelName }
+  return { ...safe, rconPort: rcon?.port ?? null, onlineMode, levelName, javaNeeds: java.requiredMajor(plugins.mcVersionOf(row)) }
 }
 
 /**
@@ -986,8 +986,17 @@ async function route(req, res) {
     return json(res, 200, { java: await java.health(), javaDownload: java.DOWNLOAD_URL })
   }
 
+  // ---- what Java each version needs, next to what is installed -----------------
+  if (seg[1] === 'java' && seg[2] === 'needs' && req.method === 'GET') {
+    const versions = String(url.searchParams.get('versions') ?? '').split(',').filter(Boolean).slice(0, 500)
+    const { best } = await java.discover()
+    const needs = {}
+    for (const v of versions) needs[v] = java.requiredMajor(v)
+    return json(res, 200, { needs, have: best?.major ?? null, download: java.DOWNLOAD_URL })
+  }
+
   // ---- every Java on this machine, for the per-server picker ----------------
-  if (seg[1] === 'java' && req.method === 'GET') {
+  if (seg[1] === 'java' && seg.length === 2 && req.method === 'GET') {
     const { best, onPath, all } = await java.discover()
     return json(res, 200, {
       best: best?.path ?? null,
@@ -1159,6 +1168,12 @@ async function route(req, res) {
       if (body.loader === 'neoforge') {
         if (!body.neoforgeVersion) return json(res, 400, { error: 'a Minecraft version is required for a NeoForge server' })
         const result = await neoforge.createServer(String(body.name), String(body.neoforgeVersion), {
+          java: await java.pickJava({
+            explicit: body.java ? String(body.java) : null,
+            needs: java.requiredMajor(String(body.neoforgeVersion)),
+            force: body.force === true,
+            what: `Minecraft ${body.neoforgeVersion}`,
+          }),
           memory: body.memory || '4G',
           port: body.port ? Number(body.port) : null,
           onlineMode: body.onlineMode !== false,
@@ -1183,11 +1198,20 @@ async function route(req, res) {
           message: 'Downloading the server jar',
         })
       }
+      // Which Java, decided before the download: the one named, or the newest installed that
+      // the version can run on. A version nothing here can run is refused now, not at first
+      // start - unless the page asked to go ahead anyway.
+      const chosenJava = await java.pickJava({
+        explicit: body.java ? String(body.java) : null,
+        needs: version ? java.requiredMajor(String(version)) : null,
+        force: body.force === true,
+        what: version ? `Minecraft ${version}` : 'this version',
+      })
       if (version) {
         const label = sources.labelFor(loader)
         jobUpdate(jobId, { stage: 'resolve', percent: null, message: `Finding ${label} ${version}` })
         // BuildTools compiles with a JDK: hand it the same Java the server will get.
-        const fetched = await sources.fetchJar(loader, String(version), { onProgress, java: (await java.defaultJava()) ?? 'java' })
+        const fetched = await sources.fetchJar(loader, String(version), { onProgress, java: chosenJava })
         jar = fetched.name
         mcVersion = String(version)
       } else if (loader !== 'paper') {
@@ -1196,6 +1220,7 @@ async function route(req, res) {
       jobUpdate(jobId, { stage: 'create', percent: null, message: 'Setting up the server folder' })
       const inst = await create.newInstance(String(body.name), {
         jar,
+        java: chosenJava,
         loader,
         mcVersion,
         memory: body.memory || '4G',

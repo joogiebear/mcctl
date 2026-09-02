@@ -17,6 +17,10 @@ Zero dependencies — plain Node 20+ and the `tar` that ships with Windows.
   usual install folders (Program Files, the per-user Programs folder, `JAVA_HOME`), so a Java that
   the installer did not add to PATH, or one added after mcctl was already running, is still found
   and used. Each server can also be pointed at a specific Java with `mcctl set <name> java=<path>`.
+  mcctl knows which Java each Minecraft version needs (17 for 1.18 to 1.20.4, 21 for 1.20.5 and
+  1.21, 25 for 26.x) and picks the newest installed Java that fits when a server is created; a
+  version nothing installed can run is refused before the download, with the download link.
+  `--force` on `new` and `start` goes ahead anyway.
 - **Node 20+**, for the CLI. The desktop app carries its own runtime and does not need it.
 - **Windows 10/11** for the desktop app. The CLI runs anywhere Node does.
 

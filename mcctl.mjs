@@ -154,7 +154,8 @@ async function cmdStart(positional, flags) {
   const wait = flags.wait !== false && !flags.detach
   const timeout = Number(flags.timeout ?? 180) * 1000
   out(`Starting "${name}"...`)
-  const res = await sup.start(name, { wait, timeout, sync: flags.sync !== false })
+  // --force: start on a Java the version is known to be too old for, for whoever knows better.
+  const res = await sup.start(name, { wait, timeout, sync: flags.sync !== false, force: Boolean(flags.force) })
 
   if (!wait) {
     out(`Launched (java pid ${res.javaPid}). Not waiting for ready.`)
@@ -326,6 +327,7 @@ async function cmdNew(positional, flags) {
   let jar = flags.jar ?? null
   let loader = 'paper'
   let mcVersion = null
+  let chosenJava = flags.java ?? null
   const chosen = software.JAR_IDS.filter((id) => flags[id])
   if (chosen.length > 1 || (chosen.length && flags.neoforge)) {
     fail(`pick one of ${[...chosen, ...(flags.neoforge ? ['neoforge'] : [])].map((id) => `--${id}`).join(', ')}`)
@@ -336,9 +338,17 @@ async function cmdNew(positional, flags) {
     const sw = software.softwareOf(id)
     if (sw.slow) out(`${sw.label} is compiled here by BuildTools - this takes several minutes the first time.`)
     let lastLine = ''
+    // Which Java, before the download: --java as given, else the newest installed that this
+    // version can run on. Refused when nothing here is new enough, unless --force.
+    chosenJava = await java.pickJava({
+      explicit: flags.java ?? null,
+      needs: java.requiredMajor(version),
+      force: Boolean(flags.force),
+      what: `Minecraft ${version}`,
+    })
     const res = await sources.fetchJar(id, version, {
       build: flags.build ?? null,
-      java: flags.java ?? null,
+      java: chosenJava,
       onProgress: (p) => {
         if (p.message && p.message !== lastLine) {
           lastLine = p.message
@@ -349,9 +359,6 @@ async function cmdNew(positional, flags) {
     out(res.cached
       ? `Using stored ${res.name}.`
       : `Downloaded ${res.name}${res.build ? ` (build ${res.build})` : ''}${res.sizeHuman ? `, ${res.sizeHuman}` : ''}.`)
-    if (res.javaMajor && res.javaMajor > ((await java.probe(flags.java ?? (await java.defaultJava()) ?? 'java')).major ?? 0)) {
-      out(`  NOTE: Minecraft ${version} needs Java ${res.javaMajor}; the java found here is older. See: mcctl doctor`)
-    }
     jar = res.name
     loader = id
     mcVersion = version
@@ -360,6 +367,12 @@ async function cmdNew(positional, flags) {
   // launch like every other, so this is its own branch rather than a jar to pass along.
   if (flags.neoforge) {
     const res = await neoforge.createServer(name, String(flags.neoforge), {
+      java: await java.pickJava({
+        explicit: flags.java ?? null,
+        needs: java.requiredMajor(String(flags.neoforge)),
+        force: Boolean(flags.force),
+        what: `Minecraft ${flags.neoforge}`,
+      }),
       memory: flags.memory ?? '4G',
       port: flags.port ? Number(flags.port) : null,
       onlineMode: !flags.offline,
@@ -386,7 +399,7 @@ async function cmdNew(positional, flags) {
     // choice rather than the default.
     onlineMode: !flags.offline,
     motd: flags.motd ?? null,
-    java: flags.java ?? null,
+    java: chosenJava,
   })
   out(`Created instance "${inst.name}"`)
   out(table([
