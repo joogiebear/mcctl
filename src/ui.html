@@ -867,6 +867,7 @@
     -webkit-appearance: none;
     flex: none;
     width: 34px; height: 20px;
+    padding: 0;
     margin: 0;
     border-radius: 999px;
     background: var(--sunken);
@@ -1163,6 +1164,9 @@
   .choice input {
     appearance: none;
     width: 16px; height: 16px;
+    /* The shared input rule pads every field by 7px 10px. On a 16px box that padding alone is
+       larger than the box, so it stretched into a 23x17 pill and pushed the dot low and left. */
+    padding: 0;
     margin: 0;
     grid-row: 1 / 3; align-self: center;
     border-radius: 50%;

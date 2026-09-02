@@ -53,5 +53,8 @@ as the whole panel stuttering. None of them does now.
 
 ## Also
 
+- The drawn radio buttons - in the Manage dialog and the create form - are round
+  again, with the dot in the middle. The shared field padding had been stretching
+  them into a pill and pushing the dot into a corner.
 - The README says why the panel cannot be bound to another address.
 - CI runs the test suite on Linux as well as Windows.
