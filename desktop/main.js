@@ -110,9 +110,11 @@ function createWindow(loadUrl) {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       // The page is local and trusted, but there is no reason for it to hold Node: everything it
-      // needs comes through preload as three named calls.
+      // needs comes through preload as a handful of named calls. sandbox is the Electron default
+      // since 20; stated so the posture is in the config rather than in a version's defaults.
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
     },
   })
   // Maximise before showing, so a window that was left maximised does not appear at its restored
@@ -124,15 +126,24 @@ function createWindow(loadUrl) {
   win.once('ready-to-show', () => win.show())
   // A page that fails to load would otherwise leave a hidden window and a process with no UI.
   win.webContents.on('did-fail-load', (_e, code, desc) => {
+    // ERR_ABORTED is Chromium's word for a navigation that was superseded or cancelled, not one
+    // that failed; it must not pop a modal.
+    if (code === -3) return
     if (win && !win.isDestroyed()) win.show()
     dialog.showErrorBox('mcctl could not open its panel', `${desc} (${code})\n\n${loadUrl}`)
   })
 
   // Links to anywhere else belong in the real browser, not in a chrome-less app window the person
-  // cannot navigate back out of.
+  // cannot navigate back out of. Held to the same rule as the IPC bridge: https only, so a page
+  // cannot use window.open to launch a file: or ms-settings: handler that the bridge would refuse.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    if (typeof url === 'string' && url.startsWith('https://')) shell.openExternal(url)
     return { action: 'deny' }
+  })
+  // And the panel itself must stay on the panel. Nothing legitimate navigates the top frame away
+  // from the loopback URL it was opened at.
+  win.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith(loadUrl)) e.preventDefault()
   })
   return win
 }
