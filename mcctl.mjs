@@ -11,7 +11,7 @@ import readline from 'node:readline'
 import { spawnSync } from 'node:child_process'
 
 import { ensureDirs, ROOT, runDir } from './src/paths.mjs'
-import { listInstances, getInstance, removeInstance, updateInstance, serverJarPath } from './src/registry.mjs'
+import { listInstances, getInstance, removeInstance, updateInstance, serverJarPath, assertPortUsable } from './src/registry.mjs'
 import { acceptableWebhook, notifyInstance } from './src/notify.mjs'
 import * as plugins from './src/plugins.mjs'
 import * as upgrade from './src/upgrade.mjs'
@@ -480,10 +480,10 @@ function cmdSet(positional) {
         patch.jar = value
         break
       case 'port':
-        patch.port = Number(value)
+        patch.port = assertPortUsable(name, Number(value))
         break
       case 'rcon.port':
-        patch.rcon = { ...(patch.rcon ?? inst.rcon), port: Number(value) }
+        patch.rcon = { ...(patch.rcon ?? inst.rcon), port: assertPortUsable(name, Number(value), 'RCON port') }
         break
       case 'rcon.password':
         patch.rcon = { ...(patch.rcon ?? inst.rcon), password: value }

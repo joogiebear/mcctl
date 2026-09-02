@@ -74,6 +74,24 @@ export function usedPorts() {
   return taken
 }
 
+/**
+ * Refuse a port that is not a port, or that another instance already holds.
+ *
+ * <p>One check for the CLI's `set` and the panel's settings route. The panel had this and the CLI
+ * did not, so `mcctl set x port=abc` recorded NaN and the collision showed up minutes later as a
+ * server that would not bind.
+ */
+export function assertPortUsable(name, port, label = 'port') {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    fail(`${port} is not a ${label} number - use 1 to 65535`)
+  }
+  const clash = listInstances().find(
+    (i) => i.name !== name && (i.port === port || i.rcon?.port === port),
+  )
+  if (clash) fail(`port ${port} is already used by "${clash.name}"`)
+  return port
+}
+
 export function defaultDir(name) {
   return path.join(INSTANCES_DIR, name)
 }

@@ -1086,17 +1086,10 @@ async function route(req, res) {
       patch.memory = memory
     }
     if (body.port) {
-      const port = Number(body.port)
-      if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        return json(res, 400, { error: `${body.port} is not a port number - use 1 to 65535.` })
-      }
-      // A port already spoken for by another instance would collide the next time both start, and
-      // the failure would show up minutes later as a server that would not boot.
-      const clash = registry.listInstances().find(
-        (i) => i.name !== name && (i.port === port || i.rcon?.port === port),
-      )
-      if (clash) return json(res, 400, { error: `port ${port} is already used by "${clash.name}".` })
-      patch.port = port
+      // Range and collision, the same check the CLI's `set` runs. A port already spoken for by
+      // another instance would collide the next time both start, and the failure would show up
+      // minutes later as a server that would not boot. Throws a UserError, which answers 400.
+      patch.port = registry.assertPortUsable(name, Number(body.port))
     }
     if (body.jar) {
       // Placed before it is recorded, for the reason spelled out on placeJar: an instance runs the
