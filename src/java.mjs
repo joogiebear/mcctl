@@ -13,12 +13,15 @@ import { spawnSync } from 'node:child_process'
  * the same question the same way.
  */
 
-/** Current Paper needs 21. Older Minecraft versions run on 17, which is why that is the floor. */
-export const RECOMMENDED_MAJOR = 21
+/**
+ * Minecraft 26.x needs 25 - Mojang's version metadata says so, and Paper follows it. 1.21.x ran
+ * on 21 and older versions on 17, which is why 17 is the floor rather than the recommendation.
+ */
+export const RECOMMENDED_MAJOR = 25
 export const MINIMUM_MAJOR = 17
 
 /** Where to send someone who does not have it. A build, not a vendor download page behind a login. */
-export const DOWNLOAD_URL = 'https://adoptium.net/temurin/releases/?version=21'
+export const DOWNLOAD_URL = 'https://adoptium.net/temurin/releases/?version=25'
 
 /**
  * Parse the major version out of what `java -version` prints.

@@ -8,8 +8,10 @@ Zero dependencies — plain Node 20+ and the `tar` that ships with Windows.
 
 ## What you need
 
-- **Java 21 or newer.** This is the one thing mcctl cannot supply: Minecraft servers *are* Java
-  processes. [Temurin 21](https://adoptium.net/temurin/releases/?version=21) is a good default.
+- **Java 25 or newer** for current Minecraft (26.x); 1.21.x runs on 21. This is the one thing
+  mcctl cannot supply: Minecraft servers *are* Java processes.
+  [Temurin 25](https://adoptium.net/temurin/releases/?version=25) is a good default, and a JDK
+  rather than a JRE if you want Spigot or CraftBukkit built here.
   The desktop app checks for it on first run and the panel says so in a banner if it is missing;
   `mcctl doctor` reports it from the command line.
 - **Node 20+**, for the CLI. The desktop app carries its own runtime and does not need it.
