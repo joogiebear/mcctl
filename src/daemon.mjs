@@ -151,6 +151,9 @@ function launch({ first }) {
     name,
     daemonPid: process.pid,
     javaPid: child.pid,
+    // The executables behind the pids, so a status read can tell a reused pid from a live one.
+    daemonExe: path.basename(process.execPath),
+    javaExe: path.basename(cmd),
     startedAt: Date.now(),
     dir: inst.dir,
     jar: inst.jar,

@@ -2,12 +2,75 @@ import net from 'node:net'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 
 /** Errors of this class print as a clean one-line message instead of a stack. */
 export class UserError extends Error {}
 
 export function fail(msg) {
   throw new UserError(msg)
+}
+
+/**
+ * The process table, remembered for two seconds.
+ *
+ * <p>A pid alone cannot say whether a process is the one a state file remembers: Windows hands
+ * pids out again quickly, so a daemon that died hours ago could have its number worn by anything
+ * by now, and a status read that only asks "is this pid alive" reports a dead server as running
+ * forever - and `kill` would taskkill a stranger. The image name is the cheap second question.
+ * Reading the whole table once and remembering it briefly costs one spawn per status poll rather
+ * than one per pid per instance.
+ */
+let processTable = { at: 0, names: null }
+const PROCESS_TABLE_MS = 2000
+
+function readProcessTable() {
+  const names = new Map()
+  try {
+    if (process.platform === 'win32') {
+      const r = spawnSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true, timeout: 10000 })
+      if (r.error || r.status !== 0) return null
+      for (const line of r.stdout.split(/\r?\n/)) {
+        const m = /^"([^"]*)","(\d+)"/.exec(line)
+        if (m) names.set(Number(m[2]), m[1])
+      }
+    } else {
+      const r = spawnSync('ps', ['-A', '-o', 'pid=,comm='], { encoding: 'utf8', timeout: 10000 })
+      if (r.error || r.status !== 0) return null
+      for (const line of r.stdout.split('\n')) {
+        const m = /^\s*(\d+)\s+(.+?)\s*$/.exec(line)
+        if (m) names.set(Number(m[1]), path.basename(m[2]))
+      }
+    }
+  } catch {
+    return null
+  }
+  return names
+}
+
+/** The executable name behind a pid, or null when the table cannot be read or the pid is not in it. */
+export function processImage(pid) {
+  if (!pid) return null
+  if (!processTable.names || Date.now() - processTable.at > PROCESS_TABLE_MS) {
+    processTable = { at: Date.now(), names: readProcessTable() }
+  }
+  return processTable.names?.get(pid) ?? null
+}
+
+/**
+ * Whether a live pid is still the process it was recorded as.
+ *
+ * <p>Lenient in every direction that is not an outright contradiction: no expected name recorded
+ * (a state file from before this existed), a table that could not be read, or a pid the table has
+ * not caught up with yet all answer true, because the pid IS alive and that was the whole test
+ * until now. Only "alive, and wearing a different name" answers false.
+ */
+export function sameProcess(pid, expectedImage) {
+  if (!expectedImage) return true
+  const actual = processImage(pid)
+  if (!actual) return true
+  const strip = (s) => String(s).toLowerCase().replace(/\.exe$/, '')
+  return strip(actual) === strip(expectedImage)
 }
 
 export function readJson(file, fallback = null) {
