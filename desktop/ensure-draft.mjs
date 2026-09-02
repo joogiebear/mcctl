@@ -39,7 +39,11 @@ function gh(args, { allowFailure = false } = {}) {
   return { ok: res.status === 0, out: res.stdout }
 }
 
-const all = JSON.parse(gh(['api', `repos/${REPO}/releases`, '--paginate']).out)
+// --slurp, because --paginate alone prints one JSON array PER PAGE, back to back. That parses only
+// while the repository has fewer releases than a page holds (30); past that, JSON.parse fails on
+// the second array and this script dies with a SyntaxError that says nothing about why. Slurped,
+// the pages arrive as an array of arrays, flattened here.
+const all = JSON.parse(gh(['api', `repos/${REPO}/releases`, '--paginate', '--slurp']).out).flat()
 const matching = all.filter((r) => r.tag_name === TAG || r.name === TAG)
 
 if (matching.length > 1) {

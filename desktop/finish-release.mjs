@@ -46,7 +46,8 @@ function fail(message) {
 
 // A tag can resolve to the wrong object when more than one release claims it - which is what a
 // raced draft creation leaves behind - so look at every release rather than trusting the lookup.
-const all = JSON.parse(gh(['api', `repos/${REPO}/releases`, '--paginate']))
+// --slurp: --paginate alone emits one array per page, which stops parsing at the 31st release.
+const all = JSON.parse(gh(['api', `repos/${REPO}/releases`, '--paginate', '--slurp'])).flat()
 const matching = all.filter((r) => r.tag_name === TAG || r.name === TAG)
 if (matching.length > 1) {
   fail(`${matching.length} releases claim ${TAG}: ids ${matching.map((r) => r.id).join(', ')}. ` +
