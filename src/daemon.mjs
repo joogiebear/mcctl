@@ -22,6 +22,7 @@ import { startSampler, metricsFile } from './metrics.mjs'
 import { crashVerdict, CRASH_LIMIT, CRASH_WINDOW_MS } from './crashguard.mjs'
 import { notifyInstance } from './notify.mjs'
 import { diagnose } from './diagnose.mjs'
+import { READY_RE } from './ready.mjs'
 
 const name = process.argv[2]
 if (!name) {

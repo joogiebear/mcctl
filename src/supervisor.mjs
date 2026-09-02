@@ -7,12 +7,9 @@ import { readState, clearState, controlRequest } from './control.mjs'
 import { consoleLog, daemonLog, runDir, stateFile } from './paths.mjs'
 import { readProps, writeProps } from './props.mjs'
 import { fail, sleep, pidAlive, UserError } from './util.mjs'
+import { READY_RE, FAILED_RE } from './ready.mjs'
 
 const DAEMON = path.join(path.dirname(fileURLToPath(import.meta.url)), 'daemon.mjs')
-
-/** Marks the point where Paper has finished loading and is accepting joins. */
-const READY_RE = /Done \([\d.,]+s\)!/
-const FAILED_RE = /(Failed to start the minecraft server|A fatal error has occurred|Could not (?:reserve|create).*heap|Unable to access jarfile)/i
 
 /**
  * The registry is the source of truth for ports and RCON. Push it into
