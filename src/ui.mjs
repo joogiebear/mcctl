@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url'
 import * as supervisor from './supervisor.mjs'
 import * as registry from './registry.mjs'
 import * as create from './create.mjs'
-import * as paper from './paper.mjs'
 import * as manage from './manage.mjs'
 import { LAYOUT } from './paths.mjs'
 import * as java from './java.mjs'
@@ -19,7 +18,8 @@ import * as metrics from './metrics.mjs'
 import * as settings from './settings.mjs'
 import * as plugins from './plugins.mjs'
 import * as upgrade from './upgrade.mjs'
-import * as fabric from './fabric.mjs'
+import * as sources from './sources.mjs'
+import * as software from './software.mjs'
 import * as mrpack from './mrpack.mjs'
 import * as neoforge from './neoforge.mjs'
 import * as worlds from './worlds.mjs'
@@ -478,6 +478,7 @@ async function handlePlugins(req, res, name, seg, url) {
       kind: kind.kind,
       word: kind.word,
       hangar: kind.hangar,
+      software: kind.label,
       // Enough for the page to say what built this server and what a joining player needs.
       pack: pack ? { name: pack.name, version: pack.versionNumber, project: pack.project } : null,
     })
@@ -485,6 +486,8 @@ async function handlePlugins(req, res, name, seg, url) {
   if (req.method === 'GET' && verb === 'search') {
     const q = String(url.searchParams.get('q') || '').trim()
     if (!q) return json(res, 200, { results: [], errors: [] })
+    // Vanilla loads nothing; a search would send Modrinth an empty loader facet and get a 400.
+    if (kind.kind === 'none') return json(res, 200, { results: [], errors: [`${kind.label} runs no plugins or mods`] })
     // Both sources at once. One being down must not blank the other's answers, so each
     // failure becomes a note beside the results rather than an error instead of them.
     const asks = [
@@ -854,15 +857,15 @@ async function route(req, res) {
     return
   }
 
-  // ---- paper versions, for the create form's dropdown -----------------------
-  if (seg[1] === 'paper' && seg[2] === 'versions' && req.method === 'GET') {
-    return json(res, 200, await paper.versions())
+  // ---- what can be created, and the versions each offers ---------------------
+  // The page builds its Software dropdown from this, so the list of kinds lives in one table.
+  if (seg[1] === 'software' && seg.length === 2 && req.method === 'GET') {
+    return json(res, 200, software.SOFTWARE.map(({ id, label, content, blurb, slow }) => ({
+      id, label, content, blurb, slow: Boolean(slow),
+    })))
   }
-  if (seg[1] === 'fabric' && seg[2] === 'versions' && req.method === 'GET') {
-    return json(res, 200, await fabric.versions())
-  }
-  if (seg[1] === 'neoforge' && seg[2] === 'versions' && req.method === 'GET') {
-    return json(res, 200, await neoforge.versions())
+  if (seg[2] === 'versions' && seg.length === 3 && req.method === 'GET' && software.isSoftware(seg[1])) {
+    return json(res, 200, await sources.versionsFor(seg[1]))
   }
   if (seg[1] === 'modpacks' && seg[2] === 'search' && req.method === 'GET') {
     const q = String(url.searchParams.get('q') || '').trim()
@@ -932,29 +935,36 @@ async function route(req, res) {
         jobUpdate(jobId, { stage: 'done', percent: 100, message: `Created ${result.name}`, done: true })
         return json(res, 200, safeInstance(supervisor.statusOf(String(body.name))))
       }
-      const loader = body.loader === 'fabric' ? 'fabric' : 'paper'
-      const onProgress = ({ received, total, cached }) => {
-        if (cached) return jobUpdate(jobId, { stage: 'cached', percent: 100, message: 'Server jar already downloaded' })
+      // Every jar-shaped kind - Paper, Purpur, Folia, ASP, vanilla, Spigot, CraftBukkit, Fabric -
+      // takes the same road: resolve the version, fetch or build the jar into the store, place
+      // it. `version` is the field; the older per-loader names are still read for a page that
+      // was loaded before this changed.
+      const loader = sources.isJarSource(body.loader) ? body.loader : 'paper'
+      const version = body.version ?? body[`${loader}Version`] ?? body.paperVersion ?? null
+      let mcVersion = null
+      const onProgress = (p) => {
+        if (p.cached) return jobUpdate(jobId, { stage: 'cached', percent: 100, message: p.message ?? 'Server jar already downloaded' })
+        if (p.message) return jobUpdate(jobId, { stage: 'build', percent: null, message: p.message })
         jobUpdate(jobId, {
           stage: 'download',
-          percent: total ? Math.min(100, Math.round((received / total) * 100)) : null,
+          percent: p.total ? Math.min(100, Math.round((p.received / p.total) * 100)) : null,
           message: 'Downloading the server jar',
         })
       }
-      if (loader === 'fabric') {
-        if (!body.fabricVersion) return json(res, 400, { error: 'a Minecraft version is required for a Fabric server' })
-        jobUpdate(jobId, { stage: 'resolve', percent: null, message: `Finding Fabric for ${body.fabricVersion}` })
-        const launcher = await fabric.fetchLauncher(String(body.fabricVersion), { onProgress })
-        jar = launcher.name
-      } else if (body.paperVersion) {
-        jobUpdate(jobId, { stage: 'resolve', percent: null, message: `Finding Paper ${body.paperVersion}` })
-        const build = await paper.fetchBuild(String(body.paperVersion), null, { onProgress })
-        jar = build.name
+      if (version) {
+        const label = sources.labelFor(loader)
+        jobUpdate(jobId, { stage: 'resolve', percent: null, message: `Finding ${label} ${version}` })
+        const fetched = await sources.fetchJar(loader, String(version), { onProgress })
+        jar = fetched.name
+        mcVersion = String(version)
+      } else if (loader !== 'paper') {
+        return json(res, 400, { error: `a Minecraft version is required for a ${sources.labelFor(loader)} server` })
       }
       jobUpdate(jobId, { stage: 'create', percent: null, message: 'Setting up the server folder' })
       const inst = await create.newInstance(String(body.name), {
         jar,
         loader,
+        mcVersion,
         memory: body.memory || '4G',
         port: body.port ? Number(body.port) : null,
         motd: body.motd || null,

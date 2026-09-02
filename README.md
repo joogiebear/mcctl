@@ -101,13 +101,46 @@ RCON refuses to carry.
 | Command | Does |
 | --- | --- |
 | `adopt <name> <dir>` | Register an existing server directory in place |
-| `new <name>` | Create a fresh instance (`--paper <v>`, `--fabric <v>`, `--neoforge <v>`, `--modpack <slug>`, `--jar`, `--template`, `--accept-eula`) |
+| `new <name>` | Create a fresh instance (`--paper <v>`, `--purpur <v>`, `--folia <v>`, `--asp <v>`, `--vanilla <v>`, `--spigot <v>`, `--craftbukkit <v>`, `--fabric <v>`, `--neoforge <v>`, `--modpack <slug>`, `--jar`, `--template`, `--accept-eula`) |
 | `clone <src> <new>` | Copy plugins and config into a new instance on a free port |
 | `set <name> key=value` | `memory`, `java`, `jar`, `port`, `rcon.port`, `rcon.password`, `auto-restart=on\|off`, `webhook=<url>\|off` |
 | `props <name> [key=value]` | Read or edit `server.properties` |
 | `plugins <name> [enable\|disable <x>]` | List a server's plugins, flip one on or off |
 | `upgrade <name> [--check]` | Newest Paper build for its version; `--version <v> --yes` crosses Minecraft versions |
 | `rm <name> [--purge --yes]` | Unregister, optionally deleting the files |
+
+#### Server software
+
+`new` fetches whichever server you name. Every one runs with a plain `-jar`, so
+the daemon does not care which; what differs is where it comes from and what it
+loads.
+
+| Flag | What you get | Loads | From |
+| --- | --- | --- | --- |
+| `--paper <v>` | Paper, newest stable build | plugins | PaperMC, sha256-verified |
+| `--purpur <v>` | Purpur, a Paper fork with more configuration | plugins | purpurmc.org, md5-verified |
+| `--folia <v>` | Folia, Paper with regionised multithreading | Folia-built plugins only | PaperMC |
+| `--asp <v>` | Advanced Slime Paper, Paper with Slime World Manager built in | plugins | InfernalSuite, sha256-verified |
+| `--spigot <v>` | Spigot | plugins | **compiled here** by BuildTools |
+| `--craftbukkit <v>` | CraftBukkit | plugins | **compiled here** by BuildTools |
+| `--vanilla <v>` | Mojang's own server | nothing | Mojang, sha1-verified |
+| `--fabric <v>` | Fabric launcher | mods | FabricMC |
+| `--neoforge <v>` | NeoForge, via its installer | mods | NeoForged maven, sha256-verified |
+
+`--build <n>` picks a specific build where the source numbers them (Paper,
+Folia, Purpur). The panel's **Add a server** offers the same list.
+
+SpigotMC publishes no jars, so Spigot and CraftBukkit are built on this machine
+by BuildTools: it needs a **JDK** (javac, not just a runtime), fetches a portable
+git for itself, takes five to ten minutes the first time for a version, and
+keeps about a gigabyte of clones under `jars/buildtools/` so later builds are
+faster. The panel narrates the build line by line.
+
+The Plugins tab follows the software: Purpur searches Modrinth for Purpur, Paper,
+Spigot and Bukkit builds; Folia only for Folia-built plugins; Spigot for Spigot
+and Bukkit; vanilla has nothing to manage and says so. `upgrade` still knows
+Paper only; other servers move versions by creating a new instance or importing
+a newer jar.
 
 `clone` gives fresh worlds by default; pass `--with-worlds` to copy world data
 too. Ports are allocated automatically from 25565/25575 upward, skipping anything

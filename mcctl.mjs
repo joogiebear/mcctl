@@ -15,7 +15,8 @@ import { listInstances, getInstance, removeInstance, updateInstance, serverJarPa
 import { acceptableWebhook, notifyInstance } from './src/notify.mjs'
 import * as plugins from './src/plugins.mjs'
 import * as upgrade from './src/upgrade.mjs'
-import * as fabric from './src/fabric.mjs'
+import * as sources from './src/sources.mjs'
+import * as software from './src/software.mjs'
 import * as mrpack from './src/mrpack.mjs'
 import * as neoforge from './src/neoforge.mjs'
 import * as worlds from './src/worlds.mjs'
@@ -318,32 +319,46 @@ async function cmdNew(positional, flags) {
     return
   }
 
-  // --paper <version> makes "spin up a fresh environment on version X" one command instead of
-  // three. Downloading first means a failed fetch leaves no half-made instance behind.
+  // --paper <version>, --purpur <version>, --spigot <version> and the rest make "spin up a fresh
+  // environment on version X" one command instead of three. Every jar-shaped source goes through
+  // the same fetch: resolve the version, put the jar in the store, place it. Downloading first
+  // means a failed fetch leaves no half-made instance behind.
   let jar = flags.jar ?? null
   let loader = 'paper'
-  if (flags.paper) {
-    const build = await paper.fetchBuild(String(flags.paper), flags.build ?? null)
-    out(build.cached
-      ? `Using stored ${build.name} (build ${build.build}, ${build.channel}).`
-      : `Downloaded ${build.name} — build ${build.build}, ${build.channel}, ${build.sizeHuman}.`)
-    jar = build.name
+  let mcVersion = null
+  const chosen = software.JAR_IDS.filter((id) => flags[id])
+  if (chosen.length > 1 || (chosen.length && flags.neoforge)) {
+    fail(`pick one of ${[...chosen, ...(flags.neoforge ? ['neoforge'] : [])].map((id) => `--${id}`).join(', ')}`)
   }
-  // --fabric <version> is the same one command for a modded server: the launcher jar Fabric
-  // serves runs with a plain -jar like Paper does, and mods land in mods/ instead of plugins/.
-  if (flags.fabric) {
-    if (flags.paper) fail('pick one of --paper or --fabric')
-    const launcher = await fabric.fetchLauncher(String(flags.fabric))
-    out(launcher.cached
-      ? `Using stored ${launcher.name}.`
-      : `Downloaded ${launcher.name} — loader ${launcher.loader}, ${launcher.sizeHuman}.`)
-    jar = launcher.name
-    loader = 'fabric'
+  if (chosen.length) {
+    const id = chosen[0]
+    const version = String(flags[id])
+    const sw = software.softwareOf(id)
+    if (sw.slow) out(`${sw.label} is compiled here by BuildTools - this takes several minutes the first time.`)
+    let lastLine = ''
+    const res = await sources.fetchJar(id, version, {
+      build: flags.build ?? null,
+      java: flags.java ?? 'java',
+      onProgress: (p) => {
+        if (p.message && p.message !== lastLine) {
+          lastLine = p.message
+          out(`  ${p.message}`)
+        }
+      },
+    })
+    out(res.cached
+      ? `Using stored ${res.name}.`
+      : `Downloaded ${res.name}${res.build ? ` (build ${res.build})` : ''}${res.sizeHuman ? `, ${res.sizeHuman}` : ''}.`)
+    if (res.javaMajor && res.javaMajor > java.probe(flags.java ?? 'java').major) {
+      out(`  NOTE: Minecraft ${version} needs Java ${res.javaMajor}; the java found here is older. See: mcctl doctor`)
+    }
+    jar = res.name
+    loader = id
+    mcVersion = version
   }
   // --neoforge <version>: its installer lays the server down and the starter jar makes it
   // launch like every other, so this is its own branch rather than a jar to pass along.
   if (flags.neoforge) {
-    if (flags.paper || flags.fabric) fail('pick one of --paper, --fabric or --neoforge')
     const res = await neoforge.createServer(name, String(flags.neoforge), {
       memory: flags.memory ?? '4G',
       port: flags.port ? Number(flags.port) : null,
@@ -357,6 +372,7 @@ async function cmdNew(positional, flags) {
 
   const inst = await create.newInstance(name, {
     loader,
+    mcVersion,
     template: flags.template ?? null,
     from: flags.from ?? null,
     withWorlds: Boolean(flags.withWorlds),
@@ -1399,6 +1415,10 @@ INSTANCES
   mcctl new <name> [options]         Create a fresh instance
       --jar <file>                   Server jar from the jars/ store
       --paper <version>              Download that Paper version and use it
+      --purpur | --folia | --asp     Same, for Purpur, Folia or Advanced Slime Paper
+      --vanilla <version>            Mojang's own server jar (no plugins, no mods)
+      --spigot | --craftbukkit <v>   Compiled here by BuildTools (needs a JDK, ~10 min)
+      --build <n>                    A specific build, for the sources that number them
       --fabric <version>             Download Fabric for that version (mods, not plugins)
       --neoforge <version>           Install NeoForge for that version (mods, not plugins)
       --modpack <slug>               Build the whole server from a Modrinth modpack

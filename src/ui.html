@@ -1480,9 +1480,8 @@
           <div class="field" style="flex:1">
             <label for="nLoader">Software</label>
             <select id="nLoader" name="loader">
+              <!-- Filled from /api/software; Paper stands in until that answers. -->
               <option value="paper" selected>Paper</option>
-              <option value="fabric">Fabric</option>
-              <option value="neoforge">NeoForge</option>
             </select>
             <div class="hint" id="nLoaderHint">Runs plugins</div>
           </div>
@@ -2006,7 +2005,11 @@ function renderServer(row) {
   $('#srvName').textContent = row.name;
   // The same tab manages plugins/ on a Paper server and mods/ on a modded one; its name
   // follows, because "Plugins" on a server that cannot load any would be a small lie.
-  $('#tabPlugins').lastChild.nodeValue = ((row.loader ?? 'paper') === 'paper') ? 'Plugins' : 'Mods';
+  // Named for what the software loads, from the same table the create form uses. Anything the
+  // table does not know - a page loaded before it answered - reads as plugins, which is what
+  // every server was before there were mod loaders.
+  const content = (softwareById[row.loader ?? 'paper'] || softwareById.paper).content;
+  $('#tabPlugins').lastChild.nodeValue = content === 'mods' ? 'Mods' : 'Plugins';
 
   const st = $('#srvState');
   if (row.status === 'running' && row.startedAt) {
@@ -3185,6 +3188,17 @@ async function renderPlugins(opts) {
   }
   if (body.dataset.for !== row.name) return;
   body.textContent = '';
+  // Vanilla loads nothing, and a tab that pretends otherwise would offer downloads that could
+  // only ever sit in a folder the server never reads.
+  if (data.kind === 'none') {
+    paneHead(body, 'plug', 'Plugins', (data.software || 'This server') + ' runs no plugins and no mods.');
+    const none = document.createElement('div');
+    none.className = 'hint';
+    none.textContent = 'Mojang’s own server loads nothing beyond the game. For plugins, create a Paper, '
+      + 'Purpur or Spigot server; for mods, a Fabric or NeoForge one.';
+    body.append(none);
+    return;
+  }
   const mods = data.kind === 'mods';
   const sources = data.hangar ? 'Modrinth or Hangar' : 'Modrinth';
   paneHead(body, 'plug', mods ? 'Mods' : 'Plugins',
@@ -5410,8 +5424,7 @@ $('#formNew').onsubmit = async (e) => {
     const inst = await post('/instances', {
       name: form.get('name'),
       loader: loader,
-      paperVersion: loader === 'paper' ? version : null,
-      fabricVersion: loader === 'fabric' ? version : null,
+      version: version,
       neoforgeVersion: loader === 'neoforge' ? version : null,
       memory: form.get('memory') || '4G',
       port: form.get('port') || null,
@@ -5712,14 +5725,41 @@ $('#bCreate').disabled = true;
  */
 const versionLists = {};
 
+/**
+ * What can be created, from the server's one table. Until it answers the dropdown holds Paper,
+ * so a slow or failed fetch degrades to the one choice that always existed.
+ */
+const softwareById = {
+  paper: { id: 'paper', label: 'Paper', content: 'plugins', blurb: 'Downloads the newest stable Paper build.' },
+};
+
+async function loadSoftware() {
+  let list;
+  try {
+    list = await api('/software');
+  } catch {
+    return;
+  }
+  const sel = $('#nLoader');
+  const current = sel.value;
+  sel.textContent = '';
+  for (const s of list) {
+    softwareById[s.id] = s;
+    const o = document.createElement('option');
+    o.value = s.id;
+    o.textContent = s.label;
+    if (s.id === current) o.selected = true;
+    sel.append(o);
+  }
+}
+
 async function loadVersions(loader) {
   const sel = $('#nVersion');
-  $('#nVersionHint').textContent = loader === 'fabric'
-    ? 'Downloads the Fabric server launcher, which fetches the rest on first start.'
-    : loader === 'neoforge'
-      ? 'Runs the NeoForge installer, which downloads its libraries. Takes a few minutes.'
-      : 'Downloads the newest stable Paper build.';
-  $('#nLoaderHint').textContent = loader === 'paper' ? 'Runs plugins' : 'Runs mods';
+  const sw = softwareById[loader] || softwareById.paper;
+  $('#nVersionHint').textContent = sw.blurb;
+  $('#nLoaderHint').textContent = sw.content === 'mods' ? 'Runs mods'
+    : sw.content === 'none' ? 'No plugins or mods'
+      : 'Runs plugins';
   if (!versionLists[loader]) {
     sel.disabled = true;
     sel.textContent = '';
@@ -5733,8 +5773,7 @@ async function loadVersions(loader) {
       sel.textContent = '';
       const bad = document.createElement('option');
       bad.value = '';
-      bad.textContent = 'Could not reach '
-        + (loader === 'fabric' ? 'FabricMC' : loader === 'neoforge' ? 'the NeoForge maven' : 'PaperMC');
+      bad.textContent = 'Could not reach the ' + sw.label + ' download service';
       sel.append(bad);
       // A dead end is not an empty dropdown. Creating needs the download; adding a server you
       // already have does not, and that is a real way forward rather than an instruction to
@@ -5766,7 +5805,7 @@ async function loadVersions(loader) {
 }
 
 $('#nLoader').onchange = () => loadVersions($('#nLoader').value);
-loadVersions('paper');
+loadSoftware().then(() => loadVersions($('#nLoader').value));
 
 // ------------------------------------------------------------ prerequisites -
 

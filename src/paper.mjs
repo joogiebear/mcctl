@@ -15,7 +15,8 @@ import { fail, humanBytes } from './util.mjs'
  * that reads like a network problem rather than a removed API. Everything here uses
  * fill.papermc.io/v3, which is the current one.
  */
-const API = 'https://fill.papermc.io/v3/projects/paper'
+// One API, several projects: Paper and Folia are served identically, so `project` picks which.
+const projectApi = (project) => `https://fill.papermc.io/v3/projects/${project}`
 
 // The API asks for a descriptive agent so they can contact operators of misbehaving clients.
 const HEADERS = { 'User-Agent': 'mcctl (github.com/joogiebear/mcctl)', Accept: 'application/json' }
@@ -37,8 +38,8 @@ async function api(url) {
  * The API groups them by minor ("1.21": ["1.21.11", ...]) and, within a group, lists newest first.
  * Flattening preserves that order, so the first entry is always the newest release.
  */
-export async function versions({ includeUnstable = false } = {}) {
-  const data = await api(API)
+export async function versions({ includeUnstable = false, project = 'paper' } = {}) {
+  const data = await api(projectApi(project))
   const out = []
   for (const group of Object.values(data.versions ?? {})) {
     for (const v of group) {
@@ -52,8 +53,8 @@ export async function versions({ includeUnstable = false } = {}) {
 }
 
 /** Builds for a version, newest first, each with its download URL and checksum. */
-export async function builds(version) {
-  const data = await api(`${API}/versions/${encodeURIComponent(version)}/builds`)
+export async function builds(version, { project = 'paper' } = {}) {
+  const data = await api(`${projectApi(project)}/versions/${encodeURIComponent(version)}/builds`)
   return data.map((b) => {
     const dl = b.downloads?.['server:default']
     return {
@@ -76,12 +77,13 @@ export async function builds(version) {
  * happened to be newest is how a test environment becomes an unexplained bug report. Falls back to
  * the newest build of any channel when a version has no stable one yet, saying so.
  */
-export async function resolveBuild(version, wanted = null) {
-  const all = await builds(version)
-  if (!all.length) fail(`Paper has no builds for version ${version}.`)
+export async function resolveBuild(version, wanted = null, { project = 'paper' } = {}) {
+  const all = await builds(version, { project })
+  const label = project === 'paper' ? 'Paper' : project[0].toUpperCase() + project.slice(1)
+  if (!all.length) fail(`${label} has no builds for version ${version}.`)
   if (wanted != null) {
     const hit = all.find((b) => String(b.build) === String(wanted))
-    if (!hit) fail(`Paper ${version} has no build ${wanted}. Newest is ${all[0].build}.`)
+    if (!hit) fail(`${label} ${version} has no build ${wanted}. Newest is ${all[0].build}.`)
     return hit
   }
   return all.find((b) => b.channel === 'STABLE') ?? all[0]
@@ -94,9 +96,9 @@ export async function resolveBuild(version, wanted = null) {
  * plausible and then fails at runtime with a class-loading error that says nothing about the real
  * cause. Verified before it is put in place, so a bad download never becomes a stored jar.
  */
-export async function fetchBuild(version, wanted = null, { force = false, onProgress = null } = {}) {
-  const build = await resolveBuild(version, wanted)
-  if (!build.url) fail(`Paper ${version} build ${build.build} publishes no server jar.`)
+export async function fetchBuild(version, wanted = null, { force = false, onProgress = null, project = 'paper' } = {}) {
+  const build = await resolveBuild(version, wanted, { project })
+  if (!build.url) fail(`${project} ${version} build ${build.build} publishes no server jar.`)
 
   fs.mkdirSync(JARS_DIR, { recursive: true })
   const dest = path.join(JARS_DIR, build.name)

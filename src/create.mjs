@@ -4,6 +4,7 @@ import { JARS_DIR, TEMPLATES_DIR, INSTANCES_DIR, ROOT } from './paths.mjs'
 import { getInstance, hasInstance, putInstance, usedPorts, defaultDir, parseMemoryGb } from './registry.mjs'
 import { readProps, writeProps } from './props.mjs'
 import { fail, findFreePort, randomPassword, validateName, humanBytes } from './util.mjs'
+import { guessLoader } from './software.mjs'
 
 const DEFAULT_PORT = 25565
 const DEFAULT_RCON_PORT = 25575
@@ -346,12 +347,10 @@ export async function adoptInstance(name, dir, { jar = null, memory = '4G', java
     jar: chosen,
     java,
     memory,
-    // Guessed the way a person would: a Fabric launcher names itself, and a NeoForge server
-    // carries its libraries tree. Anything else is treated as the Paper family, which is what
-    // every adopted server has been so far.
-    loader: /^fabric-server/i.test(chosen) ? 'fabric'
-      : fs.existsSync(path.join(abs, 'libraries', 'net', 'neoforged')) ? 'neoforge'
-      : 'paper',
+    // Guessed the way a person would: a Fabric launcher names itself, a NeoForge server carries
+    // its libraries tree, and a Purpur, Folia, Spigot or vanilla jar says so in its name.
+    // Anything else is treated as Paper.
+    loader: guessLoader(chosen, { hasNeoforgeLibs: fs.existsSync(path.join(abs, 'libraries', 'net', 'neoforged')) }),
     port,
     rcon: { port: rconPort, password: rconPassword },
     createdAt: new Date().toISOString(),

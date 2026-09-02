@@ -22,6 +22,7 @@ import crypto from 'node:crypto'
 import zlib from 'node:zlib'
 import { fail, UserError, readJson, writeJson } from './util.mjs'
 import { loaderOf } from './registry.mjs'
+import { softwareOf, versionFromJar } from './software.mjs'
 
 // ---- reading one entry out of a zip -----------------------------------------
 
@@ -200,23 +201,22 @@ function unquote(v) {
 const DISABLED = '.disabled'
 
 /**
- * What "content" means for this instance. A Paper-family server loads plugins from plugins/;
- * a Fabric server loads mods from mods/. Same management, different folder and vocabulary -
- * and a different Modrinth facet, because a plugin will not load as a mod or vice versa.
+ * What "content" means for this instance. A Bukkit-family server loads plugins from plugins/;
+ * a mod loader loads mods from mods/; vanilla loads nothing. Same management, different folder
+ * and vocabulary - and a different Modrinth facet, because a plugin will not load as a mod or
+ * vice versa. The table in software.mjs is the authority; this shapes its answer.
  */
 export function contentKindFor(inst) {
-  const loader = loaderOf(inst)
-  return loader === 'fabric' || loader === 'neoforge'
-    ? { dir: 'mods', kind: 'mods', word: 'mod', projectType: 'mod', hangar: false }
-    : { dir: 'plugins', kind: 'plugins', word: 'plugin', projectType: 'plugin', hangar: true }
+  const sw = softwareOf(loaderOf(inst))
+  if (sw.content === 'mods') return { dir: 'mods', kind: 'mods', word: 'mod', projectType: 'mod', hangar: false, label: sw.label }
+  if (sw.content === 'none') return { dir: 'plugins', kind: 'none', word: 'plugin', projectType: 'plugin', hangar: false, label: sw.label }
+  return { dir: 'plugins', kind: 'plugins', word: 'plugin', projectType: 'plugin', hangar: sw.hangar, label: sw.label }
 }
 
 /** The Modrinth loader facet for this instance's content. */
 export function loadersFor(inst) {
-  const loader = loaderOf(inst)
-  if (loader === 'fabric') return ['fabric']
-  if (loader === 'neoforge') return ['neoforge']
-  return LOADERS
+  const sw = softwareOf(loaderOf(inst))
+  return sw.modrinth.length ? sw.modrinth : LOADERS
 }
 
 function pluginsDir(inst) {
@@ -277,9 +277,7 @@ function moveManaged(inst, from, to) {
  * from the jar's filename; null when unclear. */
 export function mcVersionOf(inst) {
   if (inst?.mcVersion) return String(inst.mcVersion)
-  const m = /^(?:paper|purpur|folia|spigot|craftbukkit)-(\d+\.\d+(?:\.\d+)?)/i.exec(inst.jar || '')
-    ?? /^fabric-server-mc\.(\d+\.\d+(?:\.\d+)?)-/i.exec(inst.jar || '')
-  return m ? m[1] : null
+  return versionFromJar(inst?.jar)
 }
 
 /**
