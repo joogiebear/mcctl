@@ -349,7 +349,7 @@ async function cmdNew(positional, flags) {
     out(res.cached
       ? `Using stored ${res.name}.`
       : `Downloaded ${res.name}${res.build ? ` (build ${res.build})` : ''}${res.sizeHuman ? `, ${res.sizeHuman}` : ''}.`)
-    if (res.javaMajor && res.javaMajor > java.probe(flags.java ?? 'java').major) {
+    if (res.javaMajor && res.javaMajor > (await java.probe(flags.java ?? 'java')).major) {
       out(`  NOTE: Minecraft ${version} needs Java ${res.javaMajor}; the java found here is older. See: mcctl doctor`)
     }
     jar = res.name
@@ -903,7 +903,7 @@ async function cmdWorlds(positional, flags) {
   const sub = positional[1] ?? 'list'
 
   if (sub === 'list') {
-    const data = worlds.listWorlds(inst)
+    const data = await worlds.listWorlds(inst)
     if (!data.worlds.length) {
       out(`No worlds in ${inst.dir}. The server generates one on first start, or: mcctl worlds ${name} import <zip-or-folder> --as <name>`)
       return
@@ -936,7 +936,7 @@ async function cmdWorlds(positional, flags) {
   }
 
   if (sub === 'export') {
-    const target = positional[2] ?? worlds.listWorlds(inst).active
+    const target = positional[2] ?? worlds.activeWorld(inst)
     const res = await worlds.exportWorld(inst, target)
     out(`Exported ${res.members.join(', ')} to:`)
     out(`  ${res.file}  (${res.sizeHuman})`)
@@ -1090,7 +1090,7 @@ async function cmdTask(positional, flags) {
   const sub = positional[0] ?? 'list'
 
   if (sub === 'list') {
-    const tasks = schedule.list()
+    const tasks = await schedule.list()
     if (!tasks.length) {
       out('No scheduled tasks.')
       out('')
@@ -1330,7 +1330,7 @@ async function cmdDoctor() {
 
   // The same probe the panel and the first-run wizard use, so all three agree about what
   // counts as a usable Java.
-  const javaCheck = java.probe()
+  const javaCheck = await java.probe()
   if (!javaCheck.ok) problems.push(`java: ${javaCheck.message} ${java.DOWNLOAD_URL}`)
   else notes.push(`java: ${javaCheck.version}`)
 

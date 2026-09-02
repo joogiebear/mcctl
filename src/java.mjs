@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 
 /**
  * Is there a Java, and is it new enough?
@@ -41,28 +41,36 @@ export function parseMajor(text) {
  * Probe the Java on PATH, or a specific binary.
  *
  * <p>Returns a plain object rather than throwing: every caller wants to carry on and say something
- * about it, not abort.
+ * about it, not abort. Asynchronous, because the panel asks at the moment it opens - the same
+ * moment the first poll and the console stream start - and a JVM takes a few hundred milliseconds
+ * to say its version.
  */
-export function probe(bin = 'java') {
-  const res = spawnSync(bin, ['-version'], { encoding: 'utf8', windowsHide: true, timeout: 8000 })
-  if (res.error || res.status !== 0) {
+export async function probe(bin = 'java') {
+  const res = await new Promise((resolve) => {
+    execFile(bin, ['-version'], { encoding: 'utf8', windowsHide: true, timeout: 8000 },
+      (error, stdout, stderr) => resolve({ error, stdout, stderr }))
+  })
+  if (res.error) {
+    // ENOENT is the common case by a mile, and "not installed" is more useful to read than the
+    // error code for it. execFile puts an exit status in `code` too, as a number.
+    const missing = res.error.code === 'ENOENT'
     return {
       ok: false,
       found: false,
       major: null,
       version: null,
-      // ENOENT is the common case by a mile, and "not installed" is more useful to read than the
-      // error code for it.
-      reason: res.error?.code === 'ENOENT' ? 'not-installed' : 'unusable',
-      message: res.error?.code === 'ENOENT'
+      reason: missing ? 'not-installed' : 'unusable',
+      message: missing
         ? 'Java is not installed, or not on PATH.'
-        : `Java could not be run: ${res.error?.message ?? `exit ${res.status}`}`,
+        : `Java could not be run: ${typeof res.error.code === 'number' ? `exit ${res.error.code}` : res.error.message}`,
     }
   }
 
   // java -version writes to stderr. It has done so since 1995 and it is not going to change.
   const text = `${res.stderr ?? ''}${res.stdout ?? ''}`
-  const version = text.split('\n')[0].trim()
+  // The version line, not the first line: with JAVA_TOOL_OPTIONS set the JVM prints a "Picked up"
+  // notice first, and that was being reported as the version.
+  const version = (text.split('\n').find((l) => /version "/.test(l)) ?? text.split('\n')[0]).trim()
   const major = parseMajor(text)
 
   if (major == null) {

@@ -33,9 +33,18 @@ npm test                 # node:test, no dependencies, ~a second
 node mcctl.mjs ui --no-open --port 8771    # the panel, from source
 ```
 
-Tests live in `test/` and run on every push and pull request (Windows runner — the
-scheduler speaks schtasks and the paths are drive letters). New behaviour that has a
-pure core should come with tests for it; the existing files show the shape.
+Tests live in `test/` and run on every push and pull request, on Windows (the run
+that counts — the scheduler speaks schtasks and the paths are drive letters) and on
+Linux (fast feedback). New behaviour that has a pure core should come with tests for
+it; the existing files show the shape.
+
+One rule that is easy to break without noticing: **nothing synchronous and slow on the
+panel's request path.** The panel is one Node process, so a `spawnSync`, a
+`readdirSync` walk of a world, or anything else that holds the event loop holds every
+request and the console stream with it, and shows up for the person as the panel
+hesitating. Use `execFile`/`spawn` and `fs.promises` there; `run/panel.log` records
+every time the loop was held for more than a quarter of a second, so a regression is
+visible.
 
 ## Pull requests
 

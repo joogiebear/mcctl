@@ -1618,6 +1618,15 @@
           <h2>About</h2>
           <dl class="kv" id="setAbout"></dl>
         </div>
+        <div>
+          <h2>Reporting a problem</h2>
+          <p class="hint" style="margin:0 0 12px">
+            Copies the version, the Java found, where things live, every server's status, the
+            panel's own log and the last console lines of the selected server. No passwords and
+            no webhook. Paste it into a GitHub issue.
+          </p>
+          <div class="row"><button class="ghost" id="bDiag">Copy diagnostics</button></div>
+        </div>
       </div>
     </div>
   </section>
@@ -5711,6 +5720,25 @@ function renderSettings() {
 
 $('#bSettings').onclick = () => { renderSettings(); show('settings'); };
 $('#bSetClose').onclick = back;
+
+// The bundle is plain text from the core; the page only carries it to the clipboard. A prompt
+// with the text selected is the fallback for a browser that refuses clipboard writes.
+$('#bDiag').onclick = async () => {
+  const b = $('#bDiag');
+  b.disabled = true;
+  try {
+    const q = state.current ? '?instance=' + encodeURIComponent(state.current) : '';
+    const res = await fetch('/api/diagnostics' + q);
+    if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+    const text = await res.text();
+    await navigator.clipboard.writeText(text);
+    toast('Diagnostics copied. Paste them into your bug report.', 'good');
+  } catch (e) {
+    toast('Could not copy diagnostics: ' + e.message, 'bad');
+  } finally {
+    b.disabled = false;
+  }
+};
 
 // -------------------------------------------------------------- versions ---
 

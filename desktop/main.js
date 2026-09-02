@@ -183,7 +183,7 @@ ipcMain.handle('mcctl:pickFile', async (_e, { title } = {}) => {
  */
 ipcMain.handle('mcctl:checkJava', async () => {
   const java = await loadCore('src/java.mjs')
-  return { ...java.probe(), downloadUrl: java.DOWNLOAD_URL }
+  return { ...(await java.probe()), downloadUrl: java.DOWNLOAD_URL }
 })
 
 /**

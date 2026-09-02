@@ -1,7 +1,9 @@
 import http from 'node:http'
-import { readFileSync } from 'node:fs'
+import fs, { readFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { monitorEventLoopDelay } from 'node:perf_hooks'
 
 import * as supervisor from './supervisor.mjs'
 import * as registry from './registry.mjs'
@@ -25,7 +27,7 @@ import * as neoforge from './neoforge.mjs'
 import * as worlds from './worlds.mjs'
 import { diagnose, crashReports } from './diagnose.mjs'
 import { acceptableWebhook } from './notify.mjs'
-import { fail, UserError } from './util.mjs'
+import { fail, refreshProcessTable, UserError } from './util.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -40,6 +42,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
  * step, and no dependency that can rot between the day this is written and the day it is needed.
  */
 export function serve({ port = 8770, host = '127.0.0.1', open = true } = {}) {
+  guardProcess()
+  watchEventLoop()
+  // The first read of the process table is synchronous by design (see util.mjs). Taken now,
+  // while nothing is waiting on it, rather than inside the first poll.
+  refreshProcessTable()
+
   const server = http.createServer(async (req, res) => {
     try {
       if (!isLocalRequest(req)) {
@@ -72,6 +80,135 @@ export function serve({ port = 8770, host = '127.0.0.1', open = true } = {}) {
       resolve({ server, url, port: bound })
     })
   })
+}
+
+/**
+ * The panel's own log: what went wrong in the panel process, and when it stalled.
+ *
+ * <p>The console log is the server's; the daemon log is the daemon's. Until this existed the
+ * panel process had nowhere to say anything, so a stall or a swallowed failure was invisible to
+ * the person reporting "it hesitates sometimes" and to whoever read the report. Appended, never
+ * rotated: it only gets a line when something is wrong, and it is included in the diagnostics.
+ */
+export function panelLog(msg) {
+  try {
+    fs.mkdirSync(LAYOUT.runDir, { recursive: true })
+    fs.appendFile(path.join(LAYOUT.runDir, 'panel.log'), `[${new Date().toISOString()}] ${msg}\n`, () => {})
+  } catch {
+    /* a log line lost is not worth an error */
+  }
+}
+
+/**
+ * Do not die on a promise nobody caught.
+ *
+ * <p>Node's default for an unhandled rejection is to exit the process. Here that process is the
+ * panel - and in the desktop app, the whole application window - so one forgotten catch on a
+ * webhook, a mirror copy or a stream write after the socket closed took everything down with no
+ * message. The servers survive either way; the panel should too. Logged, so the leak is found.
+ */
+let guarded = false
+function guardProcess() {
+  if (guarded) return
+  guarded = true
+  process.on('unhandledRejection', (reason) => {
+    panelLog(`unhandled rejection: ${reason?.stack ?? reason?.message ?? String(reason)}`)
+  })
+}
+
+/**
+ * Notice when the panel stops answering.
+ *
+ * <p>Everything the panel does runs on one event loop, so anything synchronous - a child
+ * process waited on, a directory walked - holds every request and the console stream for as
+ * long as it takes. That is exactly the "weird hesitation" nobody can reproduce on demand.
+ * Sampled every second and written to the panel log whenever the loop was held for longer
+ * than a quarter of a second, so a report of a stutter comes with the time and the size of it.
+ */
+const LAG_LOG_MS = 250
+function watchEventLoop() {
+  const h = monitorEventLoopDelay({ resolution: 20 })
+  h.enable()
+  const timer = setInterval(() => {
+    const worst = Math.round(h.max / 1e6)
+    h.reset()
+    if (worst >= LAG_LOG_MS) panelLog(`event loop held for ${worst}ms`)
+  }, 1000)
+  timer.unref()
+}
+
+/** The last lines of the panel log, for the diagnostics bundle. */
+function panelLogTail(count) {
+  try {
+    const lines = fs.readFileSync(path.join(LAYOUT.runDir, 'panel.log'), 'utf8').split(/\r?\n/).filter(Boolean)
+    return lines.slice(-count)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Everything a bug report needs, as one block of text.
+ *
+ * <p>Without this a report is a screenshot and "it doesn't work". With it, it is the version,
+ * the Java, where things live, every server with its status, the panel's own log, and the last
+ * lines of the console for the server being looked at. Nothing secret goes in: no RCON
+ * password, and no webhook URL - a Discord webhook is a credential, and this text is meant to
+ * be pasted somewhere public.
+ */
+async function diagnostics(instanceName) {
+  const lines = []
+  const add = (k, v) => lines.push(`${k}: ${v}`)
+  let version = 'unknown'
+  try {
+    version = JSON.parse(readFileSync(path.join(HERE, '..', 'package.json'), 'utf8')).version
+  } catch {
+    /* a checkout without package.json is still a checkout */
+  }
+  lines.push('== mcctl diagnostics ==')
+  add('mcctl', version)
+  add('node', process.version + (process.versions.electron ? ` (electron ${process.versions.electron})` : ''))
+  add('os', `${process.platform} ${os.release()} ${os.arch()}, ${os.cpus().length} cores, ${Math.round(os.totalmem() / 1073741824)} GB`)
+  add('generated', new Date().toISOString())
+  const jv = await java.probe()
+  add('java', jv.found ? `${jv.version} (${jv.reason})` : jv.message)
+  lines.push('')
+  lines.push('== where things live ==')
+  for (const k of ['dataRoot', 'instancesDir', 'jarsDir', 'backupsDir', 'runDir']) add(k, LAYOUT[k])
+  lines.push('')
+  lines.push('== servers ==')
+  const all = registry.listInstances()
+  if (!all.length) lines.push('(none)')
+  for (const i of all) {
+    let row
+    try {
+      row = supervisor.statusOf(i.name)
+    } catch (err) {
+      row = { ...i, status: `unknown (${err?.message ?? err})` }
+    }
+    lines.push(`- ${row.name}: ${row.status}, ${row.loader ?? 'paper'}${row.mcVersion ? ` ${row.mcVersion}` : ''}, `
+      + `${row.memory}, port ${row.port}, jar ${row.jar}`
+      + `${row.javaPid ? `, java pid ${row.javaPid}` : ''}${row.autoRestart ? ', auto-restart' : ''}`
+      + `${row.lastError ? `, last error: ${row.lastError}` : ''}`)
+  }
+  const tail = panelLogTail(20)
+  lines.push('')
+  lines.push('== panel log (last 20) ==')
+  lines.push(...(tail.length ? tail : ['(empty)']))
+  if (instanceName && registry.hasInstance(instanceName)) {
+    const inst = registry.getInstance(instanceName)
+    const recent = supervisor.tailLog(instanceName, 60)
+    const findings = diagnose(supervisor.tailLog(instanceName, 400), {
+      port: inst.port, memory: inst.memory, dir: inst.dir, crashDir: path.join(inst.dir, 'crash-reports'),
+    })
+    lines.push('')
+    lines.push(`== ${instanceName}: diagnosis ==`)
+    lines.push(...(findings.length ? findings.map((f) => `- ${f.title}: ${f.advice}`) : ['(nothing recognised)']))
+    lines.push('')
+    lines.push(`== ${instanceName}: console (last 60) ==`)
+    lines.push(...(recent.length ? recent : ['(empty)']))
+  }
+  return lines.join('\n') + '\n'
 }
 
 /**
@@ -226,7 +363,7 @@ async function handleBackups(req, res, name, seg) {
   const action = seg[4] ?? null
 
   if (req.method === 'GET') {
-    const auto = autoBackupTask(name)
+    const auto = await autoBackupTask(name)
     return json(res, 200, {
       snapshots: backup.listSnapshots(name),
       dir: path.join(LAYOUT.backupsDir, name),
@@ -286,7 +423,7 @@ async function handleBackups(req, res, name, seg) {
   }
 
   if (action === 'auto') {
-    const existing = autoBackupTask(name)
+    const existing = await autoBackupTask(name)
     if (body.enabled === false) {
       if (existing) schedule.remove(existing.id)
       return json(res, 200, { auto: null })
@@ -320,8 +457,8 @@ async function handleBackups(req, res, name, seg) {
  * Backups tab has only ever created this task under one name, so a task with that exact name and
  * no owner is one of ours, and anything else is left alone.
  */
-function autoBackupTask(name) {
-  const mine = schedule.list().filter((t) => t.instance === name && t.action.type === 'backup')
+async function autoBackupTask(name) {
+  const mine = (await schedule.list()).filter((t) => t.instance === name && t.action.type === 'backup')
   return mine.find((t) => t.owner === schedule.OWNER_BACKUPS)
     ?? mine.find((t) => !t.owner && t.name === 'Automatic backup')
     ?? null
@@ -402,7 +539,7 @@ async function handleWorlds(req, res, name, seg) {
 
   if (req.method === 'GET' && !verb) {
     return json(res, 200, {
-      ...worlds.listWorlds(inst),
+      ...(await worlds.listWorlds(inst)),
       running: supervisor.isRunning(name),
     })
   }
@@ -592,7 +729,7 @@ async function handleSchedules(req, res, name, seg) {
   const id = seg[4] ?? null
   const verb = seg[5] ?? null
 
-  const mine = () => schedule.list().filter((t) => t.instance === name)
+  const mine = async () => (await schedule.list()).filter((t) => t.instance === name)
 
   const shape = (t) => ({
     id: t.id,
@@ -613,7 +750,7 @@ async function handleSchedules(req, res, name, seg) {
 
   if (req.method === 'GET') {
     return json(res, 200, {
-      tasks: mine().map(shape),
+      tasks: (await mine()).map(shape),
       runs: schedule.recentRuns(name),
       actions: Object.entries(schedule.ACTIONS).map(([type, meta]) => ({
         type, label: meta.label, needsRunning: meta.needsRunning,
@@ -649,7 +786,7 @@ async function handleSchedules(req, res, name, seg) {
   }
 
   // Every id-addressed route below acts on a task, so the ownership check happens once, here.
-  const owned = mine().find((t) => t.id === id)
+  const owned = (await mine()).find((t) => t.id === id)
   if (!owned) return json(res, 404, { error: `"${name}" has no scheduled task "${id}"` })
 
   if (!verb) {
@@ -659,12 +796,12 @@ async function handleSchedules(req, res, name, seg) {
       schedule: body.schedule,
       enabled: body.enabled,
     })
-    return json(res, 200, shape(mine().find((t) => t.id === id)))
+    return json(res, 200, shape((await mine()).find((t) => t.id === id)))
   }
 
   if (verb === 'enable') {
     schedule.setEnabled(id, body.enabled !== false)
-    return json(res, 200, shape(mine().find((t) => t.id === id)))
+    return json(res, 200, shape((await mine()).find((t) => t.id === id)))
   }
 
   if (verb === 'run') {
@@ -777,7 +914,15 @@ async function route(req, res) {
   // Java is the one thing mcctl needs and cannot provide. Asked here so the panel can say so up
   // front instead of letting it surface as "spawn java ENOENT" after a fifty-megabyte download.
   if (seg[1] === 'health' && req.method === 'GET') {
-    return json(res, 200, { java: java.probe(), javaDownload: java.DOWNLOAD_URL })
+    return json(res, 200, { java: await java.probe(), javaDownload: java.DOWNLOAD_URL })
+  }
+
+  // ---- a bug report's worth of facts, as text ------------------------------
+  if (seg[1] === 'diagnostics' && req.method === 'GET') {
+    const text = await diagnostics(url.searchParams.get('instance'))
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(text)
+    return
   }
 
   // ---- where everything lives, for the settings screen ----------------------

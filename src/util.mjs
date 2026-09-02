@@ -2,7 +2,7 @@ import net from 'node:net'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { spawnSync } from 'node:child_process'
+import { spawnSync, execFile } from 'node:child_process'
 
 /** Errors of this class print as a clean one-line message instead of a stack. */
 export class UserError extends Error {}
@@ -12,47 +12,84 @@ export function fail(msg) {
 }
 
 /**
- * The process table, remembered for two seconds.
+ * The process table, remembered briefly and refreshed in the background.
  *
  * <p>A pid alone cannot say whether a process is the one a state file remembers: Windows hands
  * pids out again quickly, so a daemon that died hours ago could have its number worn by anything
  * by now, and a status read that only asks "is this pid alive" reports a dead server as running
  * forever - and `kill` would taskkill a stranger. The image name is the cheap second question.
- * Reading the whole table once and remembering it briefly costs one spawn per status poll rather
- * than one per pid per instance.
+ *
+ * <p>Cheap to ask, not cheap to answer: `tasklist` takes anything from a third of a second to
+ * well over one on a machine that is also running a JVM. The first read is synchronous, because
+ * a one-shot CLI call has nothing else to do and the answer has to be right the first time. Every
+ * later refresh happens in the background: a read that finds the table stale hands back the table
+ * it has and starts a new one, so the panel, which asks on every poll for as long as a server
+ * runs, never stops answering requests or feeding the console while `tasklist` runs. Between one
+ * table and the next a pid the table has not caught up with yet is trusted, which is the leniency
+ * sameProcess already promises.
  */
 let processTable = { at: 0, names: null }
+let refreshing = null
 const PROCESS_TABLE_MS = 2000
 
-function readProcessTable() {
+const TABLE_COMMAND = process.platform === 'win32'
+  ? ['tasklist', ['/FO', 'CSV', '/NH']]
+  : ['ps', ['-A', '-o', 'pid=,comm=']]
+
+function parseProcessTable(stdout) {
   const names = new Map()
-  try {
-    if (process.platform === 'win32') {
-      const r = spawnSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true, timeout: 10000 })
-      if (r.error || r.status !== 0) return null
-      for (const line of r.stdout.split(/\r?\n/)) {
-        const m = /^"([^"]*)","(\d+)"/.exec(line)
-        if (m) names.set(Number(m[2]), m[1])
-      }
-    } else {
-      const r = spawnSync('ps', ['-A', '-o', 'pid=,comm='], { encoding: 'utf8', timeout: 10000 })
-      if (r.error || r.status !== 0) return null
-      for (const line of r.stdout.split('\n')) {
-        const m = /^\s*(\d+)\s+(.+?)\s*$/.exec(line)
-        if (m) names.set(Number(m[1]), path.basename(m[2]))
-      }
+  if (process.platform === 'win32') {
+    for (const line of stdout.split(/\r?\n/)) {
+      const m = /^"([^"]*)","(\d+)"/.exec(line)
+      if (m) names.set(Number(m[2]), m[1])
     }
+  } else {
+    for (const line of stdout.split('\n')) {
+      const m = /^\s*(\d+)\s+(.+?)\s*$/.exec(line)
+      if (m) names.set(Number(m[1]), path.basename(m[2]))
+    }
+  }
+  return names
+}
+
+function readProcessTable() {
+  try {
+    const [cmd, args] = TABLE_COMMAND
+    const r = spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true, timeout: 10000 })
+    if (r.error || r.status !== 0) return null
+    return parseProcessTable(r.stdout)
   } catch {
     return null
   }
-  return names
+}
+
+/**
+ * Refresh the table without blocking. Resolves once the new table is in place; a second call
+ * while one is in flight joins it rather than starting another `tasklist`.
+ */
+export function refreshProcessTable() {
+  if (refreshing) return refreshing
+  const [cmd, args] = TABLE_COMMAND
+  refreshing = new Promise((resolve) => {
+    execFile(cmd, args, { encoding: 'utf8', windowsHide: true, timeout: 10000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+      refreshing = null
+      // A failed read keeps the previous table rather than replacing it with nothing: an old
+      // answer about a pid beats no answer, and the next read will try again.
+      if (!err) processTable = { at: Date.now(), names: parseProcessTable(stdout) }
+      else processTable = { ...processTable, at: Date.now() }
+      resolve(processTable.names)
+    })
+  })
+  return refreshing
 }
 
 /** The executable name behind a pid, or null when the table cannot be read or the pid is not in it. */
 export function processImage(pid) {
   if (!pid) return null
-  if (!processTable.names || Date.now() - processTable.at > PROCESS_TABLE_MS) {
+  if (!processTable.names) {
     processTable = { at: Date.now(), names: readProcessTable() }
+  } else if (Date.now() - processTable.at > PROCESS_TABLE_MS) {
+    refreshProcessTable()
   }
   return processTable.names?.get(pid) ?? null
 }
@@ -174,6 +211,37 @@ export function dirSize(dir) {
         }
       }
     }
+  }
+  return total
+}
+
+/**
+ * dirSize without holding the event loop.
+ *
+ * <p>Same walk, one directory at a time, with the stats of each directory's files issued together.
+ * It costs the same number of syscalls; what it does not cost is every other request in the
+ * process waiting while they run.
+ */
+export async function dirSizeAsync(dir) {
+  const fsp = fs.promises
+  let total = 0
+  const stack = [dir]
+  while (stack.length) {
+    const cur = stack.pop()
+    let entries
+    try {
+      entries = await fsp.readdir(cur, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    const files = []
+    for (const e of entries) {
+      const full = path.join(cur, e.name)
+      if (e.isDirectory()) stack.push(full)
+      else if (e.isFile()) files.push(full)
+    }
+    const sizes = await Promise.all(files.map((f) => fsp.stat(f).then((st) => st.size, () => 0)))
+    for (const n of sizes) total += n
   }
   return total
 }
