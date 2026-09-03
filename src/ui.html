@@ -369,6 +369,36 @@
   @keyframes breathe { 0%, 100% { opacity: .22; } 50% { opacity: .7; } }
 
   .newbtn { width: 100%; justify-content: center; padding: 10px; font-weight: 600; }
+
+  /* ---- the list, folded to a rail ------------------------------------------ */
+
+  /*
+    Once a server is picked the list has done its job, and 296px of it sits beside a console that
+    could use the room. Folded, it is a rail of lamps: every server's state stays in view, the
+    selected one stays lit, and a name is a hover away. The fold is the person's choice and is
+    remembered - a panel that folded itself when a server was picked would take the list away
+    from the one thing it is for, switching between servers.
+  */
+  .rail-toggle {
+    margin-left: auto;
+    padding: 3px;
+    color: var(--ink-3);
+    border-color: transparent;
+  }
+  .rail-toggle:hover:not(:disabled) { color: var(--ink); background: var(--surface); }
+  .panel > h2 .label { display: flex; align-items: center; gap: var(--s-2); min-width: 0; white-space: nowrap; }
+
+  body.rail main { grid-template-columns: 58px minmax(0, 1fr); }
+  body.rail .panel > h2 { padding: 11px 0; justify-content: center; }
+  body.rail .panel > h2 .label { display: none; }
+  body.rail .rail-toggle { margin: 0; }
+  body.rail #list { padding: var(--s-2) 6px; }
+  body.rail .card { grid-template-columns: auto; justify-items: center; padding: 11px 0; gap: 0; }
+  body.rail .card .nm, body.rail .card .vitals { display: none; }
+  body.rail .card .lamp { grid-row: auto; }
+  body.rail .newbtn { padding: 10px 0; }
+  body.rail .newbtn span { display: none; }
+  body.rail .newbtn .ico { width: 1.15em; height: 1.15em; }
   .side-empty { padding: var(--s-4); color: var(--ink-3); font-size: var(--t-3); }
 
   /* ---- stage ------------------------------------------------------------ */
@@ -625,32 +655,42 @@
     /* A <dl>, so it arrives with a 1em block margin nobody asked for - which showed as two bands
        of panel colour above and below a strip meant to sit flush between its neighbours. */
     margin: 0;
-    display: flex; flex-wrap: wrap;
     /*
-      Dividers drawn by the gap, not by a border on each cell.
+      A grid of equal cells, not a flex row that wraps.
 
-      A border-right cleared with :last-child only clears the final cell in the list, not the last
-      cell of each visual ROW - so as soon as the strip wrapped, which it does on a running server
-      once the Java PID cell appears, a hairline was left dangling in mid-air at the end of the
-      first row. Letting the container's colour show through a one-pixel gap draws the line only
-      where two cells actually meet, in either direction. The snapshot and player lists in this
-      file already work this way.
+      As a flex row each cell was as wide as its content and grew to fill the line, so when the
+      strip wrapped - which it does at the app's own minimum width, and on any running server once
+      the Java PID cell appears - the row broke after the widest cell and left one fact alone on a
+      second line, stretched across the whole strip. Equal columns wrap into an even second row
+      instead, and a jar name that does not fit its cell is cut with an ellipsis and carried in
+      full on the cell's title.
+
+      Each cell draws its own hairline with an outline; where two meet across the one-pixel gap
+      the outlines overlap into a single line, and the strip's outer edges are clipped by the
+      panel. The empty end of a partial last row stays plain, with no divider hanging in it.
     */
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    /* Dense, so when the two-cell jar cannot fit the end of a row a later single cell takes the
+       space instead of leaving a hole. The facts are read individually, so the order can give. */
+    grid-auto-flow: dense;
     gap: 1px;
     padding: 0;
     border-bottom: 1px solid var(--line);
-    background: var(--line);
+    background: var(--sunken);
   }
   .vitals-bar > div {
     display: grid; gap: 2px;
     padding: var(--s-3) var(--s-5);
     background: var(--sunken);
-    /* Fills the rest of the row so the strip does not end in a stripe of divider colour. */
-    flex: 1 0 auto;
+    outline: 1px solid var(--line);
+    min-width: 0;
   }
   .vital { display: grid; gap: 1px; }
+  /* The jar name is three times the width of any other fact; two cells of it stay readable. */
+  .vital[data-wide] { grid-column: span 2; }
   .vital dt { font: 600 var(--t-1)/1.4 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
-  .vital dd { margin: 0; font: var(--t-3)/1.4 var(--mono); color: var(--ink); }
+  .vital dd { margin: 0; font: var(--t-3)/1.4 var(--mono); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .notice { padding: var(--s-2) var(--s-4); font-size: var(--t-3); border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: baseline; line-height: 1.5; }
   .notice.warn { background: var(--warn-wash); color: var(--warn-ink); }
@@ -1305,6 +1345,15 @@
   @media (max-width: 840px) {
     main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(110px, 26vh) minmax(0, 1fr); }
     .rootchip { display: none; }
+    /* Folded in the stacked layout, the list is one short row: the toggle, the lamps in a line,
+       and the add button, so the console below gets nearly the whole window. */
+    body.rail main { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+    body.rail .sidebar { grid-template-rows: none; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s-2); }
+    body.rail .sidebar .panel { grid-template-rows: none; grid-template-columns: auto minmax(0, 1fr); }
+    body.rail .panel > h2 { padding: 0 var(--s-2); border-bottom: 0; border-right: 1px solid var(--line); }
+    body.rail #list { display: flex; flex-wrap: wrap; align-items: center; padding: 6px var(--s-2); }
+    body.rail .card { width: auto; padding: 8px 9px; }
+    body.rail .newbtn { width: auto; padding: 0 var(--s-3); }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1383,6 +1432,7 @@
   <symbol id="i-dots" viewBox="0 0 16 16"><path d="M3.25 8h.5M7.75 8h.5M12.25 8h.5" stroke-width="2.5"/></symbol>
 
   <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 16 16"><path d="M2.5 3h11v10h-11z"/><path d="M6 3v10"/></symbol>
   <symbol id="i-trash" viewBox="0 0 16 16"><path d="M3 4.5h10"/><path d="M4.5 4.5V13h7V4.5"/><path d="M6.5 4.5V3h3v1.5"/></symbol>
   <symbol id="i-pencil" viewBox="0 0 16 16"><path d="M2.5 13.5V11L11 2.5 13.5 5 5 13.5z"/></symbol>
   <!-- Tips pulled in: at the original 31-degree vertices the miter projected ~2.8 units past
@@ -1415,10 +1465,16 @@
 <main>
   <aside class="sidebar">
     <div class="panel">
-      <h2>Servers <span class="n" id="count"></span></h2>
+      <h2>
+        <span class="label">Servers <span class="n" id="count"></span></span>
+        <button class="ghost rail-toggle" id="bRail" type="button" aria-expanded="true"
+          aria-controls="list" aria-label="Collapse the server list" title="Collapse the server list">
+          <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-panel"/></svg>
+        </button>
+      </h2>
       <div id="list" role="list"></div>
     </div>
-    <button class="newbtn primary" id="bNew">Add a server</button>
+    <button class="newbtn primary" id="bNew"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg><span>Add a server</span></button>
   </aside>
 
   <section class="stage">
@@ -2083,6 +2139,25 @@ function duration(ms) {
   return Math.floor(h / 24) + 'd ' + (h % 24) + 'h';
 }
 
+/*
+  The fold is the person's choice and it is remembered, per browser rather than per server: it is
+  a preference about the window, not about anything in it. localStorage can be missing or refuse
+  (a locked-down profile, a private window), and a list that fails to remember is still a list.
+*/
+const RAIL_KEY = 'mcctl.rail';
+function setRail(on, { remember = true } = {}) {
+  document.body.classList.toggle('rail', on);
+  const b = $('#bRail');
+  b.setAttribute('aria-expanded', String(!on));
+  const label = on ? 'Expand the server list' : 'Collapse the server list';
+  b.setAttribute('aria-label', label);
+  b.title = label;
+  if (!remember) return;
+  try { localStorage.setItem(RAIL_KEY, on ? '1' : '0'); } catch { /* a list that cannot remember is still a list */ }
+}
+$('#bRail').onclick = () => setRail(!document.body.classList.contains('rail'));
+try { setRail(localStorage.getItem(RAIL_KEY) === '1', { remember: false }); } catch { /* same */ }
+
 function buildCard(row) {
   const el = document.createElement('button');
   el.type = 'button';
@@ -2194,6 +2269,8 @@ function renderServer(row) {
   for (const pair of pairs) {
     const wrap = document.createElement('div');
     wrap.className = 'vital';
+    wrap.title = pair[1];
+    if (pair[0] === 'Server jar') wrap.dataset.wide = '';
     const dt = document.createElement('dt');
     dt.textContent = pair[0];
     const dd = document.createElement('dd');
