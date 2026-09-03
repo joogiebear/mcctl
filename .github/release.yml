@@ -1,0 +1,19 @@
+# Shapes the list GitHub appends to every release under the hand-written notes: each merged
+# pull request with its author, grouped by label, and a "New Contributors" line for first-timers.
+# ensure-draft.mjs asks for it with --generate-notes.
+changelog:
+  exclude:
+    labels:
+      - release
+  categories:
+    - title: New
+      labels:
+        - enhancement
+        - feature
+    - title: Fixed
+      labels:
+        - bug
+        - fix
+    - title: Everything else
+      labels:
+        - "*"
