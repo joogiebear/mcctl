@@ -1,6 +1,6 @@
 {
   "name": "mcctl",
-  "version": "0.9.1",
+  "version": "0.10.0-beta.1",
   "private": true,
   "repository": "github:joogiebear/mcctl",
   "description": "Local Minecraft server control plane - multi-instance supervisor with console capture, RCON, and snapshots",
