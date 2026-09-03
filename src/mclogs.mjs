@@ -26,6 +26,25 @@ function splitLines(text) {
   return { parts, trailing }
 }
 
+/**
+ * Take the person's account name out of the paths before the log goes public.
+ *
+ * <p>A server log is full of paths - the working directory, every plugin's data folder, every
+ * stack trace with a file in it - and on Windows those paths carry the account name:
+ * C:\Users\Josh\AppData\... mclo.gs removes IP addresses on its side, best effort, and nothing
+ * else; Aternos's own upload mod strips the system username on the device before sending, and
+ * this is the same courtesy. Player names, plugin output and everything else are left as they
+ * are, and the consent dialog says so.
+ */
+export function redactAccountName(text) {
+  return String(text)
+    // Up to the next separator first, so "Josh Smith" goes whole; then a name with no separator
+    // after it. The second pass cannot touch what the first wrote, because it stops at "<".
+    .replace(/([A-Za-z]:[\\/]+Users[\\/]+)([^\\/\r\n"'<>|:*?]+?)(?=[\\/])/g, '$1<user>')
+    .replace(/([A-Za-z]:[\\/]+Users[\\/]+)([^\\/\s"'<>|:*?]+)/g, '$1<user>')
+    .replace(/(\/(?:home|Users)\/)([^/\s"'<>|:]+)/g, '$1<user>')
+}
+
 export function trimForUpload(text) {
   const { parts, trailing } = splitLines(text.replace(/\r\n?/g, '\n'))
   const join = (lines) => lines.join('\n') + (trailing ? '\n' : '')
@@ -83,7 +102,7 @@ export async function shareConsole(inst, {
   tokenFile = path.join(RUN_DIR, 'mclogs.json'),
   fetchImpl = fetch,
 } = {}) {
-  const { content, lines, trimmed } = trimForUpload(readConsole(sourceFile))
+  const { content, lines, trimmed } = trimForUpload(redactAccountName(readConsole(sourceFile)))
 
   let res
   try {

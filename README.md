@@ -318,6 +318,14 @@ This is built for **localhost and LAN only**.
   **Settings…** on a server. The panel badges any server running that way.
 - Nothing here opens firewall ports or touches your router. Exposing a server to
   the internet is a deliberate, separate decision.
+- **Two things leave the machine, and only on a click.** *Feedback* opens GitHub in your browser
+  with a report drafted; nothing is sent by mcctl. *Console → Export → Upload to mclo.gs* posts the
+  console log to [mclo.gs](https://mclo.gs), the log-sharing service plugin developers ask for,
+  after a dialog that says what is in it: mcctl replaces your account name in file paths first,
+  mclo.gs removes IP addresses on its side (best effort, by its own policy) and deletes the log 90
+  days after it was last opened, and everything else - player names, plugin output - goes as is.
+  The delete token comes back and is kept in `run/mclogs.json`. Everything else mcctl does stays
+  on this machine.
 - **The panel cannot be bound to another address.** There is no `--host` flag, on purpose:
   the panel has no login, and a panel reachable from another machine is a server console
   reachable from another machine. If you want to manage a server from elsewhere, remote into
@@ -377,7 +385,9 @@ What it does:
 
 A selected server has five tabs.
 
-**Console** — search, filter to warnings or errors, pause, copy, wrap and a bounded scrollback.
+**Console** — search, filter to warnings or errors, pause, copy, wrap, line numbers and a bounded
+scrollback. *Export* saves the console to a `.log` file beside the server's snapshots, or uploads
+it to mclo.gs for sharing with a plugin developer (see the security section for what is in it).
 Log level shows as a coloured rail in the gutter rather than by recolouring the text, so ERROR
 stands out without becoming harder to read. A stack trace inherits the level of the line above it,
 which is what makes "filter to errors" show the whole failure instead of its first line.

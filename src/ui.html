@@ -3028,10 +3028,14 @@ $('#miExportShare').onclick = async () => {
   if (!state.current) { toast('Select a server first.', 'bad'); return; }
   const ok = await ask({
     title: 'Upload this console to mclo.gs?',
-    text: 'The log is published at a public link that anyone holding it can read. mclo.gs removes '
-      + 'IP addresses, player names, authentication tokens and file paths on its side, and keeps '
-      + 'the log for 90 days. Read it over first if this server logs anything of its own. mcctl '
-      + 'saves the delete token so the log can be taken down later.',
+    // Only what is documented. mclo.gs's own policy promises IP removal, best effort, and
+    // deletion 90 days after the log was last opened - nothing about player names or paths.
+    // mcctl takes the account name out of paths itself before sending; the rest goes as is.
+    text: 'The log is published at a public link that anyone holding it can read. Before sending, '
+      + 'mcctl replaces your account name in file paths. mclo.gs removes IP addresses on its side, '
+      + 'best effort, and deletes the log 90 days after it was last opened. Player names, plugin '
+      + 'output and everything else stay in - read it over first. The delete token is kept in '
+      + 'run/mclogs.json so the log can be taken down later.',
     confirmLabel: 'Upload and open',
   });
   if (!ok) return;
