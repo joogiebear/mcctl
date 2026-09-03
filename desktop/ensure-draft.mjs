@@ -85,7 +85,11 @@ if (matching.length === 1) {
       title = `${TAG} — ${summary}`
     }
   }
-  const args = ['release', 'create', TAG, '--repo', REPO, '--draft', '--title', title]
+  // --generate-notes appends GitHub's own list under the hand-written notes: every merged pull
+  // request since the last release with its author's @name, and a "New Contributors" line for
+  // anyone whose first change this is. The people who did the work are named on the release
+  // without anyone remembering to type them. .github/release.yml shapes that list.
+  const args = ['release', 'create', TAG, '--repo', REPO, '--draft', '--title', title, '--generate-notes']
   if (fs.existsSync(notes)) args.push('--notes-file', notes)
   else args.push('--notes', 'Release notes to follow.')
   gh(args)

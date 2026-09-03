@@ -82,6 +82,15 @@ gets built and tried by hand first; the release is the gate.
 - By contributing you agree your work is licensed under the repository's
   [MIT license](LICENSE).
 
+## Credit
+
+Every release names the people who made it. GitHub appends a list of the merged pull
+requests since the last release, each with its author, plus a "New Contributors" line
+for anyone whose first change it is - that is automatic, from the pull request itself,
+so a merged PR is a credit. The hand-written notes above that list name people too
+when a feature is theirs. Label a PR `enhancement` or `bug` and it lands in the right
+section; unlabelled ones go under "Everything else".
+
 ## Releases
 
 Releases are built, signed and published by the maintainer from a machine holding the
