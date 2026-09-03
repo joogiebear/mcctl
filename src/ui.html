@@ -1215,6 +1215,12 @@
   */
   .ln { padding: 0 12px 0 14px; border-left: 3px solid transparent; white-space: pre-wrap; word-break: break-word; }
   #log.nowrap .ln { white-space: pre; word-break: normal; }
+  #log .num { display: none; }
+  #log.nums .ln { display: grid; grid-template-columns: max-content 1fr; }
+  #log.nums .num {
+    display: block; min-width: 4ch; padding-right: 10px; text-align: right;
+    color: var(--ink-3); font-style: italic; user-select: none; -webkit-user-select: none;
+  }
   .ln .pre { color: var(--ink-3); }
   .ln mark { background: var(--warn-edge); color: #ffe9be; border-radius: 2px; }
   .ln.warn  { border-left-color: var(--warn); background: rgba(240, 182, 77, .045); }
@@ -1579,6 +1585,7 @@
           </span>
           <button id="bPause" aria-pressed="false">Pause</button>
           <button id="bWrap" aria-pressed="true">Wrap</button>
+          <button id="bNums" aria-pressed="false">Line Numbers</button>
           <button id="bCopy">Copy</button>
           <button id="bClear">Clear</button>
           <span class="grow"></span>
@@ -1881,6 +1888,8 @@ const state = {
   filter: 'all',
   search: '',
   wrap: true,
+  nums: false,
+  seq: 0,
   atBottom: true,
   history: [],
   histAt: -1,
@@ -2631,15 +2640,22 @@ const PREFIX_RE = /^(\[[^\]]*\](?:\s*\[[^\]]*\])?:?\s*)/;
 function makeLine(entry) {
   const div = document.createElement('div');
   div.className = 'ln' + (entry.level === 'info' ? '' : ' ' + entry.level);
+  const num = document.createElement('span');
+  num.className = 'num';
+  num.textContent = entry.n;
+  div.append(num);
+  const txt = document.createElement('span');
+  txt.className = 'txt';
   const pm = PREFIX_RE.exec(entry.text);
   const prefix = pm ? pm[1] : '';
   if (prefix) {
     const s = document.createElement('span');
     s.className = 'pre';
     s.textContent = prefix;
-    div.append(s);
+    txt.append(s);
   }
-  appendSearched(div, pm ? entry.text.slice(prefix.length) : entry.text);
+  appendSearched(txt, pm ? entry.text.slice(prefix.length) : entry.text);
+  div.append(txt);
   return div;
 }
 
@@ -2704,7 +2720,7 @@ function renderLog() {
 
 function pushLine(text) {
   const prev = state.lines.length ? state.lines[state.lines.length - 1].level : null;
-  const entry = { text: text, level: levelOf(text, prev) };
+  const entry = { text: text, level: levelOf(text, prev), n: ++state.seq };
   state.lines.push(entry);
 
   // A busy server writes thousands of lines a minute. Without a ceiling the panel keeps a DOM node
@@ -2731,6 +2747,11 @@ function pushLine(text) {
   updateCount();
 }
 
+function clearLines() {
+  state.lines = [];
+  state.seq = 0;
+}
+
 function stopStream() {
   if (state.stream) state.stream.close();
   state.stream = null;
@@ -2740,7 +2761,7 @@ function stopStream() {
 function select(name) {
   if (state.current === name && state.view === 'server' && state.streamName === name) return;
   state.current = name;
-  state.lines = [];
+  clearLines();
   state.paused = false;
   state.pausedAt = 0;
   state.atBottom = true;
@@ -2786,7 +2807,7 @@ function select(name) {
   // reconnect keeps the console honest about what actually happened.
   stream.onerror = () => {
     if (state.streamName !== name || stream.readyState !== EventSource.CONNECTING) return;
-    state.lines = [];
+    clearLines();
     state.pausedAt = 0;
     renderLog();
   };
@@ -2831,6 +2852,19 @@ $('#bWrap').onclick = () => {
   $('#bWrap').setAttribute('aria-pressed', String(state.wrap));
 };
 
+const NUMS_KEY = 'mcctl.nums';
+function setNums(on, { remember = true } = {}) {
+  state.nums = on;
+  $('#log').classList.toggle('nums', on);
+  $('#bNums').setAttribute('aria-pressed', String(on));
+  if (!remember) return;
+  try { localStorage.setItem(NUMS_KEY, on ? '1' : '0'); } catch {}
+}
+
+$('#bNums').onclick = () => setNums(!state.nums);
+
+try { setNums(localStorage.getItem(NUMS_KEY) === '1', { remember: false }); } catch {}
+
 $('#bCopy').onclick = async () => {
   const shown = state.lines.filter(visible);
   if (!shown.length) { toast('Nothing to copy.', 'bad'); return; }
@@ -2856,7 +2890,7 @@ $('#bCopy').onclick = async () => {
 // Clears the VIEW, not the log on disk. Said out loud, because a Clear button next to a server
 // console could reasonably be read as destructive.
 $('#bClear').onclick = () => {
-  state.lines = [];
+  clearLines();
   state.pausedAt = 0;
   state.atBottom = true;
   renderLog();
@@ -5777,7 +5811,7 @@ async function rebuildServer(row) {
     });
     note.remove();
     toast('Reset. Snapshot saved to ' + (out.snapshot || 'the backups folder') + '.', 'good');
-    state.lines = [];
+    clearLines();
     renderLog();
     await refresh();
   } catch (e) {
@@ -5806,7 +5840,7 @@ async function deleteServer(row) {
     note.remove();
     stopStream();
     state.current = null;
-    state.lines = [];
+    clearLines();
     show('empty');
     await refresh();
     toast(out.purged
