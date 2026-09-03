@@ -486,6 +486,9 @@
   input[type="time"]::-webkit-calendar-picker-indicator { filter: invert(.65); cursor: pointer; }
 
   .field { display: grid; gap: 5px; }
+  /* A few controls that read as one phrase - "keeping [7] of them" - and wrap as one. */
+  .unit { display: inline-flex; align-items: center; gap: var(--s-2); white-space: nowrap; }
+  .unit input, .unit select { width: auto; }
   .field > label { font: 600 var(--t-1)/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); }
   .hint { font-size: var(--t-2); color: var(--ink-3); line-height: 1.45; }
   .bad { font-size: var(--t-2); color: var(--fault); }
@@ -755,8 +758,35 @@
 
   /* Settings: one card per group, flowing into as many columns as fit. The lines that speak for
      the whole pane - the restart note, the save row, an error - keep the full width. */
-  #settingsBody { grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); align-items: start; }
-  #settingsBody > .hint, #settingsBody > .row, #settingsBody > .bad { grid-column: 1 / -1; }
+  /* Cards in a row share a bottom edge. align-items: start let each card stop at its own content,
+     which left the right-hand column ragged; stretch evens them, and the card keeps its fields at
+     the top so the extra height is empty below the last field, not spread between them. */
+  #settingsBody { grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); align-items: stretch; }
+  #settingsBody > .hint, #settingsBody > .row, #settingsBody > .bad, #settingsBody > .pane-foot { grid-column: 1 / -1; }
+  .set-group { align-content: start; }
+
+  /*
+    The save bar stays in view.
+
+    The Settings pane is three times the height of its viewport, and its one Save button sat at the
+    very bottom - so a change to "Who can join" at the top meant scrolling past everything to commit
+    it. This sticks to the bottom of the scroller the way the title sticks to the top, and says how
+    many changes are waiting so the button is never a guess.
+  */
+  .pane-foot {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-3);
+    margin: var(--s-2) calc(-1 * var(--s-6)) calc(-1 * var(--s-6));
+    padding: var(--s-3) var(--s-6);
+    border-top: 1px solid var(--line);
+    background: var(--recess);
+  }
+  .pane-foot .hint { margin: 0; }
 
   @container pane (min-width: 860px) {
     /* Backups: "now" and "automatic" are peers and sit side by side; the history below them is a
@@ -4617,7 +4647,6 @@ async function renderBackups(opts) {
 
   const keepLabel = document.createElement('span');
   keepLabel.className = 'hint';
-  keepLabel.style.whiteSpace = 'nowrap';
   keepLabel.textContent = 'keeping';
   const keep = document.createElement('input');
   keep.type = 'number';
@@ -4627,12 +4656,14 @@ async function renderBackups(opts) {
   keep.style.maxWidth = '68px';
   const keepAfter = document.createElement('span');
   keepAfter.className = 'hint';
-  keepAfter.style.whiteSpace = 'nowrap';
   keepAfter.textContent = 'of them';
+  const keepUnit = document.createElement('span');
+  keepUnit.className = 'unit';
+  keepUnit.append(keepLabel, keep, keepAfter);
 
   const apply = document.createElement('button');
   apply.textContent = 'Apply';
-  autoRow.append(onOffLabel, every, keepLabel, keep, keepAfter, apply);
+  autoRow.append(onOffLabel, every, keepUnit, apply);
 
   const autoState = document.createElement('div');
   autoState.className = 'hint';
@@ -4970,8 +5001,9 @@ async function renderServerSettings() {
   }
 
   // ---- supervision: mcctl's own settings, not server.properties -------------
-  // Its own card with its own Apply, because it saves through a different endpoint than the
-  // properties below and takes effect at the next java exit rather than the next start.
+  // Saved by the one Save button with everything else. It goes through a different endpoint
+  // from the properties and takes effect at the next java exit rather than the next start, but
+  // that is the panel's problem to route, not a reason for a second button on the screen.
   const sup = document.createElement('div');
   sup.className = 'section set-group';
   {
@@ -5017,34 +5049,15 @@ async function renderServerSettings() {
     + 'task fails. Leave empty for none. Server → Integrations → Webhooks in Discord.';
   whField.append(whLabel, whInput, whHint);
   sup.append(whField);
-
-  const supRow = document.createElement('div');
-  supRow.className = 'row';
-  const supApply = document.createElement('button');
-  supApply.textContent = 'Apply';
-  supRow.append(supApply);
-  sup.append(supRow);
   body.append(sup);
+
+  // What mcctl's own settings looked like when the pane was drawn, so Save can tell a change
+  // from a visit. Updated after each save so the next one is measured from there.
+  const mine = { autoRestart: row.autoRestart === true, webhook: row.webhook || '', java: row.java || 'java' };
 
   // The Server software card below speaks PaperMC; on a Fabric server it would offer builds
   // the server cannot run, so it does not appear at all.
   const isPaper = (row.loader ?? 'paper') === 'paper';
-
-  supApply.onclick = async () => {
-    supApply.disabled = true;
-    try {
-      await post('/instances/' + encodeURIComponent(row.name) + '/settings', {
-        autoRestart: arSwitch.checked,
-        webhook: whInput.value.trim(),
-      });
-      toast('Saved. A running server picks this up at its next exit.', 'good');
-      await refresh();
-    } catch (e) {
-      toast(e.message, 'bad');
-    } finally {
-      supApply.disabled = false;
-    }
-  };
 
   // ---- which Java runs it ------------------------------------------------------
   // Per server, not per machine. Someone testing a plugin against 1.20.4 and 26.1 side by side
@@ -5082,16 +5095,12 @@ async function renderServerSettings() {
   jvHint.textContent = 'Looking for installed Javas…';
   jvField.append(jvLabel, jvSelect, jvCustom, jvHint);
   jv.append(jvField);
-  const jvRow = document.createElement('div');
-  jvRow.className = 'row';
-  const jvApply = document.createElement('button');
-  jvApply.textContent = 'Apply';
-  jvApply.disabled = true;
-  jvRow.append(jvApply);
-  jv.append(jvRow);
   body.append(jv);
 
-  const current = row.java || 'java';
+  // Until the list arrives the select is empty, and an empty select must not read as "clear
+  // the Java" when Save compares it with what the server had.
+  let javaReady = false;
+  const current = mine.java;
   api('/java').then((found) => {
     if (body.dataset.for !== row.name) return;
     jvSelect.textContent = '';
@@ -5125,7 +5134,7 @@ async function renderServerSettings() {
       ? needLine + 'Found ' + found.found.length + (found.found.length === 1 ? ' Java' : ' Javas') + ' on this machine. '
         + 'Installed one somewhere else? Pick the last option and paste the path to java.exe.'
       : needLine + 'No Java was found on PATH or in the usual install folders. Paste the path to java.exe, or get one from ' + found.download;
-    jvApply.disabled = false;
+    javaReady = true;
   }).catch((e) => {
     jvHint.textContent = 'Could not look for Javas: ' + e.message;
     jvSelect.textContent = '';
@@ -5135,28 +5144,13 @@ async function renderServerSettings() {
     jvSelect.append(o);
     jvCustom.hidden = false;
     jvCustom.value = current;
-    jvApply.disabled = false;
+    javaReady = true;
   });
   jvSelect.onchange = () => {
     jvCustom.hidden = jvSelect.value !== '__custom';
     if (!jvCustom.hidden) jvCustom.focus();
   };
-  jvApply.onclick = async () => {
-    const chosen = jvSelect.value === '__custom' ? jvCustom.value.trim() : jvSelect.value;
-    if (!chosen) { toast('Pick a Java, or paste the path to one.', 'bad'); return; }
-    jvApply.disabled = true;
-    try {
-      await post('/instances/' + encodeURIComponent(row.name) + '/settings', { java: chosen });
-      toast(row.status === 'running'
-        ? 'Saved. The server switches Java the next time it starts.'
-        : 'Saved. This server now runs on ' + (chosen === 'java' ? 'the Java on PATH.' : chosen), 'good');
-      await refresh();
-    } catch (e) {
-      toast(e.message, 'bad');
-    } finally {
-      jvApply.disabled = false;
-    }
-  };
+  const chosenJava = () => (jvSelect.value === '__custom' ? jvCustom.value.trim() : jvSelect.value);
 
   // ---- the server software itself -------------------------------------------
   // Off the network until asked: the card shows what is installed from the registry alone, and
@@ -5290,7 +5284,7 @@ async function renderServerSettings() {
   };
 
   const actions = document.createElement('div');
-  actions.className = 'row';
+  actions.className = 'pane-foot';
   const save = document.createElement('button');
   save.className = 'primary';
   save.textContent = 'Save settings';
@@ -5299,33 +5293,69 @@ async function renderServerSettings() {
   actions.append(save, status);
   body.append(actions);
 
-  save.onclick = async () => {
-    // Only what actually changed: a field left alone is never written, so server.properties keeps
-    // whatever the server itself put there.
-    const patch = {};
+  /*
+    What would be written if Save were pressed now. Two patches, because the properties and
+    mcctl's own settings live behind different endpoints - but one button, because the person
+    changing them does not care which file a field lands in.
+
+    Only what actually changed: a field left alone is never written, so server.properties keeps
+    whatever the server itself put there.
+  */
+  const pending = () => {
+    const props = {};
     for (const [key, c] of controls) {
       const now = c.input.value.trim();
-      if (now !== c.original) patch[key] = now;
+      if (now !== c.original) props[key] = now;
     }
-    if (!Object.keys(patch).length) { status.textContent = 'Nothing changed.'; return; }
+    const own = {};
+    if (arSwitch.checked !== mine.autoRestart) own.autoRestart = arSwitch.checked;
+    if (whInput.value.trim() !== mine.webhook) own.webhook = whInput.value.trim();
+    if (javaReady && chosenJava() !== mine.java) own.java = chosenJava();
+    return { props, own, count: Object.keys(props).length + Object.keys(own).length };
+  };
+
+  // The bar says how much is waiting, and the button is only live when something is. A save
+  // that would write nothing used to answer "Nothing changed." after the click; now it cannot
+  // be clicked, and the count beside it is the answer before the question.
+  const dirty = () => {
+    const n = pending().count;
+    save.disabled = !n;
+    status.textContent = n ? n + (n === 1 ? ' change to save' : ' changes to save') : 'Nothing to save.';
+  };
+  body.addEventListener('input', dirty);
+  body.addEventListener('change', dirty);
+  dirty();
+
+  save.onclick = async () => {
+    const { props, own, count } = pending();
+    if (!count) return;
+    if ('java' in own && !own.java) { toast('Pick a Java, or paste the path to one.', 'bad'); return; }
     save.disabled = true;
     status.textContent = 'Saving…';
+    let restart = false;
     try {
-      const out = await post('/instances/' + encodeURIComponent(row.name) + '/props', patch);
-      for (const f of out.fields) {
-        const c = controls.get(f.key);
-        if (c) c.original = f.value == null ? '' : String(f.value);
+      if (Object.keys(props).length) {
+        const out = await post('/instances/' + encodeURIComponent(row.name) + '/props', props);
+        for (const f of out.fields) {
+          const c = controls.get(f.key);
+          if (c) c.original = f.value == null ? '' : String(f.value);
+        }
+        restart = restart || Boolean(out.appliesOnRestart);
       }
-      const n = out.changed.length;
-      status.textContent = '';
-      toast('Saved ' + n + (n === 1 ? ' setting' : ' settings') +
-        (out.appliesOnRestart ? '. Restart ' + row.name + ' to apply.' : '.'), 'good');
+      if (Object.keys(own).length) {
+        await post('/instances/' + encodeURIComponent(row.name) + '/settings', own);
+        Object.assign(mine, own);
+        // A Java change waits for the next start; the crash settings for the next exit. On a
+        // running server both mean "not yet", and the toast says so once.
+        restart = restart || (row.status === 'running');
+      }
+      toast('Saved ' + count + (count === 1 ? ' setting' : ' settings')
+        + (restart ? '. Restart ' + row.name + ' to apply.' : '.'), 'good');
       await refresh();
     } catch (e) {
-      status.textContent = '';
       toast(e.message, 'bad');
     } finally {
-      save.disabled = false;
+      dirty();
     }
   };
 }
