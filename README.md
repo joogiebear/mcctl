@@ -407,9 +407,11 @@ they log out, so a screen reading only files says "has never joined" about someb
 front of you. Changes go through the console while the server runs and into its files when it does
 not — editing a file under a live server is reverted the next time it saves.
 
-**Feedback**, in the header, is two doors. *Something broke* opens a GitHub bug report with the
+**Feedback**, in the header, is three doors. *Something broke* opens a GitHub bug report with the
 version, Java, server status and panel log already in it, and puts the full diagnostics on the
-clipboard for pasting under it. *An idea or a question* opens the project's discussions. Nothing is
+clipboard for pasting under it. *A question* opens a new post in the project's
+[Q&A](https://github.com/joogiebear/mcctl/discussions/categories/q-a), and *An idea* one in
+[Ideas](https://github.com/joogiebear/mcctl/discussions/categories/ideas). Nothing is
 sent from mcctl on its own; the browser hop is the consent. A crash notice under a server's vitals
 has a **Report** link that does the same, named for the crash.
 

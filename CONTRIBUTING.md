@@ -46,6 +46,15 @@ hesitating. Use `execFile`/`spawn` and `fs.promises` there; `run/panel.log` reco
 every time the loop was held for more than a quarter of a second, so a regression is
 visible.
 
+## Where things go
+
+- A bug: [an issue](https://github.com/joogiebear/mcctl/issues/new?template=bug_report.md),
+  ideally through the app's **Feedback → Something broke**, which fills in the diagnostics.
+- A question: [Q&A](https://github.com/joogiebear/mcctl/discussions/categories/q-a) in
+  Discussions, so the answer stays findable.
+- An idea: [Ideas](https://github.com/joogiebear/mcctl/discussions/categories/ideas). Say what
+  you were trying to do, not only what to add.
+
 ## Branches
 
 Two long-lived branches:

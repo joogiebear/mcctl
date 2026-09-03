@@ -179,10 +179,12 @@ export function projectUrl() {
 }
 
 /**
- * Where ideas and questions go. Discussions for now; a Discord invite belongs here the day one
- * exists, which is why it is a single string rather than derived from the repository.
+ * Where ideas and questions go: GitHub Discussions, each straight into its category, so an idea
+ * lands in Ideas and a question in Q&A without the person choosing from a list first. A Discord
+ * invite belongs here the day one exists, which is why these are strings rather than derived.
  */
-const IDEAS_URL = () => `${projectUrl()}/discussions`
+const IDEAS_URL = () => `${projectUrl()}/discussions/new?category=ideas`
+const QUESTION_URL = () => `${projectUrl()}/discussions/new?category=q-a`
 
 async function diagnostics(instanceName, { short = false } = {}) {
   const lines = []
@@ -253,7 +255,7 @@ async function diagnostics(instanceName, { short = false } = {}) {
  */
 async function feedback(instanceName, { title = '' } = {}) {
   const home = projectUrl()
-  if (!home) return { bug: null, ideas: null, full: '' }
+  if (!home) return { bug: null, ideas: null, question: null, full: '' }
   const short = await diagnostics(instanceName, { short: true })
   const full = await diagnostics(instanceName)
   const body = [
@@ -277,7 +279,7 @@ async function feedback(instanceName, { title = '' } = {}) {
     params.set('body', body.slice(0, 7500 - `${home}/issues/new?`.length - 400) + '\n```\n\n(trimmed - paste the full diagnostics from your clipboard)\n')
     bug = `${home}/issues/new?${params}`
   }
-  return { bug, ideas: IDEAS_URL(), full }
+  return { bug, ideas: IDEAS_URL(), question: QUESTION_URL(), full }
 }
 
 /**
