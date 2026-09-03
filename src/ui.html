@@ -1907,8 +1907,12 @@ function ask(opts) {
   const mine = ++askSeq;
 
   return new Promise((resolve) => {
+    let settled = false;
     const done = (result) => {
+      if (settled) return;
+      settled = true;
       dlg.removeEventListener('cancel', onCancel);
+      dlg.removeEventListener('close', onClose);
       ok.onclick = null;
       $('#dlgCancel').onclick = null;
       typeBox.oninput = null;
@@ -1917,16 +1921,23 @@ function ask(opts) {
       resolve(result);
     };
     /*
-      'cancel', not 'close'.
+      'cancel' first, 'close' as the net.
 
       close() queues its 'close' event rather than firing it inline, so a dialog that answers by
       opening a second dialog - Manage, then Delete - had the first one's queued event arrive after
       the second had already opened, and shut it again immediately. 'cancel' fires only when the
-      person actually dismisses the dialog, which is the thing being listened for. The sequence
-      guard covers the case of a stale one arriving anyway.
+      person actually dismisses the dialog, which is the thing being listened for.
+
+      But a browser can close a modal without ever firing 'cancel' - Chrome does when it decides
+      the Escape lacked user activation - and then the dialog was gone while this promise waited
+      for an answer that would never come. So 'close' is heard too, behind the sequence guard: a
+      stale close from a dialog this one replaced fails the guard, and a close of THIS dialog with
+      no answer resolves as the cancel it was.
     */
     const onCancel = () => { if (mine === askSeq) done(null); };
+    const onClose = () => { if (mine === askSeq) done(null); };
     dlg.addEventListener('cancel', onCancel);
+    dlg.addEventListener('close', onClose);
     ok.onclick = () => {
       const picked = choiceBox.querySelector('input:checked');
       done({ choice: picked ? picked.value : null, text: typeBox.value.trim() });
@@ -2013,14 +2024,33 @@ $('.srv-nav').addEventListener('keydown', (e) => {
 });
 
 /** Back out of a sheet to wherever the person was. */
+/*
+  Where focus was when a sheet opened, so closing it can put focus back there.
+
+  A modal <dialog> does this on its own; the sheets - Add a server, Settings, Feedback - are views
+  in the stage, not dialogs, and when one closed the element that had focus was gone with it.
+  Focus fell to the body, and the next Tab started from the top of the page. The button that
+  opened the sheet is where a keyboard user expects to be standing when it closes.
+*/
+let sheetOpener = null;
+
+function openSheet(view, prepare) {
+  sheetOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  if (prepare) prepare();
+  show(view);
+}
+
 function back() {
-  if (!state.current) { show('empty'); renderEmptyFor(state.rows); return; }
-  if (state.streamName === state.current) {
+  const opener = sheetOpener;
+  sheetOpener = null;
+  if (!state.current) { show('empty'); renderEmptyFor(state.rows); }
+  else if (state.streamName === state.current) {
     show('server');
     renderServer(state.rows.find((r) => r.name === state.current));
   } else {
     select(state.current);
   }
+  if (opener && opener.isConnected) opener.focus();
 }
 
 // -------------------------------------------------------------- servers ----
@@ -5439,17 +5469,23 @@ async function editServer(row) {
 
   const mine = ++askSeq;
   const result = await new Promise((resolve) => {
+    let settled = false;
     const done = (v) => {
+      if (settled) return;
+      settled = true;
       dlg.removeEventListener('cancel', onCancel);
+      dlg.removeEventListener('close', onClose);
       ok.onclick = null;
       $('#dlgCancel').onclick = null;
       if (dlg.open) dlg.close();
       form.remove();
       resolve(v);
     };
-    // 'cancel' rather than 'close', for the reason spelled out in ask().
+    // 'cancel' first and 'close' as the net, for the reasons spelled out in ask().
     const onCancel = () => { if (mine === askSeq) done(null); };
+    const onClose = () => { if (mine === askSeq) done(null); };
     dlg.addEventListener('cancel', onCancel);
+    dlg.addEventListener('close', onClose);
     ok.onclick = () => done({
       name: $('#edName').value.trim(),
       memory: $('#edMem').value.trim(),
@@ -5605,7 +5641,7 @@ function selectTab(tab) {
 }
 
 function openAdd(tab) {
-  show('add');
+  openSheet('add');
   selectTab(tab);
   setTimeout(() => $(tab === 'adopt' ? '#aDir' : tab === 'pack' ? '#pSearch' : '#nName').focus(), 0);
 }
@@ -5971,7 +6007,7 @@ function renderSettings() {
   }
 }
 
-$('#bSettings').onclick = () => { renderSettings(); show('settings'); };
+$('#bSettings').onclick = () => openSheet('settings', renderSettings);
 $('#bSetClose').onclick = back;
 
 // -------------------------------------------------------------- feedback ---
@@ -6019,10 +6055,11 @@ async function reportBug({ title = '' } = {}) {
 }
 
 $('#bFeedback').onclick = () => {
-  $('#fbNote').textContent = state.current
-    ? 'A bug report will include the last console lines of ' + state.current + '.'
-    : 'Select a server first if the problem is about one - its console lines go into the report.';
-  show('feedback');
+  openSheet('feedback', () => {
+    $('#fbNote').textContent = state.current
+      ? 'A bug report will include the last console lines of ' + state.current + '.'
+      : 'Select a server first if the problem is about one - its console lines go into the report.';
+  });
 };
 $('#bFbClose').onclick = back;
 $('#dBug').onclick = () => reportBug();
@@ -6312,9 +6349,24 @@ if (desktop) {
 
 // --------------------------------------------------------------- startup ---
 
-// Escape closes whatever is on top. The dialog handles itself, so this is for the sheets.
+/*
+  Escape closes whatever is on top.
+
+  The <dialog> is supposed to handle this itself - a modal dialog fires 'cancel' on Escape - and in
+  most browsers it does. Chrome 148 in the desktop pane delivered the keydown to the focused button
+  inside the dialog and then did nothing with it, so Manage sat there through any number of
+  Escapes. Dismissed here instead, through the same 'cancel' event the browser would have fired,
+  so ask() and the edit dialog see exactly what they already listen for. Where the browser does
+  close it first, the dialog is no longer open by the time this runs and nothing happens twice.
+*/
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape' || $('#dlg').open) return;
+  if (e.key !== 'Escape') return;
+  const dlg = $('#dlg');
+  if (dlg.open) {
+    e.preventDefault();
+    dlg.dispatchEvent(new Event('cancel', { cancelable: true }));
+    return;
+  }
   if (state.view === 'add' || state.view === 'settings' || state.view === 'feedback') back();
 });
 
