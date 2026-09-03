@@ -359,6 +359,12 @@ This is built for **localhost and LAN only**.
 
 ---
 
+## The site
+
+The project page lives in `site/`, one HTML file with no build step, published by GitHub Pages from
+`main`. `site/banner/` holds the banner artwork partner sites embed, as HTML plus the rendered PNGs;
+`node tools/render-banners.mjs` re-renders them after an edit.
+
 ## The panel
 
 ```bash
