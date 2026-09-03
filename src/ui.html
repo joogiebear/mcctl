@@ -692,7 +692,17 @@
   .vital dt { font: 600 var(--t-1)/1.4 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
   .vital dd { margin: 0; font: var(--t-3)/1.4 var(--mono); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  .notice { padding: var(--s-2) var(--s-4); font-size: var(--t-3); border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: baseline; line-height: 1.5; }
+  /*
+    A notice says what is wrong, and then what to do about it: a button for the way out when
+    the panel has one, one to find the line in the console, and one to dismiss it for this
+    run. The actions sit at the right and drop to their own line when the pane is narrow.
+  */
+  .notice { padding: var(--s-2) var(--s-4); font-size: var(--t-3); border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); align-items: baseline; line-height: 1.5; }
+  .notice .text { flex: 1 1 320px; min-width: 0; }
+  .notice .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; flex: none; align-self: center; }
+  .notice .acts button { padding: 2px 9px; font-size: var(--t-2); }
+  .notice .acts .x { padding: 2px 7px; color: inherit; opacity: .7; }
+  .notice .acts .x:hover { opacity: 1; }
   .notice.warn { background: var(--warn-wash); color: var(--warn-ink); }
   .notice.fault { background: var(--fault-wash); color: var(--fault-ink); }
   .notice b { font-weight: 600; white-space: nowrap; }
@@ -2297,15 +2307,15 @@ function renderServer(row) {
   const notice = $('#srvNotice');
   notice.textContent = '';
   const note = STATE_NOTE[row.status];
-  if (note) {
-    const box = document.createElement('div');
-    box.className = 'notice ' + (row.status === 'stale' ? 'warn' : 'fault');
-    const b = document.createElement('b');
-    b.textContent = note[0];
-    const s = document.createElement('span');
-    s.textContent = note[1];
-    box.append(b, s);
-    notice.append(box);
+  const noteKey = row.name + '|state|' + row.status;
+  if (note && !dismissed.has(noteKey)) {
+    notice.append(noticeBox({
+      tone: row.status === 'stale' ? 'warn' : 'fault',
+      title: note[0],
+      text: note[1],
+      actions: row.status === 'stale' ? [{ label: 'Start', run: () => $('#bStart').click() }] : [],
+      dismiss: () => dismissed.add(noteKey),
+    }));
   }
 
   // A control that is going to be refused should look refused. The core rejects these on a live
@@ -2334,6 +2344,89 @@ function renderServer(row) {
  */
 let diagKey = '';
 
+/*
+  Notices a person has closed, keyed by the run they belonged to.
+
+  A dismissed finding stays gone while nothing about the run changes, and comes back with the
+  next run - the port that was taken may be taken again, and that is news. Kept for the life of
+  the page rather than stored: a notice worth remembering across restarts is a bug to fix, not a
+  preference to keep.
+*/
+const dismissed = new Set();
+
+/**
+ * One notice under the vitals: a bold title, a sentence, and its actions at the right.
+ *
+ * <p>Every notice can be dismissed. A finding also offers to show the line it was read from,
+ * and the ones the panel can do something about carry that something as a button - "Change
+ * port…" opens the same dialog Manage does, rather than a sentence telling you to go and find it.
+ */
+function noticeBox({ tone, title, text, actions = [], dismiss }) {
+  const box = document.createElement('div');
+  box.className = 'notice ' + tone;
+  const body = document.createElement('span');
+  body.className = 'text';
+  const b = document.createElement('b');
+  b.textContent = title;
+  body.append(b, ' ', text);
+  const acts = document.createElement('span');
+  acts.className = 'acts';
+  for (const a of actions) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = a.primary ? '' : 'ghost';
+    btn.textContent = a.label;
+    btn.onclick = a.run;
+    acts.append(btn);
+  }
+  if (dismiss) {
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'ghost x';
+    x.textContent = '×';
+    x.setAttribute('aria-label', 'Dismiss: ' + title);
+    x.title = 'Dismiss';
+    x.onclick = () => { dismiss(); box.remove(); };
+    acts.append(x);
+  }
+  box.append(body, acts);
+  return box;
+}
+
+/** Switch to the console with the search set to the line a finding was read from. */
+function showLineInConsole(line) {
+  showPane('console');
+  setFilter('all');
+  const search = $('#conSearch');
+  // The timestamp prefix is per line and the search is a substring, so the message is enough.
+  search.value = line.replace(/^\[[^\]]*\]:?\s*/, '').trim().slice(0, 80);
+  search.dispatchEvent(new Event('input'));
+  search.focus();
+}
+
+/*
+  What the panel can do about each finding, by the id the core gives it. The advice text still
+  names the way out in words, for the terminal and for findings with no button here; this is the
+  button for the ones that have somewhere to go in the panel.
+*/
+const FINDING_ACTIONS = {
+  'port-in-use': (row) => [{ label: 'Change port…', run: () => editServer(row), primary: true }],
+  'out-of-memory': (row) => [{ label: 'Raise memory…', run: () => editServer(row), primary: true }],
+  'wrong-java': () => [{ label: 'Choose Java', run: () => showPane('settings'), primary: true }],
+  'missing-jar': () => [{ label: 'Server software', run: () => showPane('settings'), primary: true }],
+  'eula': (row) => [{ label: 'Open folder', run: () => openFolder(row.name), primary: true }],
+  'missing-plugin-dependency': () => [{ label: 'Open Plugins', run: () => showPane('plugins'), primary: true }],
+  'missing-mod-dependency': () => [{ label: 'Open Mods', run: () => showPane('plugins'), primary: true }],
+  'duplicate-plugin': () => [{ label: 'Open Plugins', run: () => showPane('plugins'), primary: true }],
+  'corrupt-world': () => [{ label: 'Open Backups', run: () => showPane('backups'), primary: true }],
+  'ticking-crash': (row) => [{
+    label: 'Crash reports',
+    primary: true,
+    run: () => post('/instances/' + encodeURIComponent(row.name) + '/reveal', { sub: 'crash-reports' })
+      .catch((e) => toast(e.message, 'bad')),
+  }],
+};
+
 async function loadDiagnosis(row) {
   const key = [row.name, row.status, row.exitCode ?? '', row.startedAt ?? ''].join('|');
   if (key === diagKey) return;
@@ -2351,41 +2444,41 @@ async function loadDiagnosis(row) {
   box.textContent = '';
 
   for (const f of data.findings.slice(0, 2)) {
-    const n = document.createElement('div');
-    n.className = 'notice ' + (row.status === 'running' ? 'warn' : 'fault');
-    const b = document.createElement('b');
-    b.textContent = f.title;
-    const s = document.createElement('span');
-    s.textContent = f.advice;
-    n.append(b, s);
-    box.append(n);
+    const fKey = key + '|' + f.id;
+    if (dismissed.has(fKey)) continue;
+    const actions = FINDING_ACTIONS[f.id] ? FINDING_ACTIONS[f.id](row) : [];
+    if (f.line) actions.push({ label: 'Show in console', run: () => showLineInConsole(f.line) });
+    box.append(noticeBox({
+      tone: row.status === 'running' ? 'warn' : 'fault',
+      title: f.title,
+      text: f.advice,
+      actions,
+      dismiss: () => dismissed.add(fKey),
+    }));
   }
 
   if (data.crashes.count) {
-    const n = document.createElement('div');
-    n.className = 'notice warn';
-    const b = document.createElement('b');
-    b.textContent = data.crashes.count === 1 ? '1 crash report' : data.crashes.count + ' crash reports';
-    const s = document.createElement('span');
-    s.textContent = (data.crashes.newest.description || data.crashes.newest.file)
-      + '  ·  ' + ago(data.crashes.newest.mtime);
-    const open = document.createElement('button');
-    open.className = 'ghost';
-    open.type = 'button';
-    open.style.cssText = 'padding:2px 8px;font-size:12px;flex:none;margin-left:auto';
-    open.textContent = 'Open folder';
-    open.onclick = () => post('/instances/' + encodeURIComponent(row.name) + '/reveal', { sub: 'crash-reports' })
-      .catch((e) => toast(e.message, 'bad'));
-    // Most bug reports are born here, at the crash, and this is when someone is most willing to
-    // send one. The report opens named for the crash and with the diagnosis attached.
-    const report = document.createElement('button');
-    report.className = 'ghost';
-    report.type = 'button';
-    report.style.cssText = 'padding:2px 8px;font-size:12px;flex:none';
-    report.textContent = 'Report';
-    report.onclick = () => reportBug({ title: 'Crash: ' + (data.crashes.newest.description || 'server crashed').slice(0, 80) });
-    n.append(b, s, open, report);
-    box.append(n);
+    const cKey = key + '|crashes|' + data.crashes.newest.file;
+    if (dismissed.has(cKey)) return;
+    box.append(noticeBox({
+      tone: 'warn',
+      title: data.crashes.count === 1 ? '1 crash report' : data.crashes.count + ' crash reports',
+      text: (data.crashes.newest.description || data.crashes.newest.file) + '  ·  ' + ago(data.crashes.newest.mtime),
+      actions: [
+        {
+          label: 'Open folder',
+          run: () => post('/instances/' + encodeURIComponent(row.name) + '/reveal', { sub: 'crash-reports' })
+            .catch((e) => toast(e.message, 'bad')),
+        },
+        // Most bug reports are born here, at the crash, and this is when someone is most willing
+        // to send one. The report opens named for the crash and with the diagnosis attached.
+        {
+          label: 'Report',
+          run: () => reportBug({ title: 'Crash: ' + (data.crashes.newest.description || 'server crashed').slice(0, 80) }),
+        },
+      ],
+      dismiss: () => dismissed.add(cKey),
+    }));
   }
 }
 

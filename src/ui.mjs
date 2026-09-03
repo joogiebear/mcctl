@@ -1289,7 +1289,9 @@ async function route(req, res) {
     })
     const crashes = crashReports(inst, { limit: 5 })
     return json(res, 200, {
-      findings: findings.map(({ id, title, advice }) => ({ id, title, advice })),
+      // The line each finding was read from rides along, so the panel can put it in front of
+      // the person in the console rather than telling them to go and look for it.
+      findings: findings.map(({ id, title, advice, line }) => ({ id, title, advice, line })),
       crashes: { count: crashes.reports.length, newest: crashes.reports[0] ?? null, dir: crashes.dir },
     })
   }
