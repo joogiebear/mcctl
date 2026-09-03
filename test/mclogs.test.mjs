@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { exportConsole, shareConsole, trimForUpload, MAX_LINES, MAX_BYTES } from '../src/mclogs.mjs'
+import { exportConsole, shareConsole, trimForUpload, redactAccountName, MAX_LINES, MAX_BYTES } from '../src/mclogs.mjs'
 import { UserError } from '../src/util.mjs'
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mcctl-mclogs-'))
@@ -174,4 +174,29 @@ test('sharing a server that has never run is refused before anything is sent', a
     UserError,
   )
   assert.equal(fetchImpl.calls.length, 0, 'nothing left the machine')
+})
+
+// The account name is in every path a server logs. It is removed before the log goes public;
+// nothing else is touched, because nothing else is promised.
+test('the account name is taken out of paths, on both kinds of machine', () => {
+  assert.equal(
+    redactAccountName('at C:\\Users\\Josh Smith\\AppData\\Local\\mcctl\\instances\\smp\\plugins\\x.jar'),
+    'at C:\\Users\\<user>\\AppData\\Local\\mcctl\\instances\\smp\\plugins\\x.jar',
+  )
+  assert.equal(redactAccountName('cwd=D:/Users/josh/servers'), 'cwd=D:/Users/<user>/servers')
+  assert.equal(redactAccountName('home is C:\\Users\\josh'), 'home is C:\\Users\\<user>')
+  assert.equal(redactAccountName('/home/josh/mc/plugins and /Users/josh/mc'), '/home/<user>/mc/plugins and /Users/<user>/mc')
+  // Not paths: a player called Users, a plugin folder of its own.
+  assert.equal(redactAccountName('Users joined the game'), 'Users joined the game')
+  assert.equal(redactAccountName('C:\\Servers\\smp\\plugins'), 'C:\\Servers\\smp\\plugins')
+})
+
+test('sharing sends the redacted log, and exporting to disk keeps the original', async () => {
+  const text = 'cwd=C:\\Users\\Josh\\smp\n'
+  const f = fixture(text)
+  const fetchImpl = stubFetch({ success: true, id: 'x', url: 'https://mclo.gs/x', token: 't' })
+  await shareConsole(f.inst, { sourceFile: f.sourceFile, tokenFile: f.tokenFile, fetchImpl })
+  assert.equal(JSON.parse(fetchImpl.calls[0].init.body).content, 'cwd=C:\\Users\\<user>\\smp\n')
+  const out = exportConsole(f.inst, { sourceFile: f.sourceFile, outDir: f.outDir })
+  assert.equal(fs.readFileSync(out.file, 'utf8'), text, 'a local export is the log as it is')
 })
