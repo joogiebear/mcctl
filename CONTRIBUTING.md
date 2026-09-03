@@ -46,6 +46,19 @@ hesitating. Use `execFile`/`spawn` and `fs.promises` there; `run/panel.log` reco
 every time the loop was held for more than a quarter of a second, so a regression is
 visible.
 
+## Branches
+
+Two long-lived branches:
+
+- **`dev`** is where work lands. Base pull requests on it and target it.
+- **`main`** is what was last released. It moves only when `dev` is merged into it to
+  cut a release, so checking out `main` always gives you the code behind the installer
+  people have.
+
+The desktop app updates itself from GitHub releases, not from branches, so nothing on
+either branch reaches anyone until a release is published. `dev` is where a change
+gets built and tried by hand first; the release is the gate.
+
 ## Pull requests
 
 - Every commit message starts with a conventional type prefix (`feat:`, `fix:`,
@@ -60,4 +73,7 @@ visible.
 ## Releases
 
 Releases are built, signed and published by the maintainer from a machine holding the
-signing profile. CI runs tests; it does not build installers.
+signing profile, from `main` after `dev` has been merged into it. CI runs tests; it
+does not build installers. To try a build before it is released, run
+`npx electron-builder --publish never` in `desktop/` on `dev` and install the result
+by hand; it never touches GitHub.
