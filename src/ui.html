@@ -520,6 +520,7 @@
   .unit { display: inline-flex; align-items: center; gap: var(--s-2); white-space: nowrap; }
   .unit input, .unit select { width: auto; }
   .field > label { font: 600 var(--t-1)/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); }
+  .field > label code { font: 600 var(--t-1)/1 var(--mono); text-transform: none; letter-spacing: 0; color: var(--ink); }
   .hint { font-size: var(--t-2); color: var(--ink-3); line-height: 1.45; }
   .bad { font-size: var(--t-2); color: var(--fault); }
   .row { display: flex; gap: 8px; align-items: center; }
@@ -1983,8 +1984,12 @@ function ask(opts) {
   typeWrap.hidden = !opts.typeToConfirm && !opts.input;
   typeBox.value = opts.input ? (opts.input.value || '') : '';
   typeBox.placeholder = opts.input ? (opts.input.placeholder || '') : '';
-  if (opts.typeToConfirm) $('#dlgTypeLabel').textContent = 'Type ' + opts.typeToConfirm + ' to confirm';
-  else if (opts.input) $('#dlgTypeLabel').textContent = opts.input.label || '';
+  const typeLabel = $('#dlgTypeLabel');
+  if (opts.typeToConfirm) {
+    const name = document.createElement('code');
+    name.textContent = opts.typeToConfirm;
+    typeLabel.replaceChildren('Type ', name, ' to confirm');
+  } else if (opts.input) typeLabel.textContent = opts.input.label || '';
 
   const ok = $('#dlgOk');
   ok.textContent = opts.confirmLabel || 'Confirm';
