@@ -255,6 +255,36 @@ export function validateName(name) {
   return name
 }
 
+/**
+ * A display name, as typed, made safe to store: whitespace collapsed, control characters
+ * dropped, at most 48 characters. Null when nothing is left.
+ *
+ * <p>The instance NAME is a folder, a registry key, a command-line argument and a scheduled-task
+ * name, and each of those has rules; the label is none of them, so it can be anything a person
+ * would call their server. "Survival (Season 3)" is a label; its name is survival-season-3.
+ */
+export function cleanLabel(raw) {
+  if (raw == null) return null
+  // eslint-disable-next-line no-control-regex
+  const label = String(raw).replace(/\s+/g, ' ').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 48).trim()
+  return label || null
+}
+
+/**
+ * The instance name a label suggests: the label with everything a name cannot hold turned into
+ * dashes, trimmed and capped at the name limit. Never empty - a label made entirely of symbols
+ * becomes "server". Case is kept, so "MyServer" stays readable as a folder.
+ */
+export function slugFor(label) {
+  const slug = String(label ?? '')
+    .replace(/[^A-Za-z0-9_-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-_]+|[-_]+$/g, '')
+    .slice(0, 32)
+    .replace(/[-_]+$/g, '')
+  return slug || 'server'
+}
+
 /** Timestamp usable in filenames: 2026-08-16_142530 */
 export function stamp(d = new Date()) {
   const p = (n) => String(n).padStart(2, '0')

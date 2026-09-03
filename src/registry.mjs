@@ -58,6 +58,20 @@ export function updateInstance(name, patch) {
   return { name, ...reg.instances[name] }
 }
 
+/**
+ * The first free name from a base: the base itself, then base-2, base-3, kept within the name
+ * limit. For a name derived from a label, where "survival" may already be taken by the last
+ * survival server.
+ */
+export function freeName(base) {
+  let name = base
+  for (let i = 2; hasInstance(name); i++) {
+    const suffix = '-' + i
+    name = base.slice(0, 32 - suffix.length).replace(/[-_]+$/g, '') + suffix
+  }
+  return name
+}
+
 export function removeInstance(name) {
   const reg = loadRegistry()
   delete reg.instances[name]

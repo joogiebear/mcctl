@@ -576,6 +576,9 @@
   .empty p.lede { color: var(--ink-2); margin: 0 0 30px; max-width: 48ch; font-size: var(--t-4); }
 
   .doors { display: grid; grid-template-columns: repeat(auto-fit, minmax(238px, 1fr)); gap: var(--s-3); max-width: 640px; width: 100%; }
+  /* Three doors in the Feedback sheet, which is wide enough for a row of three; capped at two
+     they left one on a line of its own. */
+  #vFeedback .doors { max-width: none; }
   .door {
     display: grid;
     gap: 6px;
@@ -630,6 +633,7 @@
   .srv-actions .sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
   .srv-head h1 { margin: 0; font: 600 var(--t-6)/1.2 var(--ui); letter-spacing: -.015em; }
   .srv-state { font: var(--t-3)/1 var(--ui); color: var(--ink-2); }
+  .srv-id { font: var(--t-2)/1 var(--mono); color: var(--ink-3); }
   /* A server anyone can join as any name is a different kind of server, and its logs get bug
      reports refused. That is worth seeing without opening a properties screen. */
   .badge {
@@ -1532,6 +1536,7 @@
       <div class="srv-head">
         <span class="lamp lg"></span>
         <h1 id="srvName">—</h1>
+        <span class="srv-id" id="srvId" hidden title="The name the folder and the commands use"></span>
         <span class="srv-state" id="srvState"></span>
         <span class="badge" id="srvOffline" hidden title="Anyone can join as any name. Players get name-derived UUIDs, and every log carries an OFFLINE/INSECURE banner.">Offline mode</span>
         <span class="grow"></span>
@@ -1638,8 +1643,8 @@
       <form class="sheet-body" id="formNew">
         <div class="field">
           <label for="nName">Name</label>
-          <input id="nName" name="name" required autocomplete="off" placeholder="testbed" spellcheck="false">
-          <div class="hint">Letters, numbers, dash and underscore. Names the folder and the console.</div>
+          <input id="nName" name="name" required autocomplete="off" placeholder="Survival (Season 3)" maxlength="48">
+          <div class="hint">Anything you like. The folder and the console use <code id="nNameSlug">—</code></div>
           <div class="bad" id="nNameBad"></div>
         </div>
         <div class="row" style="align-items:flex-start">
@@ -1715,7 +1720,8 @@
           <div class="row" style="align-items:flex-start;margin-top:12px">
             <div class="field" style="flex:2">
               <label for="pName">Name</label>
-              <input id="pName" autocomplete="off" spellcheck="false">
+              <input id="pName" autocomplete="off" maxlength="48">
+              <div class="hint">Folder and console: <code id="pNameSlug">—</code></div>
               <div class="bad" id="pNameBad"></div>
             </div>
             <div class="field" style="flex:1">
@@ -1748,7 +1754,8 @@
         <div class="row" style="align-items:flex-start">
           <div class="field" style="flex:2">
             <label for="aName">Name in mcctl</label>
-            <input id="aName" autocomplete="off" placeholder="survival" spellcheck="false">
+            <input id="aName" autocomplete="off" placeholder="Survival" maxlength="48">
+            <div class="hint">The console and commands use <code id="aNameSlug">—</code></div>
             <div class="bad" id="aNameBad"></div>
           </div>
           <div class="field" style="flex:1">
@@ -1773,8 +1780,8 @@
       </div>
       <div class="sheet-body wide">
         <p class="hint" style="margin:0">
-          mcctl is in beta and reports are read. Both doors open GitHub in your browser; nothing is
-          sent from here on its own.
+          mcctl is in beta and reports are read. Every door opens GitHub in your browser; nothing
+          is sent from here on its own.
         </p>
         <div class="doors">
           <button class="door" id="dBug">
@@ -1783,10 +1790,16 @@
               filled in, and puts the full diagnostics on your clipboard to paste under it. No
               passwords, no webhook.</span>
           </button>
+          <button class="door" id="dAsk">
+            <b>A question</b>
+            <span>Opens a new post in the project's Q&amp;A. How something works, whether it can
+              do a thing, why a server will not start. Answers stay findable for the next
+              person.</span>
+          </button>
           <button class="door" id="dIdea">
-            <b>An idea or a question</b>
-            <span>Opens the project's discussions. A feature you wish it had, a question about how
-              something works, a server kind it should support.</span>
+            <b>An idea</b>
+            <span>Opens a new post in Ideas. A feature you wish it had, a server kind it should
+              support. Say what you were trying to do, not only what to add.</span>
           </button>
         </div>
         <p class="hint" id="fbNote" style="margin:0"></p>
@@ -2014,7 +2027,9 @@ function ask(opts) {
       no answer resolves as the cancel it was.
     */
     const onCancel = () => { if (mine === askSeq) done(null); };
-    const onClose = () => { if (mine === askSeq) done(null); };
+    // A stale 'close' - queued by the dialog this one replaced, arriving after showModal() - finds
+    // the dialog open again; a real close finds it shut. Only the real one is an answer.
+    const onClose = () => { if (mine === askSeq && !dlg.open) done(null); };
     dlg.addEventListener('cancel', onCancel);
     dlg.addEventListener('close', onClose);
     ok.onclick = () => {
@@ -2201,7 +2216,7 @@ function buildCard(row) {
 function updateCard(el, row) {
   el.dataset.status = row.status;
   el.setAttribute('aria-current', String(row.name === state.current));
-  el.querySelector('.nm').textContent = row.name;
+  el.querySelector('.nm').textContent = row.label || row.name;
 
   const vitals = el.querySelector('.vitals');
   vitals.textContent = '';
@@ -2260,7 +2275,10 @@ function renderList(rows) {
 function renderServer(row) {
   if (!row) return;
   $('#vServer').dataset.status = row.status;
-  $('#srvName').textContent = row.name;
+  $('#srvName').textContent = row.label || row.name;
+  // The name the commands and the folder use, shown only when it is not the same word.
+  $('#srvId').textContent = row.name;
+  $('#srvId').hidden = !row.label || row.label === row.name;
   // The same tab manages plugins/ on a Paper server and mods/ on a modded one; its name
   // follows, because "Plugins" on a server that cannot load any would be a small lie.
   // Named for what the software loads, from the same table the create form uses. Anything the
@@ -5654,7 +5672,8 @@ async function editServer(row) {
   form.style.display = 'grid';
   form.style.gap = '12px';
   const fields = [
-    ['Name', 'edName', row.name, 'text'],
+    ['Name', 'edLabel', row.label || '', 'text'],
+    ['Folder and command name', 'edName', row.name, 'text'],
     ['Memory', 'edMem', row.memory || '4G', 'text'],
     ['Port', 'edPort', String(row.port || ''), 'number'],
   ];
@@ -5698,22 +5717,26 @@ async function editServer(row) {
     };
     // 'cancel' first and 'close' as the net, for the reasons spelled out in ask().
     const onCancel = () => { if (mine === askSeq) done(null); };
-    const onClose = () => { if (mine === askSeq) done(null); };
+    // A stale 'close' - queued by the dialog this one replaced, arriving after showModal() - finds
+    // the dialog open again; a real close finds it shut. Only the real one is an answer.
+    const onClose = () => { if (mine === askSeq && !dlg.open) done(null); };
     dlg.addEventListener('cancel', onCancel);
     dlg.addEventListener('close', onClose);
     ok.onclick = () => done({
+      label: $('#edLabel').value.trim(),
       name: $('#edName').value.trim(),
       memory: $('#edMem').value.trim(),
       port: $('#edPort').value.trim(),
     });
     $('#dlgCancel').onclick = () => done(null);
     dlg.showModal();
-    $('#edName').focus();
+    $('#edLabel').focus();
   });
   if (!result) return;
 
   try {
     const patch = {};
+    if (result.label !== (row.label || '')) patch.label = result.label;
     if (result.memory && result.memory !== row.memory) patch.memory = result.memory;
     if (result.port && Number(result.port) !== row.port) patch.port = result.port;
     if (Object.keys(patch).length) {
@@ -5867,11 +5890,40 @@ $('#dNew').onclick = () => openAdd('new');
 $('#dAdopt').onclick = () => openAdd('adopt');
 $('#bAddClose').onclick = back;
 
+/*
+  The name a person types is a label: anything they would call the server. The NAME the core
+  uses - the folder, the registry key, the argument to every command - is derived from it and
+  shown beside the field as it is typed, so nobody is refused for a space or a bracket and
+  nobody is surprised by the folder either. Mirrors slugFor() and freeName() in the core; the
+  page cannot import them, and the core derives it again on its own if the page sends none.
+*/
+function slugFor(label) {
+  const slug = String(label ?? '')
+    .replace(/[^A-Za-z0-9_-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-_]+|[-_]+$/g, '')
+    .slice(0, 32)
+    .replace(/[-_]+$/g, '');
+  return slug || 'server';
+}
+function freeSlug(base) {
+  const taken = (n) => state.rows.some((r) => r.name.toLowerCase() === n.toLowerCase());
+  let name = base;
+  for (let i = 2; taken(name); i++) {
+    const suffix = '-' + i;
+    name = base.slice(0, 32 - suffix.length).replace(/[-_]+$/g, '') + suffix;
+  }
+  return name;
+}
+/** The instance name a name field will create. */
+function slugOf(input) { return freeSlug(slugFor(input.value.trim())); }
+
 function checkName(input, out) {
   const value = input.value.trim();
+  const slugEl = $('#' + input.id + 'Slug');
+  if (slugEl) slugEl.textContent = value ? slugOf(input) : '—';
   let msg = '';
-  if (value && !NAME_RE.test(value)) msg = 'Letters, numbers, dash and underscore only, up to 32 characters.';
-  else if (state.rows.some((r) => r.name.toLowerCase() === value.toLowerCase())) {
+  if (value && state.rows.some((r) => (r.label || r.name).toLowerCase() === value.toLowerCase())) {
     msg = 'There is already a server called ' + value + '.';
   }
   out.textContent = msg;
@@ -5881,6 +5933,7 @@ function checkName(input, out) {
 
 $('#nName').oninput = () => checkName($('#nName'), $('#nNameBad'));
 $('#aName').oninput = () => checkName($('#aName'), $('#aNameBad'));
+$('#pName').oninput = () => checkName($('#pName'), $('#pNameBad'));
 $('#nMem').oninput = () => checkMemory($('#nMem'), $('#nMemBad'));
 $('#aMem').oninput = () => checkMemory($('#aMem'), $('#aMemBad'));
 
@@ -5921,7 +5974,8 @@ $('#formNew').onsubmit = async (e) => {
     const loader = form.get('loader') || 'paper';
     const version = form.get('version') || null;
     const inst = await post('/instances', {
-      name: form.get('name'),
+      label: form.get('name'),
+      name: slugOf($('#nName')),
       loader: loader,
       version: version,
       neoforgeVersion: loader === 'neoforge' ? version : null,
@@ -5976,7 +6030,8 @@ $('#formAdopt').onsubmit = async (e) => {
   $('#bAdopt').disabled = true;
   try {
     const inst = await post('/instances/adopt', {
-      name: $('#aName').value.trim(),
+      label: $('#aName').value.trim(),
+      name: slugOf($('#aName')),
       dir: dir,
       memory: $('#aMem').value.trim() || '4G',
     });
@@ -6102,7 +6157,8 @@ $('#formPack').onsubmit = async (e) => {
 
   try {
     const inst = await post('/instances', {
-      name: $('#pName').value.trim(),
+      label: $('#pName').value.trim(),
+      name: slugOf($('#pName')),
       modpack: packView.chosen.id,
       memory: $('#pMem').value.trim() || '4G',
       jobId: jobId,
@@ -6278,14 +6334,17 @@ $('#bFeedback').onclick = () => {
 };
 $('#bFbClose').onclick = back;
 $('#dBug').onclick = () => reportBug();
-$('#dIdea').onclick = async () => {
-  try {
-    const data = await api('/feedback');
-    if (data.ideas) openOutside(data.ideas);
-  } catch (e) {
-    toast(e.message, 'bad');
-  }
-};
+// Each door opens its own category, so nobody has to pick one from GitHub's list first.
+for (const [id, key] of [['#dIdea', 'ideas'], ['#dAsk', 'question']]) {
+  $(id).onclick = async () => {
+    try {
+      const data = await api('/feedback');
+      if (data[key]) openOutside(data[key]);
+    } catch (e) {
+      toast(e.message, 'bad');
+    }
+  };
+}
 
 // The bundle is plain text from the core; the page only carries it to the clipboard. A prompt
 // with the text selected is the fallback for a browser that refuses clipboard writes.

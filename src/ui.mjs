@@ -27,7 +27,7 @@ import * as neoforge from './neoforge.mjs'
 import * as worlds from './worlds.mjs'
 import { diagnose, crashReports } from './diagnose.mjs'
 import { acceptableWebhook } from './notify.mjs'
-import { fail, refreshProcessTable, UserError } from './util.mjs'
+import { fail, refreshProcessTable, UserError, cleanLabel, slugFor } from './util.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -179,10 +179,12 @@ export function projectUrl() {
 }
 
 /**
- * Where ideas and questions go. Discussions for now; a Discord invite belongs here the day one
- * exists, which is why it is a single string rather than derived from the repository.
+ * Where ideas and questions go: GitHub Discussions, each straight into its category, so an idea
+ * lands in Ideas and a question in Q&A without the person choosing from a list first. A Discord
+ * invite belongs here the day one exists, which is why these are strings rather than derived.
  */
-const IDEAS_URL = () => `${projectUrl()}/discussions`
+const IDEAS_URL = () => `${projectUrl()}/discussions/new?category=ideas`
+const QUESTION_URL = () => `${projectUrl()}/discussions/new?category=q-a`
 
 async function diagnostics(instanceName, { short = false } = {}) {
   const lines = []
@@ -253,7 +255,7 @@ async function diagnostics(instanceName, { short = false } = {}) {
  */
 async function feedback(instanceName, { title = '' } = {}) {
   const home = projectUrl()
-  if (!home) return { bug: null, ideas: null, full: '' }
+  if (!home) return { bug: null, ideas: null, question: null, full: '' }
   const short = await diagnostics(instanceName, { short: true })
   const full = await diagnostics(instanceName)
   const body = [
@@ -277,7 +279,7 @@ async function feedback(instanceName, { title = '' } = {}) {
     params.set('body', body.slice(0, 7500 - `${home}/issues/new?`.length - 400) + '\n```\n\n(trimmed - paste the full diagnostics from your clipboard)\n')
     bug = `${home}/issues/new?${params}`
   }
-  return { bug, ideas: IDEAS_URL(), full }
+  return { bug, ideas: IDEAS_URL(), question: QUESTION_URL(), full }
 }
 
 /**
@@ -894,6 +896,17 @@ async function handleSchedules(req, res, name, seg) {
  * stripping it - every start, stop, restart and settings response was handing it back, where it
  * lands in a browser cache, a screenshot, or a pasted bug report.
  */
+/**
+ * Record the display name a creation request carried, once the instance exists, and hand back
+ * the instance as the panel will see it. Four creation paths share this rather than each
+ * learning about labels.
+ */
+function labelled(name, raw) {
+  const label = cleanLabel(raw)
+  if (label && label !== name) registry.updateInstance(name, { label })
+  return supervisor.statusOf(name)
+}
+
 function safeInstance(row) {
   const { rcon, ...safe } = row
   // Whether anyone can join as any name is a property of the server, not of the registry, so it is
@@ -1136,17 +1149,23 @@ async function route(req, res) {
   // out of the directory's own server.properties.
   if (seg[1] === 'instances' && seg[2] === 'adopt' && req.method === 'POST') {
     const body = await readBody(req)
+    // A label alone is enough: the name - the folder, the registry key - is derived from it, and
+    // made unique if the obvious one is taken. The panel derives it too, so the person sees it.
+    if (!body.name && body.label) body.name = registry.freeName(slugFor(String(body.label)))
     if (!body.name) return json(res, 400, { error: 'name is required' })
     if (!body.dir) return json(res, 400, { error: 'a server folder is required' })
     const inst = await create.adoptInstance(String(body.name), String(body.dir), {
       jar: body.jar ? String(body.jar) : null,
       memory: body.memory ? String(body.memory) : '4G',
     })
-    return json(res, 200, safeInstance(inst))
+    return json(res, 200, safeInstance(labelled(inst.name, body.label)))
   }
 
   if (seg[1] === 'instances' && req.method === 'POST' && seg.length === 2) {
     const body = await readBody(req)
+    // A label alone is enough: the name - the folder, the registry key - is derived from it, and
+    // made unique if the obvious one is taken. The panel derives it too, so the person sees it.
+    if (!body.name && body.label) body.name = registry.freeName(slugFor(String(body.label)))
     if (!body.name) return json(res, 400, { error: 'name is required' })
     const jobId = body.jobId ? String(body.jobId) : null
     try {
@@ -1161,7 +1180,7 @@ async function route(req, res) {
           onProgress: ({ message, percent }) => jobUpdate(jobId, { stage: 'pack', message, percent: percent ?? null }),
         })
         jobUpdate(jobId, { stage: 'done', percent: 100, message: `Created ${result.name}`, done: true })
-        return json(res, 200, { ...safeInstance(supervisor.statusOf(String(body.name))), pack: result })
+        return json(res, 200, { ...safeInstance(labelled(String(body.name), body.label)), pack: result })
       }
       // NeoForge is its own creation path too: installer-laid, starter-jar launched, and the
       // whole build-or-tear-down flow lives in neoforge.createServer.
@@ -1180,7 +1199,7 @@ async function route(req, res) {
           onProgress: ({ message, percent }) => jobUpdate(jobId, { stage: 'neoforge', message, percent: percent ?? null }),
         })
         jobUpdate(jobId, { stage: 'done', percent: 100, message: `Created ${result.name}`, done: true })
-        return json(res, 200, safeInstance(supervisor.statusOf(String(body.name))))
+        return json(res, 200, safeInstance(labelled(String(body.name), body.label)))
       }
       // Every jar-shaped kind - Paper, Purpur, Folia, ASP, vanilla, Spigot, CraftBukkit, Fabric -
       // takes the same road: resolve the version, fetch or build the jar into the store, place
@@ -1232,7 +1251,7 @@ async function route(req, res) {
         acceptEula: true,
       })
       jobUpdate(jobId, { stage: 'done', percent: 100, message: `Created ${inst.name}`, done: true })
-      return json(res, 200, safeInstance(inst))
+      return json(res, 200, safeInstance(labelled(inst.name, body.label)))
     } catch (err) {
       // The POST answers with the error too; the job carries it as well so a page that is watching
       // the stream shows the failure at the step it happened on rather than a bare rejected fetch.
@@ -1379,6 +1398,8 @@ async function route(req, res) {
       patch.java = bin
     }
     if (Object.hasOwn(body, 'autoRestart')) patch.autoRestart = body.autoRestart === true
+    // Empty clears it, and the panel falls back to the name.
+    if (Object.hasOwn(body, 'label')) patch.label = cleanLabel(body.label)
     if (Object.hasOwn(body, 'webhook')) {
       const url = String(body.webhook ?? '').trim()
       if (url && !acceptableWebhook(url)) {

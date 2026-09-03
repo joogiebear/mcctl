@@ -46,6 +46,15 @@ hesitating. Use `execFile`/`spawn` and `fs.promises` there; `run/panel.log` reco
 every time the loop was held for more than a quarter of a second, so a regression is
 visible.
 
+## Where things go
+
+- A bug: [an issue](https://github.com/joogiebear/mcctl/issues/new?template=bug_report.md),
+  ideally through the app's **Feedback → Something broke**, which fills in the diagnostics.
+- A question: [Q&A](https://github.com/joogiebear/mcctl/discussions/categories/q-a) in
+  Discussions, so the answer stays findable.
+- An idea: [Ideas](https://github.com/joogiebear/mcctl/discussions/categories/ideas). Say what
+  you were trying to do, not only what to add.
+
 ## Branches
 
 Two long-lived branches:
@@ -65,8 +74,11 @@ gets built and tried by hand first; the release is the gate.
   `docs:`, …), imperative mood, lowercase subject. Name a commit for the reason it
   exists, not its largest diff.
 - One reason per PR. Small and focused merges fast; sprawling sits.
-- CI must be green, and **every merge is reviewed and approved by the maintainer** —
-  that is enforced by branch protection, not just etiquette.
+- CI must be green on both runners before anything merges into `main`; branch
+  protection enforces that. Outside contributions are reviewed by the maintainer
+  before they merge, as etiquette rather than a rule the repository enforces, so
+  that the maintainer's own release merges do not need a second account to approve
+  them.
 - By contributing you agree your work is licensed under the repository's
   [MIT license](LICENSE).
 
