@@ -46,6 +46,14 @@ test('exporting writes the console beside the snapshots and reports where it wen
   assert.ok(out.sizeHuman.endsWith('B'), `sizeHuman was ${out.sizeHuman}`)
 })
 
+test('exporting keeps the file byte for byte, carriage returns included', () => {
+  const text = 'line one\r\nline two\r\n'
+  const f = fixture(text)
+  const out = exportConsole(f.inst, { sourceFile: f.sourceFile, outDir: f.outDir })
+  assert.equal(fs.readFileSync(out.file, 'utf8'), text)
+  assert.equal(out.lines, 2)
+})
+
 test('exporting a server that has never run says so instead of writing an empty file', () => {
   const f = fixture(null)
   assert.throws(() => exportConsole(f.inst, { sourceFile: f.sourceFile, outDir: f.outDir }), UserError)
@@ -63,6 +71,19 @@ test('a log inside both limits goes up whole', () => {
   assert.equal(out.content, text)
   assert.equal(out.lines, 3)
   assert.equal(out.trimmed, false)
+})
+
+test('a Windows console goes up with Unix line endings, because mclo.gs keeps a stray carriage return inside the line', () => {
+  const out = trimForUpload('line one\r\nline two\r\nline three\r\n')
+  assert.equal(out.content, 'line one\nline two\nline three\n')
+  assert.equal(out.lines, 3)
+  assert.equal(out.trimmed, false)
+})
+
+test('a lone carriage return is a line break too, not a character inside the line', () => {
+  const out = trimForUpload('one\rtwo\r')
+  assert.equal(out.content, 'one\ntwo\n')
+  assert.equal(out.lines, 2)
 })
 
 test('too many lines keeps the tail, because the crash is at the end', () => {

@@ -27,7 +27,7 @@ function splitLines(text) {
 }
 
 export function trimForUpload(text) {
-  const { parts, trailing } = splitLines(text)
+  const { parts, trailing } = splitLines(text.replace(/\r\n?/g, '\n'))
   const join = (lines) => lines.join('\n') + (trailing ? '\n' : '')
 
   let kept = parts
