@@ -34,7 +34,7 @@ import * as java from './src/java.mjs'
 import * as schedule from './src/schedule.mjs'
 import * as paths from './src/paths.mjs'
 import { readProps, writeProps } from './src/props.mjs'
-import { UserError, fail, table, humanBytes, humanDuration, dirSize, isPortFree, sleep } from './src/util.mjs'
+import { UserError, fail, table, humanBytes, humanDuration, dirSize, isPortFree, sleep, cleanLabel } from './src/util.mjs'
 import { parseArgs } from './src/args.mjs'
 
 const out = (msg = '') => process.stdout.write(`${msg}\n`)
@@ -87,6 +87,7 @@ function cmdStatus(positional) {
   const props = readProps(path.join(st.dir, 'server.properties'))
   const rows = [
     ['instance', st.name],
+    ['label', st.label ?? '(none)'],
     ['status', STATUS_LABEL[st.status] ?? st.status],
     ['directory', st.dir],
     ['jar', st.jar],
@@ -502,6 +503,10 @@ function cmdSet(positional) {
       case 'memory':
         patch.memory = value
         break
+      // What the panel calls it. Anything goes here; the name stays the folder and the argument.
+      case 'label':
+        patch.label = value.toLowerCase() === 'off' ? null : cleanLabel(value)
+        break
       case 'java':
         patch.java = value
         break
@@ -534,7 +539,7 @@ function cmdSet(positional) {
         }
         break
       default:
-        fail(`unknown setting "${key}" - one of: memory, java, jar, port, rcon.port, rcon.password, auto-restart, webhook`)
+        fail(`unknown setting "${key}" - one of: label, memory, java, jar, port, rcon.port, rcon.password, auto-restart, webhook`)
     }
   }
   // Before the registry, not after. An instance runs the jar in its own directory, and recording a
