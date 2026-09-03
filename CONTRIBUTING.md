@@ -77,3 +77,13 @@ signing profile, from `main` after `dev` has been merged into it. CI runs tests;
 does not build installers. To try a build before it is released, run
 `npx electron-builder --publish never` in `desktop/` on `dev` and install the result
 by hand; it never touches GitHub.
+
+### Betas
+
+A version with a prerelease part, such as `0.10.0-beta.1`, is built and published from
+`dev` with the same two scripts as a release, and `release:publish` marks it a GitHub
+pre-release rather than latest. The two kinds of install sort themselves out: a stable
+install asks GitHub for the latest release, which leaves pre-releases out, so nobody on
+0.9.1 is offered a beta. An install that is itself a beta accepts newer betas and newer
+stable releases alike, so it follows each beta and then moves to the stable release when
+that is published. Install the first beta by hand; the rest arrive through the app.

@@ -136,6 +136,16 @@ if (footer) {
   }
 }
 
-gh(['release', 'edit', TAG, '--repo', REPO, '--draft=false', '--latest'])
-process.stdout.write(`\n${TAG} is now published and marked latest.\n`)
+/*
+  A beta is published as a pre-release, never as latest.
+
+  The two kinds of install tell them apart on their own. A stable install asks GitHub for the
+  latest release, and GitHub leaves pre-releases out of that answer, so 0.9.1 users never hear
+  of 0.10.0-beta.1. An install whose own version carries a prerelease part accepts newer
+  pre-releases as well as newer stable ones, so a beta install follows each beta and then moves
+  to the stable release when it lands. Marking a beta "latest" would hand it to everyone.
+*/
+const beta = /-/.test(pkg.version)
+gh(['release', 'edit', TAG, '--repo', REPO, '--draft=false', beta ? '--prerelease' : '--latest'])
+process.stdout.write(`\n${TAG} is now published and marked ${beta ? 'a pre-release' : 'latest'}.\n`)
 process.stdout.write(`https://github.com/${REPO}/releases/tag/${TAG}\n`)
