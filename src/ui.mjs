@@ -25,6 +25,7 @@ import * as software from './software.mjs'
 import * as mrpack from './mrpack.mjs'
 import * as neoforge from './neoforge.mjs'
 import * as worlds from './worlds.mjs'
+import * as mclogs from './mclogs.mjs'
 import { diagnose, crashReports } from './diagnose.mjs'
 import { acceptableWebhook } from './notify.mjs'
 import { fail, refreshProcessTable, UserError, cleanLabel, slugFor } from './util.mjs'
@@ -595,6 +596,16 @@ async function handleUpgrade(req, res, name) {
     running: supervisor.isRunning(name),
   })
   return json(res, 200, { ...result, running: supervisor.isRunning(name) })
+}
+
+async function handleConsole(req, res, name, seg) {
+  const inst = registry.getInstance(name)
+  const verb = seg[4] ?? null
+  if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+
+  if (verb === 'export') return json(res, 200, mclogs.exportConsole(inst))
+  if (verb === 'share') return json(res, 200, await mclogs.shareConsole(inst))
+  return json(res, 404, { error: 'not found' })
 }
 
 /**
@@ -1295,6 +1306,7 @@ async function route(req, res) {
   if (seg[3] === 'upgrade') return handleUpgrade(req, res, name)
   if (seg[3] === 'pack') return handlePack(req, res, name)
   if (seg[3] === 'worlds') return handleWorlds(req, res, name, seg)
+  if (seg[3] === 'console') return handleConsole(req, res, name, seg)
 
   // What went wrong, in words: the known failure shapes found in this server's console,
   // plus the crash reports Minecraft itself wrote.

@@ -1188,6 +1188,42 @@
   .con-search svg { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--ink-3); }
   .con-count { font: var(--t-1)/1 var(--mono); color: var(--ink-3); white-space: nowrap; }
 
+  .menu-wrap { position: relative; display: inline-flex; }
+  #bExport .caret { color: var(--ink-3); margin-left: -2px; }
+  #bExport[aria-expanded="true"] { background: var(--hover); border-color: var(--edge); }
+  .menu {
+    position: absolute;
+    top: calc(100% + var(--s-1));
+    right: 0;
+    z-index: 20;
+    min-width: 260px;
+    display: grid;
+    gap: 2px;
+    padding: var(--s-1);
+    background: var(--raised);
+    border: 1px solid var(--edge);
+    border-radius: var(--r);
+    box-shadow: var(--lift-strong), 0 12px 28px rgba(0, 0, 0, .45);
+  }
+  .menu button {
+    display: grid;
+    gap: 1px;
+    justify-items: start;
+    text-align: left;
+    width: 100%;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    padding: var(--s-2) var(--s-3);
+    border-radius: var(--r-sm);
+    white-space: normal;
+  }
+  .menu button b { font-weight: 600; }
+  .menu button span { font-size: var(--t-2); color: var(--ink-3); }
+  .menu button:hover, .menu button:focus-visible { background: var(--hover); }
+  .menu button:hover span, .menu button:focus-visible span { color: var(--ink-2); }
+  .menu button[disabled] { opacity: .5; }
+
   /* A grid, not a block with a percentage height inside it. The toolbar and the log share this
      box, so `height: 100%` on the log meant "as tall as the toolbar AND the log", and the console
      grew straight through the command bar below it. Only visible once the window was small enough
@@ -1464,6 +1500,7 @@
   <symbol id="i-restart" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.8-3.85"/><path d="M13 2v3h-3"/></symbol>
   <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4h4.5l1.5 2H14v7H2z"/></symbol>
   <symbol id="i-dots" viewBox="0 0 16 16"><path d="M3.25 8h.5M7.75 8h.5M12.25 8h.5" stroke-width="2.5"/></symbol>
+  <symbol id="i-caret" viewBox="0 0 16 16"><path d="M4 6.5 8 10.5l4-4"/></symbol>
 
   <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
   <symbol id="i-panel" viewBox="0 0 16 16"><path d="M2.5 3h11v10h-11z"/><path d="M6 3v10"/></symbol>
@@ -1589,6 +1626,19 @@
           <button id="bNums" aria-pressed="false">Line Numbers</button>
           <button id="bCopy">Copy</button>
           <button id="bClear">Clear</button>
+          <span class="menu-wrap">
+            <button id="bExport" aria-haspopup="menu" aria-expanded="false" aria-controls="exportMenu">Export<svg class="ico caret" aria-hidden="true" focusable="false"><use href="#i-caret"/></svg></button>
+            <div class="menu" id="exportMenu" role="menu" aria-labelledby="bExport" hidden>
+              <button role="menuitem" id="miExportFile" tabindex="-1">
+                <b>Save to a .log file</b>
+                <span>Keeps a copy beside this server's snapshots.</span>
+              </button>
+              <button role="menuitem" id="miExportShare" tabindex="-1">
+                <b>Upload to mclo.gs</b>
+                <span>Publishes a shareable link and opens it.</span>
+              </button>
+            </div>
+          </span>
           <span class="grow"></span>
           <span class="con-count" id="conCount"></span>
         </div>
@@ -2900,6 +2950,103 @@ $('#bClear').onclick = () => {
   state.atBottom = true;
   renderLog();
   toast('Console view cleared. The log file on disk is untouched.');
+};
+
+let exportMenuOpen = false;
+
+function exportItems() {
+  return [$('#miExportFile'), $('#miExportShare')];
+}
+
+function closeExportMenu({ refocus = false } = {}) {
+  if (!exportMenuOpen) return;
+  exportMenuOpen = false;
+  $('#exportMenu').hidden = true;
+  $('#bExport').setAttribute('aria-expanded', 'false');
+  if (refocus) $('#bExport').focus();
+}
+
+function openExportMenu() {
+  if (exportMenuOpen) return;
+  exportMenuOpen = true;
+  $('#exportMenu').hidden = false;
+  $('#bExport').setAttribute('aria-expanded', 'true');
+  exportItems()[0].focus();
+}
+
+$('#bExport').onclick = () => { exportMenuOpen ? closeExportMenu({ refocus: true }) : openExportMenu(); };
+
+$('.menu-wrap').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && exportMenuOpen) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeExportMenu({ refocus: true });
+    return;
+  }
+  if (!exportMenuOpen) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); openExportMenu(); }
+    return;
+  }
+  const items = exportItems();
+  const at = items.indexOf(document.activeElement);
+  if (e.key === 'ArrowDown') { e.preventDefault(); items[(at + 1 + items.length) % items.length].focus(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); items[(at - 1 + items.length) % items.length].focus(); }
+  else if (e.key === 'Home') { e.preventDefault(); items[0].focus(); }
+  else if (e.key === 'End') { e.preventDefault(); items[items.length - 1].focus(); }
+  else if (e.key === 'Tab') closeExportMenu();
+});
+
+$('.menu-wrap').addEventListener('focusout', (e) => {
+  if (!$('.menu-wrap').contains(e.relatedTarget)) closeExportMenu();
+});
+
+document.addEventListener('pointerdown', (e) => {
+  if (exportMenuOpen && !$('.menu-wrap').contains(e.target)) closeExportMenu();
+});
+
+function consolePath(verb) {
+  return '/instances/' + encodeURIComponent(state.current) + '/console/' + verb;
+}
+
+$('#miExportFile').onclick = async () => {
+  closeExportMenu({ refocus: true });
+  if (!state.current) { toast('Select a server first.', 'bad'); return; }
+  const note = toast('Saving the console…');
+  try {
+    const out = await post(consolePath('export'));
+    note.remove();
+    toast('Exported ' + out.lines.toLocaleString() + (out.lines === 1 ? ' line' : ' lines')
+      + ' to ' + out.file + ' (' + out.sizeHuman + ').', 'good');
+  } catch (err) {
+    note.remove();
+    toast(err.message, 'bad');
+  }
+};
+
+$('#miExportShare').onclick = async () => {
+  closeExportMenu({ refocus: true });
+  if (!state.current) { toast('Select a server first.', 'bad'); return; }
+  const ok = await ask({
+    title: 'Upload this console to mclo.gs?',
+    text: 'The log is published at a public link that anyone holding it can read. mclo.gs removes '
+      + 'IP addresses, player names, authentication tokens and file paths on its side, and keeps '
+      + 'the log for 90 days. Read it over first if this server logs anything of its own. mcctl '
+      + 'saves the delete token so the log can be taken down later.',
+    confirmLabel: 'Upload and open',
+  });
+  if (!ok) return;
+  const note = toast('Uploading to mclo.gs…');
+  try {
+    const out = await post(consolePath('share'));
+    note.remove();
+    openOutside(out.url);
+    toast(out.trimmed
+      ? 'Uploaded the last ' + out.lines.toLocaleString() + ' lines — ' + out.url
+      : 'Uploaded — ' + out.url, 'good');
+  } catch (err) {
+    note.remove();
+    toast(err.message, 'bad');
+  }
 };
 
 $('#log').addEventListener('scroll', () => {
