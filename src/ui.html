@@ -521,6 +521,12 @@
   .unit input, .unit select { width: auto; }
   .field > label { font: 600 var(--t-1)/1 var(--ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); }
   .field > label code { font: 600 var(--t-1)/1 var(--mono); text-transform: none; letter-spacing: 0; color: var(--ink); }
+  /* The name to type, as a button: one click puts it in the box. Looks like the code it was, with
+     a dotted underline as the only tell that it does something. */
+  .field > label button.fill { all: unset; font: 600 var(--t-1)/1 var(--mono); text-transform: none; letter-spacing: 0; color: var(--ink); cursor: pointer;
+    text-decoration: underline dotted; text-underline-offset: 3px; border-radius: 3px; padding: 0 2px; margin: 0 -2px; }
+  .field > label button.fill:hover { background: var(--hover); }
+  .field > label button.fill:focus-visible { outline: 2px solid var(--lapis); outline-offset: 1px; }
   .hint { font-size: var(--t-2); color: var(--ink-3); line-height: 1.45; }
   .bad { font-size: var(--t-2); color: var(--fault); }
   .row { display: flex; gap: 8px; align-items: center; }
@@ -2001,9 +2007,10 @@ function toast(message, kind) {
  *
  * Replaces prompt() and confirm(), which were doing two jobs badly: prompt() is not implemented in
  * Electron at all, and confirm() was carrying a semantic choice through OK/Cancel ("OK = keep
- * plugins, Cancel = wipe them"), which nobody reads correctly under pressure. The typing friction
- * is kept on purpose - it is the moment you actually read which server this is - but it is now one
- * dialog with named options instead of two guesses in a row.
+ * plugins, Cancel = wipe them"), which nobody reads correctly under pressure. Confirming by name
+ * is kept - it is the moment you actually read which server this is - but the name can be clicked
+ * into the box rather than typed, and it is one dialog with named options instead of two guesses
+ * in a row.
  */
 // One <dialog> serves every prompt, so a dialog that opens another one has to be careful about
 // whose events it is hearing. See the note on `cancel` below.
@@ -2045,8 +2052,19 @@ function ask(opts) {
   typeBox.placeholder = opts.input ? (opts.input.placeholder || '') : '';
   const typeLabel = $('#dlgTypeLabel');
   if (opts.typeToConfirm) {
-    const name = document.createElement('code');
+    // The name is a button. Typing it was the moment you read which server this is; clicking it
+    // is the same moment with less to get wrong, and a name like "Survival-Season-3-2" is more
+    // often mistyped than misread. The box is still there for anyone who prefers to type.
+    const name = document.createElement('button');
+    name.type = 'button';
+    name.className = 'fill';
+    name.title = 'Click to fill it in';
     name.textContent = opts.typeToConfirm;
+    name.onclick = () => {
+      typeBox.value = opts.typeToConfirm;
+      typeBox.dispatchEvent(new Event('input'));
+      typeBox.focus();
+    };
     typeLabel.replaceChildren('Type ', name, ' to confirm');
   } else if (opts.input) typeLabel.textContent = opts.input.label || '';
 
