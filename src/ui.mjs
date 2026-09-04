@@ -191,8 +191,8 @@ async function diagnostics(instanceName, { short = false } = {}) {
   const lines = []
   const add = (k, v) => lines.push(`${k}: ${v}`)
   const version = packageInfo().version ?? 'unknown'
-  lines.push('== mcctl diagnostics ==')
-  add('mcctl', version)
+  lines.push('== SpawnLoft diagnostics ==')
+  add('SpawnLoft', version)
   add('node', process.version + (process.versions.electron ? ` (electron ${process.versions.electron})` : ''))
   add('os', `${process.platform} ${os.release()} ${os.arch()}, ${os.cpus().length} cores, ${Math.round(os.totalmem() / 1073741824)} GB`)
   add('generated', new Date().toISOString())
@@ -1061,7 +1061,7 @@ async function route(req, res) {
       }
       const dir = path.resolve(raw)
       const writable = settings.checkWritable(dir)
-      if (!writable.ok) return json(res, 400, { error: `mcctl cannot write to ${dir}: ${writable.error}` })
+      if (!writable.ok) return json(res, 400, { error: `SpawnLoft cannot write to ${dir}: ${writable.error}` })
       settings.save({ backupsMirrorDir: dir })
       return json(res, 200, { backupsMirrorDir: dir })
     }
@@ -1076,7 +1076,7 @@ async function route(req, res) {
     }
     const dir = path.resolve(raw)
     const writable = settings.checkWritable(dir)
-    if (!writable.ok) return json(res, 400, { error: `mcctl cannot write to ${dir}: ${writable.error}` })
+    if (!writable.ok) return json(res, 400, { error: `SpawnLoft cannot write to ${dir}: ${writable.error}` })
     settings.save({ backupsDir: dir })
     return json(res, 200, { backupsDir: dir, restartRequired: dir !== LAYOUT.backupsDir })
   }

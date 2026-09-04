@@ -8,7 +8,7 @@ export const MAX_LINES = 25000
 export const MAX_BYTES = 10 * 1024 * 1024
 
 const UPLOAD_URL = 'https://api.mclo.gs/1/log'
-const UA = 'mcctl (github.com/joogiebear/mcctl)'
+const UA = 'SpawnLoft (github.com/joogiebear/mcctl)'
 
 function readConsole(sourceFile) {
   if (!fs.existsSync(sourceFile)) {

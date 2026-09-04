@@ -224,7 +224,7 @@ function findPlayer(inst, uuid) {
 function requireName(who, verb) {
   if (who.name) return who.name
   fail(
-    `mcctl does not know the name behind ${who.uuid}, and ${verb} needs one. Offline-mode ids are `
+    `SpawnLoft does not know the name behind ${who.uuid}, and ${verb} needs one. Offline-mode ids are `
       + 'made by hashing a name, so they cannot be turned back into one - have the player join '
       + 'once while the server is running, or type the name in yourself.',
   )

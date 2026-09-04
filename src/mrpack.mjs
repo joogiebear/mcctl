@@ -43,7 +43,7 @@ export function parseIndex(index) {
   if (!mc) fail('the pack names no Minecraft version')
   for (const other of ['forge', 'quilt-loader']) {
     if (deps[other]) {
-      fail(`this pack is built for ${other.replace('-loader', '')}, which mcctl cannot run - Fabric and NeoForge packs only`)
+      fail(`this pack is built for ${other.replace('-loader', '')}, which SpawnLoft cannot run - Fabric and NeoForge packs only`)
     }
   }
   const loader = deps['fabric-loader']
@@ -51,7 +51,7 @@ export function parseIndex(index) {
     : deps.neoforge
       ? { kind: 'neoforge', version: deps.neoforge }
       : null
-  if (!loader) fail('the pack names no loader mcctl can run (Fabric or NeoForge)')
+  if (!loader) fail('the pack names no loader SpawnLoft can run (Fabric or NeoForge)')
 
   const files = index.files
     .filter((f) => f.env?.server !== 'unsupported')
@@ -111,7 +111,7 @@ async function resolvePackVersion(projectId) {
   const RUNNABLE = ['fabric', 'neoforge']
   const versions = await modrinthRequest(`/project/${encodeURIComponent(projectId)}/version?${new URLSearchParams({ loaders: JSON.stringify(RUNNABLE) })}`)
   const version = pickVersion(versions, { loaders: RUNNABLE })
-  if (!version) fail('that pack has no Fabric or NeoForge release mcctl can install')
+  if (!version) fail('that pack has no Fabric or NeoForge release SpawnLoft can install')
   const packFile = primaryFile(version)
   if (!packFile) fail('that pack version has no downloadable file')
   return { version, packFile }

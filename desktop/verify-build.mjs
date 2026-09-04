@@ -33,7 +33,7 @@ const UNPACKED = args[0] ? path.resolve(args[0]) : path.join(HERE, 'dist', 'win-
 // The afterPack hook runs BEFORE electron-builder applies the icon, so it asks for the structural
 // checks only. Run on a finished build, everything is checked.
 const STRUCTURE_ONLY = process.argv.includes('--structure-only')
-const EXE = path.join(UNPACKED, 'mcctl.exe')
+const EXE = path.join(UNPACKED, 'SpawnLoft.exe')
 const ICO = path.join(HERE, 'build', 'icon.ico')
 
 const problems = []
@@ -67,14 +67,14 @@ if (STRUCTURE_ONLY) {
   const missing = icoFrames(ICO).filter((f) => !exe.includes(f.bytes)).map((f) => f.label)
   if (missing.length) {
     problems.push(
-      `the app icon did not reach mcctl.exe (missing ${missing.join(', ')}).\n` +
+      `the app icon did not reach SpawnLoft.exe (missing ${missing.join(', ')}).\n` +
         `    electron-builder applies it with rcedit from its winCodeSign toolchain. If that\n` +
         `    toolchain failed to extract - the usual cause is Windows refusing to create the\n` +
         `    symlinks in its unused macOS files - the build carries on and ships Electron's\n` +
         `    default icon. See desktop/build/README.md.`,
     )
   } else {
-    notes.push('icon: all sizes present in mcctl.exe')
+    notes.push('icon: all sizes present in SpawnLoft.exe')
   }
 }
 
@@ -175,7 +175,7 @@ if (!STRUCTURE_ONLY && fs.existsSync(EXE)) {
   } else {
     const res = checkSignature(EXE)
     if (res.ok) notes.push(`signing: valid and timestamped, published as "${res.publisher}"`)
-    else problems.push(`mcctl.exe is configured to be signed but ${res.why}.`)
+    else problems.push(`SpawnLoft.exe is configured to be signed but ${res.why}.`)
   }
 }
 

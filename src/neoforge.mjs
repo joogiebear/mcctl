@@ -23,7 +23,7 @@ import { fail, UserError, humanBytes } from './util.mjs'
 
 const MAVEN = 'https://maven.neoforged.net'
 const API = `${MAVEN}/api/maven/versions/releases/net/neoforged/neoforge`
-const HEADERS = { 'User-Agent': 'mcctl (github.com/joogiebear/mcctl)' }
+const HEADERS = { 'User-Agent': 'SpawnLoft (github.com/joogiebear/mcctl)' }
 
 /** The Minecraft version a NeoForge version is built for. Exported pure for its tests. */
 export function mcOf(neoVersion) {

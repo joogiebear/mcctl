@@ -13,7 +13,7 @@ import { pipeline } from 'node:stream/promises'
 
 import { fail, humanBytes } from './util.mjs'
 
-const UA = 'mcctl (github.com/joogiebear/mcctl)'
+const UA = 'SpawnLoft (github.com/joogiebear/mcctl)'
 
 export async function fetchJson(url, { label = url } = {}) {
   let res

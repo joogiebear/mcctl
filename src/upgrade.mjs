@@ -62,7 +62,7 @@ export async function applyUpgrade(name, { version = null, build = null, running
   const current = parsePaperJar(inst.jar)
   const target = version ?? current?.version
   if (!target) {
-    fail(`"${inst.jar}" is not a Paper jar mcctl can reason about - name a version: upgrade ${name} --version <v>`)
+    fail(`"${inst.jar}" is not a Paper jar SpawnLoft can reason about - name a version: upgrade ${name} --version <v>`)
   }
   const crossVersion = Boolean(current && target !== current.version)
 

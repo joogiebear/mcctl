@@ -116,18 +116,18 @@ export function writeLaunchers(inst) {
     // Starts, then attaches - so a double-click gives you a running server AND its console, which is
     // what "start the server" means to anyone not thinking about daemons.
     'start.bat': `@echo off
-${rt.prelude}title ${inst.name} - mcctl
+${rt.prelude}title ${inst.name} - SpawnLoft
 ${run} start ${inst.name}
 if errorlevel 1 (echo.& echo Failed to start. & pause & exit /b 1)
 ${run} console ${inst.name}
 `,
     'console.bat': `@echo off
-${rt.prelude}title ${inst.name} console - mcctl
+${rt.prelude}title ${inst.name} console - SpawnLoft
 ${run} console ${inst.name}
 pause
 `,
     'stop.bat': `@echo off
-${rt.prelude}title ${inst.name} - mcctl
+${rt.prelude}title ${inst.name} - SpawnLoft
 ${run} stop ${inst.name}
 pause
 `,
@@ -278,7 +278,7 @@ export async function newInstance(
       out on sight. Offline is still one toggle away for multi-account or no-internet testing.
     */
     'online-mode': onlineMode === false ? 'false' : 'true',
-    'motd': motd ?? `${name} (mcctl)`,
+    'motd': motd ?? `${name} (SpawnLoft)`,
     'max-players': '10',
     'spawn-protection': '0',
   }
@@ -287,7 +287,7 @@ export async function newInstance(
   if (acceptEula) {
     fs.writeFileSync(
       path.join(dir, 'eula.txt'),
-      `# Accepted via mcctl on ${new Date().toISOString()}\n` +
+      `# Accepted via SpawnLoft on ${new Date().toISOString()}\n` +
         `# https://aka.ms/MinecraftEULA\neula=true\n`,
     )
   }

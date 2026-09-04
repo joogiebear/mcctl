@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="color-scheme" content="dark">
-<title>mcctl</title>
+<title>SpawnLoft</title>
 
 <style>
   /* ==========================================================================
@@ -1529,7 +1529,7 @@
       <polygon points="56,20 32,32 32,54 56,42" fill="#24357a"/>
       <polygon points="51.2,29.0 35.4,36.9 35.4,42.6 51.2,34.7" fill="#cfe0ff"/>
     </svg>
-    <b>mcctl</b>
+    <b>SpawnLoft</b>
   </span>
   <span class="rootchip" id="rootChip" hidden></span>
   <span class="grow"></span>
@@ -1566,7 +1566,7 @@
       </svg>
       <h1 id="emptyTitle">No servers yet</h1>
       <p class="lede" id="emptyLede">
-        mcctl runs Minecraft servers on this machine — start them, watch the console, send
+        SpawnLoft runs Minecraft servers on this machine — start them, watch the console, send
         commands, and reset a world without going near a terminal.
       </p>
       <div class="doors" id="emptyDoors">
@@ -1576,7 +1576,7 @@
         </button>
         <button class="door" id="dAdopt">
           <b>Add one you already have</b>
-          <span>Points mcctl at a server folder on this machine. Nothing is moved or rewritten.</span>
+          <span>Points SpawnLoft at a server folder on this machine. Nothing is moved or rewritten.</span>
         </button>
       </div>
     </div>
@@ -1817,7 +1817,7 @@
         </div>
         <div class="row" style="align-items:flex-start">
           <div class="field" style="flex:2">
-            <label for="aName">Name in mcctl</label>
+            <label for="aName">Name in SpawnLoft</label>
             <input id="aName" autocomplete="off" placeholder="Survival" maxlength="48">
             <div class="hint">The console and commands use <code id="aNameSlug">—</code></div>
             <div class="bad" id="aNameBad"></div>
@@ -1844,7 +1844,7 @@
       </div>
       <div class="sheet-body wide">
         <p class="hint" style="margin:0">
-          mcctl is in beta and reports are read. Every door opens GitHub in your browser; nothing
+          SpawnLoft is in beta and reports are read. Every door opens GitHub in your browser; nothing
           is sent from here on its own.
         </p>
         <div class="doors">
@@ -1879,7 +1879,7 @@
       </div>
       <div class="sheet-body wide">
         <div>
-          <h2>Where mcctl keeps things</h2>
+          <h2>Where SpawnLoft keeps things</h2>
           <p class="hint" style="margin:0 0 12px">
             Servers that already exist keep their own folders — the registry stores absolute paths,
             so changing this only affects servers created from now on.
@@ -2243,9 +2243,9 @@ const STATE_TEXT = {
 // The states nobody can be expected to know the meaning of. Saying it here beats a support
 // question, and each one names its way out.
 const STATE_NOTE = {
-  orphaned: ['Orphaned', 'The Java process is still running but the supervisor that owned it is gone, so mcctl can no longer talk to it. Stop it with "mcctl kill" in a terminal, then start it again here.'],
+  orphaned: ['Orphaned', 'The Java process is still running but the supervisor that owned it is gone, so SpawnLoft can no longer talk to it. Stop it with "mcctl kill" in a terminal, then start it again here.'],
   stale: ['Stale state', 'A leftover state file from a session that did not shut down cleanly. Starting the server clears it.'],
-  unknown: ['Unavailable', 'mcctl could not read this server\u2019s state. Its folder may have been moved or deleted.'],
+  unknown: ['Unavailable', 'SpawnLoft could not read this server\u2019s state. Its folder may have been moved or deleted.'],
 };
 
 function duration(ms) {
@@ -2593,7 +2593,7 @@ function renderEmptyFor(rows) {
     $('#emptyDoors').hidden = true;
   } else {
     $('#emptyTitle').textContent = 'No servers yet';
-    $('#emptyLede').textContent = 'mcctl runs Minecraft servers on this machine — start them, watch the console, send commands, and reset a world without going near a terminal.';
+    $('#emptyLede').textContent = 'SpawnLoft runs Minecraft servers on this machine — start them, watch the console, send commands, and reset a world without going near a terminal.';
     $('#emptyDoors').hidden = false;
   }
 }
@@ -2618,7 +2618,7 @@ function lostContact(on) {
   bar.className = 'banner';
   bar.setAttribute('role', 'alert');
   const b = document.createElement('b');
-  b.textContent = 'Lost contact with mcctl.';
+  b.textContent = 'Lost contact with SpawnLoft.';
   const text = document.createElement('span');
   text.className = 'grow';
   text.textContent = ' The panel process has stopped or is not answering, so nothing shown here is current. '
@@ -3050,7 +3050,7 @@ $('#miExportShare').onclick = async () => {
     // deletion 90 days after the log was last opened - nothing about player names or paths.
     // mcctl takes the account name out of paths itself before sending; the rest goes as is.
     text: 'The log is published at a public link that anyone holding it can read. Before sending, '
-      + 'mcctl replaces your account name in file paths. mclo.gs removes IP addresses on its side, '
+      + 'SpawnLoft replaces your account name in file paths. mclo.gs removes IP addresses on its side, '
       + 'best effort, and deletes the log 90 days after it was last opened. Player names, plugin '
       + 'output and everything else stay in - read it over first. The delete token is kept in '
       + 'run/mclogs.json so the log can be taken down later.',
@@ -4035,7 +4035,7 @@ async function renderPlugins(opts) {
 
   const listTitle = document.createElement('h3');
   listTitle.className = 'hist-title';
-  listTitle.textContent = 'Installed through mcctl (' + managed.length + ')';
+  listTitle.textContent = 'Installed through SpawnLoft (' + managed.length + ')';
   const head = document.createElement('div');
   head.className = 'row where';
   const check = iconButton('restore', 'Check for updates');
@@ -4046,14 +4046,14 @@ async function renderPlugins(opts) {
 
   check.onclick = async () => {
     check.disabled = true;
-    checkNote.textContent = 'Asking ' + sources.replace(' or ', ' and ') + ' about everything mcctl installed…';
+    checkNote.textContent = 'Asking ' + sources.replace(' or ', ' and ') + ' about everything SpawnLoft installed…';
     try {
       const out = await post(base + '/updates');
       pluginView.updates = {};
       for (const u of out.updates) pluginView.updates[u.file] = u;
       checkNote.textContent = out.updates.length
         ? out.updates.length + ' update' + (out.updates.length === 1 ? '' : 's') + ' available.'
-        : 'Everything mcctl installed is already the newest build.';
+        : 'Everything SpawnLoft installed is already the newest build.';
       paint();
     } catch (e) {
       checkNote.textContent = '';
@@ -4070,7 +4070,7 @@ async function renderPlugins(opts) {
     listWrap.textContent = '';
     if (!managed.length) {
       listWrap.append(emptyState('plug', manualCount
-        ? 'Nothing installed through mcctl yet. Anything installed from the search above shows '
+        ? 'Nothing installed through SpawnLoft yet. Anything installed from the search above shows '
           + 'up here with one-click updates.'
         : 'No ' + data.kind + ' yet. Search ' + sources + ' above and they land in this server’s '
           + data.kind + ' folder.'));
@@ -4086,7 +4086,7 @@ async function renderPlugins(opts) {
       own.style.marginTop = '4px';
       own.textContent = manualCount + (manualCount === 1 ? ' jar' : ' jars')
         + ' in the ' + data.kind + ' folder ' + (manualCount === 1 ? 'was' : 'were')
-        + ' added by hand — custom or premium ' + data.kind + ' mcctl leaves alone. '
+        + ' added by hand — custom or premium ' + data.kind + ' SpawnLoft leaves alone. '
         + (manualCount === 1 ? 'It loads' : 'They load') + ' as normal.';
       listWrap.append(own);
     }
@@ -4803,7 +4803,7 @@ function taskCard(task, data, base, again, editor) {
     // the query failed - either way it is not going to run, and saying "Ready" would be a lie.
     state.textContent = 'Not in Windows';
     state.dataset.tone = 'bad';
-    state.title = 'mcctl has this task but Windows Task Scheduler does not. Edit it to put it back.';
+    state.title = 'SpawnLoft has this task but Windows Task Scheduler does not. Edit it to put it back.';
   } else {
     state.textContent = task.state || 'Ready';
     state.dataset.tone = task.state === 'Running' ? 'good' : '';
@@ -4975,7 +4975,7 @@ function sameSchedule(a, b) {
 async function changeBackupsLocation(current) {
   let chosen = null;
   if (desktop) {
-    chosen = await desktop.pickFolder('Where should mcctl keep backups?');
+    chosen = await desktop.pickFolder('Where should SpawnLoft keep backups?');
     if (!chosen) return;
   } else {
     const answer = await ask({
@@ -4996,10 +4996,10 @@ async function changeBackupsLocation(current) {
       return;
     }
     await ask({
-      title: 'Restart mcctl to use the new folder',
+      title: 'Restart SpawnLoft to use the new folder',
       text: 'New backups will be written to ' + out.backupsDir + '. The snapshots already taken '
         + 'stay where they are - nothing was moved or deleted - so this history will look empty '
-        + 'until the next backup runs. mcctl reads this path once at startup, so the change takes '
+        + 'until the next backup runs. SpawnLoft reads this path once at startup, so the change takes '
         + 'effect the next time it launches.',
       confirmLabel: 'Got it',
       tellOnly: true,
@@ -5486,7 +5486,7 @@ async function renderServerSettings() {
     const h = document.createElement('h3');
     h.textContent = 'If it crashes';
     const blurb = document.createElement('p');
-    blurb.textContent = 'What mcctl does when the server dies without being asked to.';
+    blurb.textContent = 'What SpawnLoft does when the server dies without being asked to.';
     head.append(mark, h, blurb);
     sup.append(head);
   }
@@ -5686,7 +5686,7 @@ async function renderServerSettings() {
     };
 
     if (!info.current) {
-      line('This jar is not a Paper build mcctl recognises, so it cannot offer updates for it.');
+      line('This jar is not a Paper build SpawnLoft recognises, so it cannot offer updates for it.');
       return;
     }
     if (info.buildUpdate) {
@@ -5850,7 +5850,7 @@ $('#bManage').onclick = async () => {
       : [
           { value: 'edit', label: 'Rename, or change memory and port', hint: 'Takes effect the next time it starts.' },
           { value: 'rebuild', label: 'Reset the world', hint: 'Deletes worlds and generated state. A snapshot is taken first.' },
-          { value: 'delete', label: 'Delete this server', hint: 'Removes it from mcctl, and optionally its files.' },
+          { value: 'delete', label: 'Delete this server', hint: 'Removes it from SpawnLoft, and optionally its files.' },
         ],
   });
   if (!res) return;
@@ -6001,7 +6001,7 @@ async function deleteServer(row) {
     danger: true,
     typeToConfirm: row.name,
     choices: [
-      { value: 'keep', label: 'Remove from mcctl, keep the files', hint: 'The folder stays where it is. You can add it again later.' },
+      { value: 'keep', label: 'Remove from SpawnLoft, keep the files', hint: 'The folder stays where it is. You can add it again later.' },
       { value: 'purge', label: 'Delete the files as well', hint: 'The whole server folder goes. A snapshot is taken first.' },
     ],
   });
@@ -6019,7 +6019,7 @@ async function deleteServer(row) {
     await refresh();
     toast(out.purged
       ? 'Deleted. Snapshot saved to ' + (out.snapshot || 'the backups folder') + '.'
-      : 'Removed from mcctl. The files are still in their folder.', 'good');
+      : 'Removed from SpawnLoft. The files are still in their folder.', 'good');
   } catch (e) {
     note.remove();
     toast(e.message, 'bad');
@@ -6449,11 +6449,11 @@ function renderSettings() {
     b.onclick = async () => {
       const go = await ask({
         title: 'Change the data folder?',
-        text: 'mcctl restarts to pick up the new location. Servers that already exist stay exactly where they are — only new ones land in the new folder, and anything running keeps running.',
+        text: 'SpawnLoft restarts to pick up the new location. Servers that already exist stay exactly where they are — only new ones land in the new folder, and anything running keeps running.',
         confirmLabel: 'Choose a folder',
       });
       if (!go) return;
-      const dir = await desktop.pickFolder('Choose where mcctl keeps its files');
+      const dir = await desktop.pickFolder('Choose where SpawnLoft keeps its files');
       if (!dir) return;
       const out = await desktop.saveSetup({ dataRoot: dir, instancesDir: null, separate: false });
       if (out && !out.ok) toast(out.error, 'bad');
@@ -6800,7 +6800,7 @@ if (desktop) {
       // someone guess whether updating will drop their running world.
       const go = await ask({
         title: 'Restart to install?',
-        text: 'Only this window restarts. Running servers keep running — mcctl supervises them as separate processes.',
+        text: 'Only this window restarts. Running servers keep running — SpawnLoft supervises them as separate processes.',
         confirmLabel: 'Restart and install',
       });
       if (go) await desktop.installUpdate();
