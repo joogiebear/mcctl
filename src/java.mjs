@@ -40,6 +40,13 @@ export function parseMajor(text) {
   return first
 }
 
+const PROBE_TIMEOUT_MS = 8000
+
+/** execFile's timeout kills the child and reports it as a signal, never as an exit code. */
+function timedOut(error) {
+  return Boolean(error && error.killed && error.code == null)
+}
+
 /**
  * Probe the Java on PATH, or a specific binary.
  *
@@ -49,10 +56,17 @@ export function parseMajor(text) {
  * to say its version.
  */
 export async function probe(bin = 'java') {
-  const res = await new Promise((resolve) => {
-    execFile(bin, ['-version'], { encoding: 'utf8', windowsHide: true, timeout: 8000 },
+  const run = () => new Promise((resolve) => {
+    execFile(bin, ['-version'], { encoding: 'utf8', windowsHide: true, timeout: PROBE_TIMEOUT_MS },
       (error, stdout, stderr) => resolve({ error, stdout, stderr }))
   })
+  let res = await run()
+  // A JVM that is slow to answer is not a JVM that is missing. Discovery starts every Java on the
+  // machine at once, and on a loaded box - CI running twenty test files, a laptop mid-update - one
+  // of them can take longer than the window just to print its version. Reporting that as "not
+  // installed" flipped the default Java between two calls made seconds apart. So a timeout gets
+  // one more try, on its own this time, before it counts against the binary.
+  if (timedOut(res.error)) res = await run()
   if (res.error) {
     // ENOENT is the common case by a mile, and "not installed" is more useful to read than the
     // error code for it. execFile puts an exit status in `code` too, as a number.
@@ -65,7 +79,9 @@ export async function probe(bin = 'java') {
       reason: missing ? 'not-installed' : 'unusable',
       message: missing
         ? 'Java is not installed, or not on PATH.'
-        : `Java could not be run: ${typeof res.error.code === 'number' ? `exit ${res.error.code}` : res.error.message}`,
+        : timedOut(res.error)
+          ? `Java did not answer within ${PROBE_TIMEOUT_MS / 1000} seconds, twice.`
+          : `Java could not be run: ${typeof res.error.code === 'number' ? `exit ${res.error.code}` : res.error.message}`,
     }
   }
 
