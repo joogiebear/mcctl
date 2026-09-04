@@ -79,6 +79,10 @@ gets built and tried by hand first; the release is the gate.
   before they merge, as etiquette rather than a rule the repository enforces, so
   that the maintainer's own release merges do not need a second account to approve
   them.
+- Outside contributions are squash-merged, so one PR is one commit on `dev`. A release
+  PR from `dev` to `main` is merged with a merge commit, never squashed: squashing
+  rewrites `dev`'s history into one commit, and `main` then has to be merged back into
+  `dev` after every release just to reconcile the two.
 - By contributing you agree your work is licensed under the repository's
   [MIT license](LICENSE).
 
