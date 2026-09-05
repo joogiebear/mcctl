@@ -81,7 +81,7 @@ async function ensureJava(inst, { force = false } = {}) {
   const fallback = found?.path ?? (await java.defaultJava())
   if (!fallback || fallback === 'java') {
     fail(`"${inst.name}" could not start: Java was not found on PATH or in the usual install folders.\n`
-      + `  Install it from ${java.DOWNLOAD_URL} - then restart mcctl, which reads PATH once at launch.`)
+      + `  Install it from ${java.DOWNLOAD_URL} - then restart SpawnLoft, which reads PATH once at launch.`)
   }
   return updateInstance(inst.name, { java: fallback })
 }

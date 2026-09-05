@@ -2,7 +2,8 @@
   "name": "mcctl-desktop",
   "version": "0.11.2",
   "private": true,
-  "description": "Desktop app for mcctl - a local Minecraft server dev platform",
+  "description": "SpawnLoft desktop app - Minecraft servers on your own PC, without the terminal",
+  "productName": "SpawnLoft",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -20,7 +21,7 @@
   },
   "build": {
     "appId": "io.github.joogiebear.mcctl",
-    "productName": "mcctl",
+    "productName": "SpawnLoft",
     "files": [
       "main.js",
       "preload.js",
@@ -67,8 +68,8 @@
       "installerHeaderIcon": "build/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "mcctl",
-      "artifactName": "mcctl-Setup-${version}.${ext}",
+      "shortcutName": "SpawnLoft",
+      "artifactName": "SpawnLoft-Setup-${version}.${ext}",
       "allowElevation": false
     },
     "publish": [

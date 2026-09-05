@@ -1,23 +1,26 @@
-# mcctl
+# SpawnLoft
 
-A local Minecraft server control plane for this machine. Manages multiple server
-instances with detached launch, captured console, RCON command/response, stdin
-injection, and snapshot/restore.
+Minecraft servers on your own PC, without the terminal. A local control plane for this machine:
+multiple server instances with detached launch, captured console, RCON command/response, stdin
+injection, and snapshot/restore. The site is [spawnloft.com](https://spawnloft.com).
+
+SpawnLoft is the product: the desktop app, the panel, the installer. `mcctl` is the command-line
+tool inside it, and the name of this repository, so commands, file names and links keep that name.
 
 Zero dependencies — plain Node 20+ and the `tar` that ships with Windows.
 
 ## What you need
 
 - **Java 25 or newer** for current Minecraft (26.x); 1.21.x runs on 21. This is the one thing
-  mcctl cannot supply: Minecraft servers *are* Java processes.
+  SpawnLoft cannot supply: Minecraft servers *are* Java processes.
   [Temurin 25](https://adoptium.net/temurin/releases/?version=25) is a good default, and a JDK
   rather than a JRE if you want Spigot or CraftBukkit built here.
   The desktop app checks for it on first run and the panel says so in a banner if it is missing;
-  `mcctl doctor` reports it from the command line. mcctl looks for Java on PATH **and** in the
+  `mcctl doctor` reports it from the command line. SpawnLoft looks for Java on PATH **and** in the
   usual install folders (Program Files, the per-user Programs folder, `JAVA_HOME`), so a Java that
-  the installer did not add to PATH, or one added after mcctl was already running, is still found
+  the installer did not add to PATH, or one added after SpawnLoft was already running, is still found
   and used. Each server can also be pointed at a specific Java with `mcctl set <name> java=<path>`.
-  mcctl knows which Java each Minecraft version needs (17 for 1.18 to 1.20.4, 21 for 1.20.5 and
+  SpawnLoft knows which Java each Minecraft version needs (17 for 1.18 to 1.20.4, 21 for 1.20.5 and
   1.21, 25 for 26.x) and picks the newest installed Java that fits when a server is created; a
   version nothing installed can run is refused before the download, with the download link.
   `--force` on `new` and `start` goes ahead anyway.
@@ -198,15 +201,15 @@ a scheduled `verify <name> --all` can be noticed by whatever runs it.
 `stop`, `start`. When: `--daily 03:00`, `--hourly <n>`, `--minutes <n>`,
 `--weekly SUN --at 03:00`, or `--on-logon`.
 
-Windows Task Scheduler runs these, so they happen whether or not mcctl is open.
+Windows Task Scheduler runs these, so they happen whether or not SpawnLoft is open.
 They run **interactive only**: while you are signed in, screen locked included,
 but not after you sign out. Running regardless would mean storing a Windows
 password in the task definition, which is not a thing to do quietly for a nightly
 backup.
 
-mcctl keeps the definitions in its own file and gives Windows only a trigger that
+SpawnLoft keeps the definitions in its own file and gives Windows only a trigger that
 calls back into `mcctl task run <id>`. Two reasons: what a task *does* stays inside
-mcctl, where it is constrained to the handful of things a task is allowed to be
+SpawnLoft, where it is constrained to the handful of things a task is allowed to be
 rather than an arbitrary command line; and editing a task does not mean recreating
 a Windows task.
 
@@ -266,7 +269,7 @@ and `kill` will clean it up.
 
 `instances.json` is the source of truth for ports and RCON. `start` pushes those
 values into `server.properties` before every launch, so hand-editing the file
-cannot silently desync an instance from what mcctl believes about it. Pass
+cannot silently desync an instance from what SpawnLoft believes about it. Pass
 `--no-sync` if you want the file left alone.
 
 ### Layout
@@ -319,12 +322,12 @@ This is built for **localhost and LAN only**.
 - Nothing here opens firewall ports or touches your router. Exposing a server to
   the internet is a deliberate, separate decision.
 - **Two things leave the machine, and only on a click.** *Feedback* opens GitHub in your browser
-  with a report drafted; nothing is sent by mcctl. *Console → Export → Upload to mclo.gs* posts the
+  with a report drafted; nothing is sent by SpawnLoft. *Console → Export → Upload to mclo.gs* posts the
   console log to [mclo.gs](https://mclo.gs), the log-sharing service plugin developers ask for,
-  after a dialog that says what is in it: mcctl replaces your account name in file paths first,
+  after a dialog that says what is in it: SpawnLoft replaces your account name in file paths first,
   mclo.gs removes IP addresses on its side (best effort, by its own policy) and deletes the log 90
   days after it was last opened, and everything else - player names, plugin output - goes as is.
-  The delete token comes back and is kept in `run/mclogs.json`. Everything else mcctl does stays
+  The delete token comes back and is kept in `run/mclogs.json`. Everything else SpawnLoft does stays
   on this machine.
 - **The panel cannot be bound to another address.** There is no `--host` flag, on purpose:
   the panel has no login, and a panel reachable from another machine is a server console
@@ -341,7 +344,7 @@ This is built for **localhost and LAN only**.
   what a first-party request looks like.
 - **Scheduled tasks are code that runs on a timer**, so what a task may be is an allowlist rather
   than a command string: back up, send a console command, restart, stop, start. Windows holds only
-  a trigger calling `mcctl task run <id>`; what that id means lives in mcctl's own file, and a value
+  a trigger calling `mcctl task run <id>`; what that id means lives in SpawnLoft's own file, and a value
   it does not recognise is refused rather than executed. Tasks run as the signed-in user, with no
   stored password and no elevation.
 - The page never receives an RCON password. Every route that returns an instance strips it first,
@@ -362,9 +365,9 @@ This is built for **localhost and LAN only**.
 ## The site
 
 The project page and the docs live in their own repository,
-[joogiebear/mcctl-site](https://github.com/joogiebear/mcctl-site): a VitePress site deployed by
-Vercel on every push. The banner artwork partner sites embed lives there too, under
-`public/banner/`.
+[joogiebear/mcctl-site](https://github.com/joogiebear/mcctl-site), served at
+[spawnloft.com](https://spawnloft.com): a VitePress site deployed by Vercel on every push. The
+banner artwork partner sites embed lives there too, under `public/banner/`.
 
 ## The panel
 
@@ -385,7 +388,7 @@ What it does:
 
 - **Servers** — a card each, with a status lamp, the port, the memory and a live uptime that ticks.
 - **Adding a server** — either create one, which downloads Paper and reports real progress, or point
-  mcctl at a folder you already have. Nothing is moved; existing ports and the RCON password are
+  SpawnLoft at a folder you already have. Nothing is moved; existing ports and the RCON password are
   read from that folder's own `server.properties`.
 - **Renaming, resetting and deleting** ask you to type the server's name. That friction is
   deliberate: a dialog that only says "are you sure" gets answered reflexively.
@@ -403,7 +406,7 @@ which is what makes "filter to errors" show the whole failure instead of its fir
 naming its source, filtered or checked against this server's version, with checksum-
 verified downloads, an update check, and one-click updates (a plugins-scope snapshot is
 taken first). Hangar projects that host their downloads elsewhere are linked to rather
-than pretended at. The page manages **only what mcctl installed** — it records
+than pretended at. The page manages **only what SpawnLoft installed** — it records
 provenance in the plugins folder — so a custom or premium plugin dropped in by hand is
 never listed there, never offered a meaningless update, and never has its hash sent to
 anyone. `mcctl plugins <name>` lists the full inventory, manual jars included, with a
@@ -429,7 +432,7 @@ version, Java, server status and panel log already in it, and puts the full diag
 clipboard for pasting under it. *A question* opens a new post in the project's
 [Q&A](https://github.com/joogiebear/mcctl/discussions/categories/q-a), and *An idea* one in
 [Ideas](https://github.com/joogiebear/mcctl/discussions/categories/ideas). Nothing is
-sent from mcctl on its own; the browser hop is the consent. A crash notice under a server's vitals
+sent from SpawnLoft on its own; the browser hop is the consent. A crash notice under a server's vitals
 has a **Report** link that does the same, named for the crash.
 
 **Settings → Copy diagnostics** puts a bug report's worth of facts on the clipboard: the version,
@@ -474,7 +477,7 @@ npm start -- --core ..     # develop against this checkout (or set MCCTL_CORE)
 ```
 
 The core runs **inside** the Electron process. Electron is already a Node runtime, so importing
-mcctl directly is what bundling means here: one process, no second Node to ship, and no orphaned
+SpawnLoft directly is what bundling means here: one process, no second Node to ship, and no orphaned
 child if the window dies.
 
 Closing the window does **not** stop your servers. They are detached daemons that do not belong to

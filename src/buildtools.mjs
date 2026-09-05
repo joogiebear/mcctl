@@ -47,7 +47,7 @@ export function parseVersionIndex(html) {
 export async function versions() {
   let res
   try {
-    res = await fetch(VERSIONS_URL, { headers: { 'User-Agent': 'mcctl (github.com/joogiebear/mcctl)' }, signal: AbortSignal.timeout(20000) })
+    res = await fetch(VERSIONS_URL, { headers: { 'User-Agent': 'SpawnLoft (github.com/joogiebear/mcctl)' }, signal: AbortSignal.timeout(20000) })
   } catch (err) {
     fail(`could not reach hub.spigotmc.org: ${err.cause?.message || err.message}`)
   }

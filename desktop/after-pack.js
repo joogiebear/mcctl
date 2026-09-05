@@ -104,7 +104,7 @@ exports.default = async function afterPack(context) {
       )
     } else if (!fs.existsSync(rcedit)) {
       throw new Error(
-        `rcedit is missing from ${rcedit}, so the app icon would not reach mcctl.exe and this ` +
+        `rcedit is missing from ${rcedit}, so the app icon would not reach SpawnLoft.exe and this ` +
           "build would ship Electron's default icon without failing. " +
           'See desktop/build/README.md. Nothing has been published.',
       )

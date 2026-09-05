@@ -238,15 +238,15 @@ export async function health() {
       others: all,
       message: all.length
         ? `Java ${all[0].major} was found at ${all[0].path}, but a Minecraft server needs ${MINIMUM_MAJOR} or newer.`
-        : 'Java is not installed, or is somewhere mcctl did not look.',
+        : 'Java is not installed, or is somewhere SpawnLoft did not look.',
     }
   }
   const viaPath = best.path === 'java'
   const state = await probe(best.path)
   const where = viaPath ? '' : ` at ${best.path}`
   const note = viaPath ? '' : (onPath.found
-    ? ` PATH points at Java ${onPath.major}; mcctl will use this one instead.`
-    : ' It is not on PATH; mcctl will use it anyway.')
+    ? ` PATH points at Java ${onPath.major}; SpawnLoft will use this one instead.`
+    : ' It is not on PATH; SpawnLoft will use it anyway.')
   return {
     ...state,
     path: best.path,

@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Something mcctl did, or did not do, that it should have
+about: Something SpawnLoft did, or did not do, that it should have
 title: ''
 labels: bug
 assignees: ''

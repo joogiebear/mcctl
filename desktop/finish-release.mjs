@@ -69,7 +69,7 @@ if (!release.isDraft) {
 
 // ---- everything a client needs has to be there, and be whole --------------------------------
 const byName = new Map(release.assets.map((a) => [a.name, a]))
-const installer = `mcctl-Setup-${pkg.version}.exe`
+const installer = `SpawnLoft-Setup-${pkg.version}.exe`
 const expected = [installer, `${installer}.blockmap`, 'latest.yml']
 
 for (const name of expected) {

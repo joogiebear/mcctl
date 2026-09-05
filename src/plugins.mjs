@@ -602,7 +602,7 @@ export async function installFromHangar(inst, slug, { gameVersion = null } = {})
   if (!picked) {
     const external = versions.map((v) => v.downloads?.PAPER?.externalUrl).find(Boolean)
     fail(external
-      ? `that project hosts its downloads elsewhere: ${external}\n  Download it by hand and drop it into the plugins folder - mcctl will leave it alone.`
+      ? `that project hosts its downloads elsewhere: ${external}\n  Download it by hand and drop it into the plugins folder - SpawnLoft will leave it alone.`
       : 'that project has no downloadable Paper build on Hangar')
   }
   const { version, exactMatch } = picked
@@ -641,7 +641,7 @@ export async function installFromHangar(inst, slug, { gameVersion = null } = {})
     // Carried up so the person is told, not protected from, a claims mismatch.
     versionNote: exactMatch || !gameVersion
       ? null
-      : `Hangar lists support for ${(version.platformDependencies?.PAPER ?? []).slice(-1)[0] ?? 'other versions'}, not ${gameVersion} - it will probably run, but that is its author's claim, not mcctl's.`,
+      : `Hangar lists support for ${(version.platformDependencies?.PAPER ?? []).slice(-1)[0] ?? 'other versions'}, not ${gameVersion} - it will probably run, but that is its author's claim, not SpawnLoft's.`,
   }
 }
 
@@ -684,7 +684,7 @@ export async function installPlugin(inst, projectId, { gameVersion = null } = {}
     version = pickVersion(versions, { loaders })
     if (version) {
       const claims = version.game_versions[version.game_versions.length - 1] ?? 'other versions'
-      versionNote = `Its newest build lists ${claims}, not ${gameVersion} - it may run anyway, but that is its author's claim, not mcctl's.`
+      versionNote = `Its newest build lists ${claims}, not ${gameVersion} - it may run anyway, but that is its author's claim, not SpawnLoft's.`
     }
   }
   if (!version) fail(`no build of that ${word} supports a ${loaders[0]} server`)
@@ -809,7 +809,7 @@ export async function updatePlugin(inst, file, { gameVersion = null } = {}) {
   const current = safePluginPath(dir, file)
   const entry = readManaged(inst).managed[file]
   if (!entry) {
-    fail('mcctl did not install this jar, so it will not touch it - custom and premium plugins are yours to update')
+    fail('SpawnLoft did not install this jar, so it will not touch it - custom and premium plugins are yours to update')
   }
   if (entry.source === 'modpack') {
     fail('this mod belongs to the modpack, which governs its version - update the pack, not the mod')

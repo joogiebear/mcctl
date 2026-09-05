@@ -86,6 +86,24 @@ function windowStateFile() {
   return path.join(app.getPath('userData'), 'window-state.json')
 }
 
+/**
+ * The app was called mcctl until 0.11.x, and Electron keys its per-app folder by product name, so
+ * the first SpawnLoft start would otherwise open at the default size and place. The saved window
+ * state is copied across once; the old folder is left where it is.
+ */
+function carryOverWindowState() {
+  const to = windowStateFile()
+  if (fs.existsSync(to)) return
+  const from = path.join(path.dirname(app.getPath('userData')), 'mcctl-desktop', 'window-state.json')
+  if (!fs.existsSync(from)) return
+  try {
+    fs.mkdirSync(path.dirname(to), { recursive: true })
+    fs.copyFileSync(from, to)
+  } catch {
+    // A lost window position is not worth a dialog.
+  }
+}
+
 /** The work area of every attached display, as plain rectangles. */
 function displayAreas() {
   return require('electron').screen.getAllDisplays().map((d) => d.workArea)
@@ -101,7 +119,7 @@ function createWindow(loadUrl) {
     minWidth: windowState.MIN_WIDTH,
     minHeight: windowState.MIN_HEIGHT,
     backgroundColor: '#0c0e14',
-    title: 'mcctl',
+    title: 'SpawnLoft',
     icon: fs.existsSync(ICON) ? ICON : undefined,
     // Painting a half-built page is worse than painting nothing. The window is created hidden and
     // shown once the panel has actually rendered, so the first frame anyone sees is the finished
@@ -130,7 +148,7 @@ function createWindow(loadUrl) {
     // that failed; it must not pop a modal.
     if (code === -3) return
     if (win && !win.isDestroyed()) win.show()
-    dialog.showErrorBox('mcctl could not open its panel', `${desc} (${code})\n\n${loadUrl}`)
+    dialog.showErrorBox('SpawnLoft could not open its panel', `${desc} (${code})\n\n${loadUrl}`)
   })
 
   // Links to anywhere else belong in the real browser, not in a chrome-less app window the person
@@ -237,7 +255,7 @@ ipcMain.handle('mcctl:saveSetup', async (_e, { dataRoot, instancesDir, separate 
     return {
       ok: false,
       error:
-        `mcctl could not remember that location.\n\n` +
+        `SpawnLoft could not remember that location.\n\n` +
         `It saved to ${settings.settingsFile()} but read back ` +
         `${written.dataRoot ? `"${written.dataRoot}"` : 'nothing'}. ` +
         `Check that file is writable, then try again.`,
@@ -382,6 +400,7 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(async () => {
+    carryOverWindowState()
     if (await needsSetup()) {
       createWindow(pathToFileURL(path.join(__dirname, 'setup.html')).href)
     } else {
@@ -400,7 +419,7 @@ if (!app.requestSingleInstanceLock()) {
     // security product blocking the loopback listen both land here, and both are plausible for an
     // unsigned build on a stranger's machine.
     dialog.showErrorBox(
-      'mcctl could not start',
+      'SpawnLoft could not start',
       `${err?.message ?? err}\n\n${err?.stack ?? ''}`.trim(),
     )
     app.exit(1)

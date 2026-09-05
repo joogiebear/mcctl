@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="color-scheme" content="dark">
-<title>mcctl setup</title>
+<title>SpawnLoft setup</title>
 
 <style>
   /* ==========================================================================
@@ -280,7 +280,7 @@
       <polygon points="56,20 32,32 32,54 56,42" fill="#24357a"/>
       <polygon points="51.2,29.0 35.4,36.9 35.4,42.6 51.2,34.7" fill="#cfe0ff"/>
     </svg>
-    <b>mcctl</b>
+    <b>SpawnLoft</b>
     <span class="step">First run</span>
   </div>
 
@@ -290,7 +290,7 @@
     location question there is, and it says out loud which one it is. "Install location" was the
     exact wording that made the two read as the same question asked twice.
   -->
-  <h1>Where should mcctl keep your servers?</h1>
+  <h1>Where should SpawnLoft keep your servers?</h1>
   <p class="sub">
     Worlds, downloaded server jars and backups go here. <b>Not the program itself</b> — that is
     already installed. You can move this later from Settings.
@@ -324,14 +324,14 @@
   </div>
 
   <!--
-    Java is the one prerequisite mcctl cannot supply. Checked here, before anything is downloaded,
+    Java is the one prerequisite SpawnLoft cannot supply. Checked here, before anything is downloaded,
     because finding out at the first press of Start - after setup and a fifty-megabyte download -
     is the difference between a missing dependency and a broken application.
   -->
   <div class="check" id="javaCheck" data-state="pending">
     <span class="lamp"></span>
     <b id="javaTitle">Checking for Java…</b>
-    <span class="why" id="javaWhy">Minecraft servers run on Java. mcctl needs one installed.</span>
+    <span class="why" id="javaWhy">Minecraft servers run on Java. SpawnLoft needs one installed.</span>
     <button type="button" class="small" id="javaGet" hidden>Get Java</button>
   </div>
 
@@ -378,7 +378,7 @@ function syncServers() {
 
 async function init() {
   if (!d) {
-    fail('This screen is part of the mcctl desktop app and cannot run in a browser.');
+    fail('This screen is part of the SpawnLoft desktop app and cannot run in a browser.');
     $('#go').disabled = true;
     return;
   }
@@ -386,7 +386,7 @@ async function init() {
     defaults = await d.getSetup();
   } catch (err) {
     // A wizard that renders empty boxes and no explanation is worse than one that says what broke.
-    fail('mcctl could not read its settings.\n\n' + (err && err.message ? err.message : String(err)));
+    fail('SpawnLoft could not read its settings.\n\n' + (err && err.message ? err.message : String(err)));
     $('#go').disabled = true;
     return;
   }
@@ -406,7 +406,7 @@ $('#separate').onchange = (e) => {
 };
 
 $('#pickRoot').onclick = async () => {
-  const p = await d.pickFolder('Choose where mcctl keeps its files');
+  const p = await d.pickFolder('Choose where SpawnLoft keeps its files');
   if (!p) return;
   $('#root').value = p;
   syncServers();
@@ -429,7 +429,7 @@ async function checkJava() {
   } catch {
     box.dataset.state = 'warn';
     $('#javaTitle').textContent = 'Could not check for Java';
-    $('#javaWhy').textContent = 'Carry on — mcctl will say so again if a server fails to start.';
+    $('#javaWhy').textContent = 'Carry on — SpawnLoft will say so again if a server fails to start.';
     return;
   }
   if (res.ok && res.reason === 'ok') {
@@ -457,7 +457,7 @@ $('#form').onsubmit = async (e) => {
   const dataRoot = $('#root').value.trim();
   const instancesDir = $('#servers').value.trim();
   if (!dataRoot || (separate && !instancesDir)) {
-    fail('Both folders are needed before mcctl can continue.');
+    fail('Both folders are needed before SpawnLoft can continue.');
     return;
   }
 
@@ -474,7 +474,7 @@ $('#form').onsubmit = async (e) => {
     res = { ok: false, error: (err && err.message) ? err.message : String(err) };
   }
   if (!res || !res.ok) {
-    fail(res && res.error ? res.error : 'mcctl could not save these locations.');
+    fail(res && res.error ? res.error : 'SpawnLoft could not save these locations.');
     go.disabled = false;
     $('#note').textContent = '';
   }

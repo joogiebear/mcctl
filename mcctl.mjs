@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * mcctl - local Minecraft server control plane.
+ * mcctl - the SpawnLoft command line. A local Minecraft server control plane.
  *
  * Manages multiple server instances on this machine: detached launch with
  * captured console, RCON command/response, stdin injection, and snapshots.
@@ -135,7 +135,7 @@ function cmdWhy(positional) {
   const inst = getInstance(name)
   const found = printFindings(name)
   if (!found) {
-    out('Nothing mcctl recognises in the recent console. The last lines of the log are the')
+    out('Nothing SpawnLoft recognises in the recent console. The last lines of the log are the')
     out(`next place to look: mcctl logs ${name} -n 60 --grep " ERROR]| WARN]|Exception"`)
   }
   const crashes = crashReports(inst, { limit: 5 })
@@ -734,7 +734,7 @@ function cmdConfig(positional, flags) {
     ]))
     if (l.usingLegacyLayout) {
       out('')
-      out('Using the folder mcctl lives in, because it already holds instances.json.')
+      out('Using the folder SpawnLoft lives in, because it already holds instances.json.')
       out('Move it with: mcctl config set-root <path>')
     }
     return
@@ -836,7 +836,7 @@ async function cmdUpgrade(positional, flags) {
   if (flags.check) {
     const info = await upgrade.checkUpgrade(inst)
     if (!info.current) {
-      out(`${inst.jar} is not a Paper jar mcctl recognises. Newest Paper is for ${info.latestVersion}.`)
+      out(`${inst.jar} is not a Paper jar SpawnLoft recognises. Newest Paper is for ${info.latestVersion}.`)
       return
     }
     out(`${name} runs Paper ${info.current.version} build ${info.current.build}.`)
@@ -1030,7 +1030,7 @@ async function cmdUi(positional, flags) {
     // so the flag was silently ignored and the browser opened anyway.
     open: flags.open !== false,
   })
-  out(`mcctl panel: ${url}`)
+  out(`SpawnLoft panel: ${url}`)
   out('Bound to 127.0.0.1 only — it can start servers and type console commands, so it is')
   out('for this machine, not the network. Ctrl+C to stop the panel (servers keep running).')
 }
@@ -1409,7 +1409,7 @@ async function cmdDoctor() {
 // ---------------------------------------------------------------------- help
 
 function cmdHelp() {
-  out(`mcctl - local Minecraft server control plane
+  out(`mcctl - the SpawnLoft command line. Local Minecraft servers, from a terminal.
 
 LIFECYCLE
   mcctl list                         Show every instance and its state

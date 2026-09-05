@@ -21,6 +21,7 @@ import * as settings from './settings.mjs'
 import * as plugins from './plugins.mjs'
 import * as upgrade from './upgrade.mjs'
 import * as sources from './sources.mjs'
+import { repairAfterMove } from './relocate.mjs'
 import * as software from './software.mjs'
 import * as mrpack from './mrpack.mjs'
 import * as neoforge from './neoforge.mjs'
@@ -48,6 +49,18 @@ export function serve({ port = 8770, host = '127.0.0.1', open = true } = {}) {
   // The first read of the process table is synchronous by design (see util.mjs). Taken now,
   // while nothing is waiting on it, rather than inside the first poll.
   refreshProcessTable()
+
+  // Task shims and launchers name this installation by absolute path. If it moved since they were
+  // written (the rename from mcctl to SpawnLoft moved it), they are rewritten before anything can
+  // run one. Here because the desktop app always starts the panel; see relocate.mjs.
+  try {
+    const repaired = repairAfterMove()
+    if (repaired.moved) {
+      panelLog(`installation moved: rewrote ${repaired.shims} task shim(s) and launchers for ${repaired.launchers} server(s)`)
+    }
+  } catch (err) {
+    panelLog(`could not check whether the installation moved: ${err?.message ?? err}`)
+  }
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -191,8 +204,8 @@ async function diagnostics(instanceName, { short = false } = {}) {
   const lines = []
   const add = (k, v) => lines.push(`${k}: ${v}`)
   const version = packageInfo().version ?? 'unknown'
-  lines.push('== mcctl diagnostics ==')
-  add('mcctl', version)
+  lines.push('== SpawnLoft diagnostics ==')
+  add('SpawnLoft', version)
   add('node', process.version + (process.versions.electron ? ` (electron ${process.versions.electron})` : ''))
   add('os', `${process.platform} ${os.release()} ${os.arch()}, ${os.cpus().length} cores, ${Math.round(os.totalmem() / 1073741824)} GB`)
   add('generated', new Date().toISOString())
@@ -1061,7 +1074,7 @@ async function route(req, res) {
       }
       const dir = path.resolve(raw)
       const writable = settings.checkWritable(dir)
-      if (!writable.ok) return json(res, 400, { error: `mcctl cannot write to ${dir}: ${writable.error}` })
+      if (!writable.ok) return json(res, 400, { error: `SpawnLoft cannot write to ${dir}: ${writable.error}` })
       settings.save({ backupsMirrorDir: dir })
       return json(res, 200, { backupsMirrorDir: dir })
     }
@@ -1076,7 +1089,7 @@ async function route(req, res) {
     }
     const dir = path.resolve(raw)
     const writable = settings.checkWritable(dir)
-    if (!writable.ok) return json(res, 400, { error: `mcctl cannot write to ${dir}: ${writable.error}` })
+    if (!writable.ok) return json(res, 400, { error: `SpawnLoft cannot write to ${dir}: ${writable.error}` })
     settings.save({ backupsDir: dir })
     return json(res, 200, { backupsDir: dir, restartRequired: dir !== LAYOUT.backupsDir })
   }
