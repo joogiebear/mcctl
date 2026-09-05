@@ -21,6 +21,7 @@ import * as settings from './settings.mjs'
 import * as plugins from './plugins.mjs'
 import * as upgrade from './upgrade.mjs'
 import * as sources from './sources.mjs'
+import { repairAfterMove } from './relocate.mjs'
 import * as software from './software.mjs'
 import * as mrpack from './mrpack.mjs'
 import * as neoforge from './neoforge.mjs'
@@ -48,6 +49,18 @@ export function serve({ port = 8770, host = '127.0.0.1', open = true } = {}) {
   // The first read of the process table is synchronous by design (see util.mjs). Taken now,
   // while nothing is waiting on it, rather than inside the first poll.
   refreshProcessTable()
+
+  // Task shims and launchers name this installation by absolute path. If it moved since they were
+  // written (the rename from mcctl to SpawnLoft moved it), they are rewritten before anything can
+  // run one. Here because the desktop app always starts the panel; see relocate.mjs.
+  try {
+    const repaired = repairAfterMove()
+    if (repaired.moved) {
+      panelLog(`installation moved: rewrote ${repaired.shims} task shim(s) and launchers for ${repaired.launchers} server(s)`)
+    }
+  } catch (err) {
+    panelLog(`could not check whether the installation moved: ${err?.message ?? err}`)
+  }
 
   const server = http.createServer(async (req, res) => {
     try {

@@ -282,6 +282,21 @@ function writeShim(id) {
   return shim
 }
 
+/**
+ * Rewrite every task's shim for the runtime running now.
+ *
+ * <p>A shim names the executable and the code folder by absolute path, so an installation that
+ * moved - the rename from mcctl to SpawnLoft moved it - leaves every scheduled task pointing at a
+ * file that is no longer there, and a nightly backup that fails silently. Task Scheduler only ever
+ * holds the shim's path, which lives in the data folder and did not move, so rewriting the shims is
+ * the whole repair. See relocate.mjs for when this runs.
+ */
+export function rewriteShims() {
+  const ids = Object.keys(load().tasks)
+  for (const id of ids) writeShim(id)
+  return ids.length
+}
+
 /** Translate a schedule into the schtasks flags that express it. */
 function triggerArgs(schedule) {
   const at = schedule.at || '03:00'
