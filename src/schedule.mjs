@@ -623,5 +623,13 @@ export function removeAll() {
       /* keep going; one stuck task should not strand the rest */
     }
   }
+  // The folder too, once it is empty. schtasks cannot delete folders; the scheduler's own COM
+  // interface can, and refuses while anything is still inside, which is the right refusal.
+  if (process.platform === 'win32') {
+    spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      `$s = New-Object -ComObject Schedule.Service; $s.Connect(); $s.GetFolder('\\').DeleteFolder('${TASK_FOLDER}', 0)`],
+      { encoding: 'utf8', windowsHide: true, timeout: 30000 })
+  }
+  fs.rmSync(path.join(DATA_ROOT, 'tasks'), { recursive: true, force: true })
   return { removed: true }
 }

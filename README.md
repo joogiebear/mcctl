@@ -584,3 +584,18 @@ because the honest answer is that only the window restarts.
 
 Update checks are refused outside a packaged build: in development the version is whatever
 `package.json` says and there is no installer to replace.
+
+### How uninstalling behaves
+
+The uninstaller removes the program and asks one question: whether to delete your servers, worlds,
+backups, downloaded jars and settings too. The default is no, so uninstalling to reinstall, or to
+move to a new version by hand, loses nothing.
+
+Either way it first stops every running server and removes every scheduled task, since a task left
+behind would keep firing at a program that is gone. An update never does any of this: the servers,
+the tasks and the data all carry across.
+
+Saying yes deletes only what this program created. A server you added from a folder you already
+had stays where it is, and a data folder you pointed at a drive with other things on it loses only
+SpawnLoft's own folders. The same command is available from a terminal as
+`mcctl uninstall --yes [--data]`.

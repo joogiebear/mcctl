@@ -1342,6 +1342,29 @@ async function runTask(id) {
   out(`done in ${Math.round((Date.now() - started) / 1000)}s`)
 }
 
+// ----------------------------------------------------------------- uninstall
+
+/**
+ * What the Windows uninstaller runs before it removes the program: stop every server, remove every
+ * scheduled task, and - only when asked - delete what this program created. See uninstall.mjs.
+ */
+async function cmdUninstall(positional, flags) {
+  if (!flags.yes) {
+    fail(
+      'uninstall stops every server and removes every scheduled task; with --data it also deletes\n' +
+        '  the servers this program created, jars, backups, templates and settings.\n' +
+        '  Add --yes to go ahead. The desktop app\'s uninstaller runs this for you.',
+    )
+  }
+  const uninstall = await import('./src/uninstall.mjs')
+  const res = await uninstall.run({ data: Boolean(flags.data), log: out })
+  if (res.stopped.length) out(`Stopped: ${res.stopped.join(', ')}`)
+  out(res.tasks ? 'Scheduled tasks removed.' : 'Scheduled tasks could not all be removed.')
+  if (flags.data) out(`Deleted ${res.removed.length} item(s).`)
+  for (const f of res.failed) out(`  !  ${f}`)
+  if (res.failed.length) process.exitCode = 1
+}
+
 async function cmdDoctor() {
   const problems = []
   const notes = []
@@ -1490,6 +1513,7 @@ OTHER
   mcctl jars import <path> [--as x]  Add a server jar to the store
   mcctl why <name>                   Say what is wrong with a server, from its own console
   mcctl doctor                       Check environment, ports, EULA, disk, stale state
+  mcctl uninstall --yes [--data]     Stop servers, remove scheduled tasks; --data deletes what mcctl made
 `)
 }
 
@@ -1543,6 +1567,7 @@ const COMMANDS = {
   panel: cmdUi,
   task: cmdTask,
   doctor: cmdDoctor,
+  uninstall: cmdUninstall,
   help: cmdHelp,
 }
 

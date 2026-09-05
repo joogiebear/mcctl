@@ -70,7 +70,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "SpawnLoft",
       "artifactName": "SpawnLoft-Setup-${version}.${ext}",
-      "allowElevation": false
+      "allowElevation": false,
+      "include": "build/installer.nsh"
     },
     "publish": [
       {
