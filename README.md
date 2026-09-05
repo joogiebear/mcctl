@@ -603,7 +603,7 @@ SpawnLoft's own folders. The same command is available from a terminal as
 ## Databases
 
 Plugins that want MySQL — LuckPerms, CoreProtect, Plan, AuthMe, Jobs, mcMMO — can have one
-here, with nothing to install. A database is another entry in the registry, run by the same
+here, with nothing to install; so can plugins that want Redis, by way of Microsoft's Garnet. A database is another entry in the registry, run by the same
 daemon as a server: a card with a lamp, a console, start, stop and restart, crash recovery.
 
 ```bash
@@ -613,6 +613,8 @@ mcctl start maria
 mcctl db attach maria survival       # a database and a user for that server; prints the credentials
 mcctl db creds maria survival        # shows them again
 mcctl db detach maria survival       # takes the user away; --drop deletes the data too
+mcctl db add cache --engine garnet   # a Redis-compatible server, the same way
+mcctl db connect xampp --port 3306 --user root --password ''   # one you already run, registered so servers can attach
 mcctl db plugins survival            # which plugins here can take the credentials
 mcctl db apply maria survival luckperms   # writes them into that plugin's config, comments kept
 ```
@@ -625,7 +627,8 @@ can reach its one database and nothing else. A snapshot of an attached server ca
 its database as a `databases/` member; verify checks for it, and restore imports it back into the
 database it came from, which has to be running. *Apply to a plugin* writes the credentials into
 LuckPerms, CoreProtect, Plan or AuthMe's own config, in place, with the comments kept; the server
-restarts for the plugin to read it. In the panel, databases sit under the servers in the
+restarts for the plugin to read it. A database you already run - XAMPP, a MariaDB install, a Redis on the LAN - is
+registered with its address and attaches the same way, only never started or stopped from here. In the panel, databases sit under the servers in the
 sidebar, a server's Settings tab has a Databases card with the credentials one click away, and
 *Add a server → A database* creates one. The plan, with what comes next (backups of attached
 databases, config helpers for the common plugins, Redis by way of Garnet), is in

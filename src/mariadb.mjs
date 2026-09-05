@@ -7,7 +7,7 @@ import { pipeline } from 'node:stream/promises'
 
 import { ENGINES_DIR } from './paths.mjs'
 import { runTar } from './tar.mjs'
-import { fail, humanBytes, UserError } from './util.mjs'
+import { fail, humanBytes, UserError, randomPassword } from './util.mjs'
 import { MARIADB_READY_RE, MARIADB_FAILED_RE } from './ready.mjs'
 
 /**
@@ -30,7 +30,9 @@ const UA = 'SpawnLoft (github.com/joogiebear/spawnloft)'
 
 export const ENGINE = 'mariadb'
 export const LABEL = 'MariaDB'
+export const KIND = 'mariadb'
 export const DEFAULT_PORT = 3306
+export const canDump = true
 
 async function api(url) {
   let res
@@ -118,13 +120,63 @@ const NAMES = {
 }
 
 export function binary(dir, role) {
+  if (!dir) return null
   for (const name of NAMES[role]) {
     for (const ext of ['.exe', '', '.mjs']) {
-      const p = path.join(dir, 'bin', name + ext)
-      if (fs.existsSync(p)) return { path: p, script: ext === '.mjs' }
+      // The store keeps bin/ under the version; a tools folder someone points at (XAMPP's
+      // mysql\bin, a MariaDB install's bin) holds the binaries directly.
+      for (const p of [path.join(dir, 'bin', name + ext), path.join(dir, name + ext)]) {
+        if (fs.existsSync(p)) return { path: p, script: ext === '.mjs' }
+      }
     }
   }
   return null
+}
+
+/**
+ * Where the client tools for an instance are: the engine store for one run here, the folder
+ * recorded for an external one. An external database with no tools recorded borrows them from
+ * any MariaDB in the store, or from the usual install locations on this machine.
+ */
+export function toolsDir(inst) {
+  if (!inst.external) return engineDir(inst.version)
+  if (inst.tools?.dir) return inst.tools.dir
+  return findTools()
+}
+
+/** Common places MariaDB/MySQL client tools live on a Windows PC, plus the engine store. */
+export function findTools() {
+  const candidates = []
+  try {
+    for (const e of fs.readdirSync(ENGINES_DIR)) if (e.startsWith('mariadb-')) candidates.push(path.join(ENGINES_DIR, e))
+  } catch {
+    /* no store yet */
+  }
+  if (process.platform === 'win32') {
+    const pf = [process.env.ProgramFiles, process.env['ProgramFiles(x86)']].filter(Boolean)
+    candidates.push('C:\\xampp\\mysql\\bin')
+    for (const base of pf) {
+      try {
+        for (const e of fs.readdirSync(base)) {
+          if (/^MariaDB/i.test(e)) candidates.push(path.join(base, e, 'bin'))
+          if (/^MySQL$/i.test(e)) {
+            for (const v of fs.readdirSync(path.join(base, e))) if (/^MySQL Server/i.test(v)) candidates.push(path.join(base, e, v, 'bin'))
+          }
+        }
+      } catch {
+        /* folder missing */
+      }
+    }
+  }
+  return candidates.find((c) => binary(c, 'client')) ?? null
+}
+
+export function hostOf(inst) {
+  return inst.host ?? '127.0.0.1'
+}
+
+function rootArgs(inst) {
+  return ['--protocol=TCP', `--host=${hostOf(inst)}`, `--port=${inst.port}`, `--user=${inst.root?.user ?? 'root'}`]
 }
 
 export function hasEngine(version) {
@@ -274,8 +326,7 @@ export function launchSpec(inst) {
   const admin = binary(dir, 'admin')
   const run = runnable(server, [`--defaults-file=${iniFile(inst)}`, '--console'])
   const stop = admin
-    ? runnable(admin, ['--protocol=TCP', '--host=127.0.0.1', `--port=${inst.port}`, '--user=root', 'shutdown'],
-      { ...process.env, MYSQL_PWD: inst.root?.password ?? '' })
+    ? runnable(admin, [...rootArgs(inst), 'shutdown'], { ...process.env, MYSQL_PWD: inst.root?.password ?? '' })
     : null
   return {
     cmd: run.cmd,
@@ -300,11 +351,15 @@ export function quoteStr(s) {
 
 /** Run statements as root over TCP. Returns stdout; a refusal names the reason. */
 export function sql(inst, statements) {
-  const dir = engineDir(inst.version)
+  const dir = toolsDir(inst)
   const client = binary(dir, 'client')
-  if (!client) fail(`MariaDB ${inst.version} has no client tool under ${dir}`)
+  if (!client) {
+    fail(inst.external
+      ? `no MariaDB client tools found for "${inst.name}". Point at a folder holding mariadb.exe or mysql.exe (XAMPP's mysql\\bin, a MariaDB install's bin), or add a MariaDB here once so its tools are in the store.`
+      : `MariaDB ${inst.version} has no client tool under ${dir}`)
+  }
   const { cmd, args, env } = runnable(client,
-    ['--protocol=TCP', '--host=127.0.0.1', `--port=${inst.port}`, '--user=root', '--batch', '--skip-column-names', '--execute', statements],
+    [...rootArgs(inst), '--batch', '--skip-column-names', '--execute', statements],
     { ...process.env, MYSQL_PWD: inst.root?.password ?? '' })
   const res = spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true, timeout: 60000, env })
   if (res.error) fail(`could not run the MariaDB client: ${res.error.message}`)
@@ -367,11 +422,11 @@ function runToFile(cmd, args, env, { stdout = null, stdin = null, label }) {
  * top, so the file imports as root without anyone having to pick a database first.
  */
 export async function dump(inst, database, file) {
-  const dir = engineDir(inst.version)
+  const dir = toolsDir(inst)
   const tool = binary(dir, 'dump')
-  if (!tool) fail(`MariaDB ${inst.version} has no dump tool under ${dir}`)
+  if (!tool) fail(`no MariaDB dump tool found for "${inst.name}" under ${dir ?? '(no tools folder)'}`)
   const { cmd, args, env } = runnable(tool,
-    ['--protocol=TCP', '--host=127.0.0.1', `--port=${inst.port}`, '--user=root', '--single-transaction', '--routines', '--triggers', '--events', '--databases', database],
+    [...rootArgs(inst), '--single-transaction', '--routines', '--triggers', '--events', '--databases', database],
     { ...process.env, MYSQL_PWD: inst.root?.password ?? '' })
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const out = fs.createWriteStream(file)
@@ -388,12 +443,38 @@ export async function dump(inst, database, file) {
 
 /** Feed a dump back through the client as root. */
 export async function importSql(inst, file) {
-  const dir = engineDir(inst.version)
+  const dir = toolsDir(inst)
   const client = binary(dir, 'client')
-  if (!client) fail(`MariaDB ${inst.version} has no client tool under ${dir}`)
+  if (!client) fail(`no MariaDB client tool found for "${inst.name}" under ${dir ?? '(no tools folder)'}`)
   const { cmd, args, env } = runnable(client,
-    ['--protocol=TCP', '--host=127.0.0.1', `--port=${inst.port}`, '--user=root'],
+    rootArgs(inst),
     { ...process.env, MYSQL_PWD: inst.root?.password ?? '' })
   await runToFile(cmd, args, env, { stdin: fs.createReadStream(file), label: 'client' })
   return { file }
+}
+
+// ---- the engine interface ----------------------------------------------------------------------
+
+/** Is it answering? One statement as root; a refusal is the reason. */
+export async function probe(inst) {
+  sql(inst, 'SELECT 1;')
+  return true
+}
+
+export function newRecord(serverName) {
+  return { database: serverName, user: serverName, password: randomPassword(24), createdAt: new Date().toISOString() }
+}
+
+export function provision(inst, record) {
+  sql(inst, attachSql(record))
+  return { provisioned: true }
+}
+
+export function deprovision(inst, record, { drop = false } = {}) {
+  sql(inst, detachSql({ database: record.database, user: record.user, drop }))
+  return { deprovisioned: true, dropped: drop }
+}
+
+export function credentialsFor(inst, record) {
+  return { jdbc: `jdbc:mysql://${hostOf(inst)}:${inst.port}/${record.database}` }
 }

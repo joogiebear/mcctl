@@ -1,11 +1,12 @@
 # Plan: databases for servers
 
-Status: **phases 1 to 3 built; awaiting their first run against real MariaDB on Windows.** The
+Status: **all four phases built; awaiting their first run against real MariaDB and Garnet on Windows.** The
 engine module, the daemon generalisation, attach/detach, the CLI group and the panel are in,
 covered by a lifecycle test against a fake MariaDB (`test/fixtures/fake-mariadb`). What that
 fake cannot prove, and the first Windows run has to: the download API's file list, the init
 tool's flags, `--console` logging, `mariadb-admin shutdown`, and `mariadb-dump` against the
-real binaries. Redis follows.
+real binaries; and for Garnet, the release asset's name, the flags, the ready line and
+SHUTDOWN over the protocol.
 
 ## The goal
 
@@ -97,13 +98,31 @@ written before its first start would be replaced by its defaults - and what was 
 is recorded on the attachment so the panel can say which plugins point at which database.
 The server has to restart for the plugin to read it, and every surface says so.
 
-## Phase 4 - Redis, and connecting to what you already run
+## Phase 4 - Redis, and connecting to what you already run (built)
 
 Redis itself ships no Windows binary. Microsoft's Garnet speaks the Redis protocol, is
-MIT licensed and runs natively on Windows as a self-contained build; it becomes the
-second engine. Alongside it, "connect to an existing database" for both engines, for
-people who already run XAMPP or MariaDB and want SpawnLoft to hand out credentials on
-it rather than run a second copy.
+MIT licensed and publishes a self-contained Windows build on its GitHub releases page,
+the feed shape this program already reads for its own updates; it is the second engine.
+Loopback, password auth, checkpoints and an append-only log in the data folder; ready on
+"ready to accept connections"; stopped with SAVE then SHUTDOWN over the protocol itself,
+by a forty-line Redis client of our own, since Garnet ships no admin tool. Redis has no
+per-server database or user, so an attachment is the shared password, a URL and a
+suggested key prefix, and the credentials say so. LuckPerms's messaging-over-Redis is the
+first helper for it. A snapshot skips a Redis database with the reason: it keeps its own
+checkpoints.
+
+Each engine module fills one interface - versions, fetch, init, launch to run one here;
+probe, newRecord, provision, deprovision, credentialsFor to attach servers to one wherever
+it runs; dump and import where a dump is a thing the engine has - and services.mjs knows
+nothing engine-specific beyond that table.
+
+"Connect to one I already run": a database registered with its address and admin
+credentials, for either engine. It is asked to answer before it is saved, so a wrong
+address or password is refused with the engine's own reason. It attaches, hands out
+credentials, takes helpers and dumps like one run here, and is never started or stopped
+from here; the panel shows it as reachable or unreachable, asked each poll. MariaDB's
+client tools for an external one come from a folder the person names, the usual install
+places (XAMPP, a MariaDB or MySQL install), or any MariaDB already in the engine store.
 
 ## Decisions already taken
 

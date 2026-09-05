@@ -20,7 +20,8 @@ test('every helper names a real file under plugins/ and edits at least the conne
     const edits = h.edits(creds)
     const joined = edits.map((e) => `${e.path.join('.')}=${e.value}`).join(' ')
     assert.ok(/p4ss/.test(joined), `${h.id} does not write the password`)
-    assert.ok(/smp/.test(joined), `${h.id} does not write the database`)
+    if (h.engine === 'mariadb') assert.ok(/smp/.test(joined), `${h.id} does not write the database`)
+    else assert.ok(/127\.0\.0\.1:3307/.test(joined), `${h.id} does not write the address`)
   }
 })
 

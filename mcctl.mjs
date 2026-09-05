@@ -93,12 +93,12 @@ function databaseRows(dbs) {
     const { status, state } = readState(db.name)
     rows.push([
       db.name,
-      STATUS_LABEL[status] ?? status,
-      `${services.ENGINES[db.engine]?.label ?? db.engine} ${db.version}`,
-      db.port,
+      db.external ? 'external' : (STATUS_LABEL[status] ?? status),
+      `${services.ENGINES[db.engine]?.label ?? db.engine} ${db.version ?? ''}`.trim(),
+      db.external ? `${db.host ?? '127.0.0.1'}:${db.port}` : db.port,
       Object.keys(db.attachments ?? {}).join(', ') || '-',
       status === 'running' && state?.startedAt ? humanDuration(Date.now() - state.startedAt) : '-',
-      db.dir,
+      db.dir ?? '-',
     ])
   }
   return rows
@@ -1506,11 +1506,29 @@ async function cmdDb(positional, flags) {
     return
   }
 
+  if (sub === 'connect') {
+    const name = positional[1]
+    if (!name) fail('usage: mcctl db connect <name> --engine mariadb|garnet --host <host> --port <n> --user <u> --password <p> [--tools <folder>]')
+    const engine = String(flags.engine ?? 'mariadb')
+    const db = await services.registerExternal(name, {
+      engine,
+      host: flags.host ? String(flags.host) : '127.0.0.1',
+      port: flags.port ? Number(flags.port) : null,
+      user: flags.user ? String(flags.user) : 'root',
+      password: flags.password != null ? String(flags.password) : '',
+      tools: flags.tools ? String(flags.tools) : null,
+      label: flags.label ?? null,
+    })
+    out(`Registered "${db.name}": ${services.ENGINES[engine].label} at ${db.host}:${db.port}, answering.`)
+    out(`Attach a server: mcctl db attach ${db.name} <server>`)
+    return
+  }
+
   if (sub === 'root') {
     const dbName = positional[1]
     if (!dbName) fail('usage: mcctl db root <database>')
     const db = services.getDatabase(dbName)
-    out(table([['host:', '127.0.0.1'], ['port:', String(db.port)], ['user:', 'root'], ['password:', db.root.password]]))
+    out(table([['host:', db.host ?? '127.0.0.1'], ['port:', String(db.port)], ['user:', db.root?.user ?? 'root'], ['password:', db.root?.password ?? '']]))
     return
   }
 
@@ -1523,18 +1541,19 @@ async function cmdDb(positional, flags) {
     return
   }
 
-  fail('usage: mcctl db [list|versions|add|attach|detach|creds|plugins|apply|root|remove]')
+  fail('usage: mcctl db [list|versions|add|connect|attach|detach|creds|plugins|apply|root|remove]')
 }
 
 function printCredentials(c) {
-  out(table([
-    ['host:', c.host],
-    ['port:', String(c.port)],
-    ['database:', c.database],
-    ['user:', c.user],
-    ['password:', c.password],
-    ['jdbc:', c.jdbc],
-  ]))
+  const rows = [['host:', c.host], ['port:', String(c.port)]]
+  if (c.database) rows.push(['database:', c.database])
+  if (c.user) rows.push(['user:', c.user])
+  rows.push(['password:', c.password])
+  if (c.jdbc) rows.push(['jdbc:', c.jdbc])
+  if (c.url) rows.push(['url:', c.url])
+  if (c.keyPrefix) rows.push(['key prefix:', c.keyPrefix])
+  out(table(rows))
+  if (c.note) out(`  ${c.note}`)
 }
 
 // ----------------------------------------------------------------- uninstall
@@ -1710,8 +1729,9 @@ OTHER
 
 DATABASES
   mcctl db                           List databases
-  mcctl db versions                  MariaDB releases that can be run
-  mcctl db add <name> [--version v]  Download MariaDB and set up a database on a free port
+  mcctl db versions [--engine e]     Releases that can be run: mariadb (default) or garnet (Redis)
+  mcctl db add <name> [--version v]  Download MariaDB and set up a database on a free port [--engine garnet for Redis]
+  mcctl db connect <name> --host h --port n --user u --password p   Register a database you already run
   mcctl db attach <db> <server>      Give a server its own database and user; prints the credentials
   mcctl db detach <db> <server>      Take the user away [--drop deletes the data too]
   mcctl db creds <db> <server>       Show a server's credentials again

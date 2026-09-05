@@ -937,12 +937,21 @@ function labelled(name, raw) {
  * page asks for one set of credentials when someone clicks, and never holds them otherwise.
  */
 function safeDatabase(row) {
-  const { root, attachments, ...safe } = row
+  const { root, attachments, tools, ...safe } = row
   const shown = {}
   for (const [server, a] of Object.entries(attachments ?? {})) {
-    shown[server] = { database: a.database, user: a.user, createdAt: a.createdAt ?? null }
+    shown[server] = { database: a.database, user: a.user, createdAt: a.createdAt ?? null, applied: a.applied ?? {} }
   }
-  return { ...safe, engineLabel: services.ENGINES[row.engine]?.label ?? row.engine, attachments: shown }
+  const engine = services.ENGINES[row.engine]
+  return {
+    ...safe,
+    engineLabel: engine?.label ?? row.engine,
+    engineKind: engine?.kind ?? row.engine,
+    external: Boolean(row.external),
+    host: row.host ?? '127.0.0.1',
+    rootUser: root?.user ?? 'root',
+    attachments: shown,
+  }
 }
 
 function safeInstance(row) {
@@ -1168,16 +1177,33 @@ async function route(req, res) {
   // Listed apart from the servers: the page draws them under their own heading, and nothing that
   // iterates servers should ever see one.
   if (seg[1] === 'databases' && seg.length === 2 && req.method === 'GET') {
-    const rows = registry.listServices().map((i) => {
+    // An external database has no daemon to ask, so it is asked itself, briefly, in parallel.
+    const rows = await Promise.all(registry.listServices().map(async (i) => {
       let row
       try {
         row = supervisor.statusOf(i.name)
       } catch {
         row = { ...i, status: 'unknown' }
       }
+      if (i.external) row.status = await services.externalStatus(i)
       return safeDatabase(row)
-    })
+    }))
     return json(res, 200, rows)
+  }
+  if (seg[1] === 'databases' && seg[2] === 'external' && req.method === 'POST') {
+    const body = await readBody(req)
+    if (!body.name && body.label) body.name = registry.freeName(slugFor(String(body.label)))
+    if (!body.name) return json(res, 400, { error: 'name is required' })
+    const db = await services.registerExternal(String(body.name), {
+      engine: body.engine ? String(body.engine) : 'mariadb',
+      host: body.host ? String(body.host) : '127.0.0.1',
+      port: body.port ? Number(body.port) : null,
+      user: body.user ? String(body.user) : 'root',
+      password: body.password != null ? String(body.password) : '',
+      tools: body.tools ? String(body.tools) : null,
+      label: body.label ?? null,
+    })
+    return json(res, 200, safeDatabase({ ...db, status: 'reachable' }))
   }
   if (seg[1] === 'databases' && seg[2] === 'engines' && req.method === 'GET') {
     return json(res, 200, Object.entries(services.ENGINES).map(([id, e]) => ({ id, label: e.label, defaultPort: e.defaultPort })))
@@ -1225,7 +1251,7 @@ async function route(req, res) {
     // Root, for the person: shown on a click under the database's Settings, never in the list.
     if (seg[3] === 'root' && req.method === 'GET') {
       const inst = services.getDatabase(db)
-      return json(res, 200, { host: '127.0.0.1', port: inst.port, user: 'root', password: inst.root?.password ?? '' })
+      return json(res, 200, { host: inst.host ?? '127.0.0.1', port: inst.port, user: inst.root?.user ?? 'root', password: inst.root?.password ?? '' })
     }
     if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
     const body = await readBody(req)
@@ -1440,7 +1466,8 @@ async function route(req, res) {
   if (seg[3] === 'metrics') return handleMetrics(req, res, name, url)
   // The databases this server is attached to, without passwords; those are one click further.
   if (seg[3] === 'databases' && seg[4] === 'helpers' && req.method === 'GET') {
-    return json(res, 200, services.helpersFor(name))
+    const engine = url.searchParams.get('engine')
+    return json(res, 200, services.helpersFor(name, { engine: engine || null }))
   }
   if (seg[3] === 'databases' && req.method === 'GET') {
     return json(res, 200, services.serverAttachments(name))

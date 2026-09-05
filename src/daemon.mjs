@@ -24,6 +24,8 @@ import { notifyInstance } from './notify.mjs'
 import { diagnose } from './diagnose.mjs'
 import { patternsFor } from './ready.mjs'
 import * as mariadb from './mariadb.mjs'
+import * as garnet from './garnet.mjs'
+import { respSend } from './resp.mjs'
 
 const name = process.argv[2]
 if (!name) {
@@ -127,7 +129,7 @@ function javaCommand(inst, args) {
 let program = null
 
 function programFor(inst) {
-  if (isDatabase(inst)) return mariadb.launchSpec(inst)
+  if (isDatabase(inst)) return inst.engine === 'garnet' ? garnet.launchSpec(inst) : mariadb.launchSpec(inst)
   const jar = serverJarPath(inst)
   const flags = inst.jvmFlags?.length ? inst.jvmFlags : jvmFlagsFor(inst.memory)
   const jvmArgs = [`-Xms${inst.memory}`, `-Xmx${inst.memory}`, ...flags, '-jar', path.basename(jar), '--nogui']
@@ -387,6 +389,11 @@ async function handleStop(timeoutMs) {
       } catch (err) {
         log(`shutdown tool failed to run: ${err.message}`)
       }
+    } else if (program?.stop?.resp) {
+      // A Redis-speaking engine is asked in its own protocol: checkpoint, then shut down.
+      const r = program.stop.resp
+      log(`asking for shutdown over the Redis protocol at ${r.host}:${r.port}`)
+      respSend(r.host, r.port, r.commands, { password: r.password || null }).catch((err) => log(`shutdown request: ${err.message}`))
     } else {
       log('no graceful stop for this program; waiting, then killing')
     }

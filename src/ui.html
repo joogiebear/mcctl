@@ -1845,10 +1845,24 @@
 
       <form class="sheet-body" id="formDb" hidden>
         <p class="hint" style="margin:0 0 4px">
-          A database server for plugins that want one — LuckPerms, CoreProtect, Plan and the rest.
-          Downloaded once from MariaDB's own mirror, run on this machine under the same supervision
-          as a server, and reachable only from this machine. Nothing to install.
+          A database for plugins that want one — MySQL for LuckPerms, CoreProtect, Plan and the rest;
+          Redis for messaging between servers. Run here, downloaded once and supervised like a server,
+          reachable only from this machine. Or point at one you already run.
         </p>
+        <div class="field">
+          <div class="choice" id="dMode">
+            <label>
+              <input type="radio" name="dbMode" value="run" checked>
+              <b>Run one here</b>
+              <span>Nothing to install. MariaDB from its own mirror, Redis by way of Microsoft's Garnet.</span>
+            </label>
+            <label>
+              <input type="radio" name="dbMode" value="connect">
+              <b>Connect to one I already run</b>
+              <span>XAMPP, a MariaDB or MySQL install, a Redis somewhere. Registered with its address so servers can be attached; never started or stopped from here.</span>
+            </label>
+          </div>
+        </div>
         <div class="row" style="align-items:flex-start">
           <div class="field" style="flex:2">
             <label for="dName">Name</label>
@@ -1856,12 +1870,12 @@
             <div class="hint">The commands use <code id="dNameSlug">—</code></div>
             <div class="bad" id="dNameBad"></div>
           </div>
-          <div class="field" style="flex:1;min-width:150px">
+          <div class="field" style="flex:1;min-width:170px">
             <label for="dEngine">Engine</label>
             <select id="dEngine" name="engine"><option value="mariadb" selected>MariaDB</option></select>
-            <div class="hint">MySQL-compatible</div>
+            <div class="hint" id="dEngineHint">MySQL-compatible</div>
           </div>
-          <div class="field" style="flex:2">
+          <div class="field" style="flex:2" id="dVersionWrap">
             <label for="dVersion">Version</label>
             <select id="dVersion" name="version"><option value="">Loading versions…</option></select>
             <div class="hint" id="dVersionHint">Newest stable release first.</div>
@@ -1869,7 +1883,29 @@
           <div class="field" style="flex:1">
             <label for="dPort">Port</label>
             <input id="dPort" name="port" type="number" placeholder="auto" class="mono" autocomplete="off">
-            <div class="hint">Blank picks 3306 or the next free one</div>
+            <div class="hint" id="dPortHint">Blank picks the engine's usual port or the next free one</div>
+          </div>
+        </div>
+        <div class="row" style="align-items:flex-start" id="dConnect" hidden>
+          <div class="field" style="flex:2">
+            <label for="dHost">Host</label>
+            <input id="dHost" class="mono" value="127.0.0.1" autocomplete="off">
+            <div class="hint">Where it listens</div>
+          </div>
+          <div class="field" style="flex:1" id="dUserWrap">
+            <label for="dUser">Admin user</label>
+            <input id="dUser" class="mono" value="root" autocomplete="off">
+            <div class="hint">Makes databases and users</div>
+          </div>
+          <div class="field" style="flex:2">
+            <label for="dPassword">Password</label>
+            <input id="dPassword" type="password" class="mono" autocomplete="off">
+            <div class="hint" id="dPasswordHint">XAMPP's root has none</div>
+          </div>
+          <div class="field" style="flex:3" id="dToolsWrap">
+            <label for="dTools">Client tools folder <span class="hint">(optional)</span></label>
+            <input id="dTools" class="mono" placeholder="C:\xampp\mysql\bin" autocomplete="off">
+            <div class="hint">Where mysql.exe lives. Found on its own in the usual places.</div>
           </div>
         </div>
         <div class="prog" id="dbProg" hidden>
@@ -2290,6 +2326,8 @@ function back() {
 const STATE_TEXT = {
   running: 'Running',
   stopped: 'Stopped',
+  reachable: 'Reachable',
+  unreachable: 'Unreachable',
   stopping: 'Stopping…',
   orphaned: 'Orphaned',
   stale: 'Stale state',
@@ -2302,6 +2340,7 @@ const STATE_NOTE = {
   orphaned: ['Orphaned', 'The Java process is still running but the supervisor that owned it is gone, so SpawnLoft can no longer talk to it. Stop it with "mcctl kill" in a terminal, then start it again here.'],
   stale: ['Stale state', 'A leftover state file from a session that did not shut down cleanly. Starting the server clears it.'],
   unknown: ['Unavailable', 'SpawnLoft could not read this server\u2019s state. Its folder may have been moved or deleted.'],
+  unreachable: ['Unreachable', 'This database runs elsewhere and is not answering at its address. Start it there, or check the host, port and password under Settings.'],
 };
 
 function duration(ms) {
@@ -2360,7 +2399,9 @@ function updateCard(el, row) {
   const vitals = el.querySelector('.vitals');
   vitals.textContent = '';
   const tail = isDb(row)
-    ? ' \u00b7 ' + (row.engineLabel || row.engine) + ' ' + (row.version || '') + ' \u00b7 :' + (row.port || '?')
+    ? (row.external
+      ? ' \u00b7 ' + (row.engineLabel || row.engine) + ' \u00b7 ' + (row.host || '127.0.0.1') + ':' + (row.port || '?')
+      : ' \u00b7 ' + (row.engineLabel || row.engine) + ' ' + (row.version || '') + ' \u00b7 :' + (row.port || '?'))
     : ' \u00b7 :' + (row.port || '?') + ' \u00b7 ' + (row.memory || '?');
   if (row.status === 'running' && row.startedAt) {
     const up = document.createElement('span');
@@ -2463,8 +2504,8 @@ function renderServer(row) {
   const attached = db ? Object.keys(row.attachments || {}) : [];
   const pairs = db ? [
     ['Port', ':' + (row.port || '?')],
-    ['Engine', (row.engineLabel || row.engine) + ' ' + (row.version || '')],
-    ['Host', '127.0.0.1'],
+    ['Engine', (row.engineLabel || row.engine) + ' ' + (row.version || '') + (row.external ? ' (runs elsewhere)' : '')],
+    ['Host', row.host || '127.0.0.1'],
     ['Attached', attached.length ? attached.join(', ') : 'nothing yet'],
   ] : [
     ['Port', ':' + (row.port || '?')],
@@ -2507,9 +2548,12 @@ function renderServer(row) {
   // A control that is going to be refused should look refused. The core rejects these on a live
   // server, so the panel says so before the round trip rather than after it.
   const live = row.status === 'running';
-  $('#bStart').disabled = state.busy || live || row.status === 'stopping';
-  $('#bStop').disabled = state.busy || !live;
-  $('#bRestart').disabled = state.busy || row.status === 'stopping';
+  const external = Boolean(row.external);
+  $('#bStart').disabled = state.busy || live || row.status === 'stopping' || external;
+  $('#bStop').disabled = state.busy || !live || external;
+  $('#bRestart').disabled = state.busy || row.status === 'stopping' || external;
+  $('#bFolder').disabled = external;
+  $('#bStart').title = external ? 'This database runs elsewhere; it is not started from here' : '';
   $('#bManage').disabled = state.busy;
   $('#cmd').disabled = !live || db;
   $('#bSend').disabled = !live || db;
@@ -6138,6 +6182,16 @@ async function deleteServer(row) {
 // ------------------------------------------------------------ databases ----
 
 async function manageDatabase(row) {
+  if (row.external) {
+    const res = await ask({
+      title: 'Manage ' + row.name,
+      text: 'This database runs elsewhere. Forgetting it here leaves it exactly as it is; only the record and its attachments go.',
+      confirmLabel: 'Continue',
+      choices: [{ value: 'delete', label: 'Forget this database', hint: 'Servers attached to it keep whatever their plugin configs say.' }],
+    });
+    if (!res) return;
+    return deleteDatabase(row);
+  }
   const live = row.status === 'running';
   const res = await ask({
     title: 'Manage ' + row.name,
@@ -6192,9 +6246,12 @@ function credsList(c, { root } = {}) {
   const dl = document.createElement('dl');
   dl.className = 'creds';
   const rows = [['Host', c.host], ['Port', String(c.port)]];
-  if (!root) rows.push(['Database', c.database]);
-  rows.push(['User', c.user], ['Password', c.password]);
+  if (!root && c.database) rows.push(['Database', c.database]);
+  if (c.user) rows.push(['User', c.user]);
+  rows.push(['Password', c.password]);
   if (c.jdbc) rows.push(['JDBC', c.jdbc]);
+  if (c.url) rows.push(['URL', c.url]);
+  if (c.keyPrefix) rows.push(['Key prefix', c.keyPrefix]);
   for (const r of rows) {
     const div = document.createElement('div');
     const dt = document.createElement('dt');
@@ -6209,9 +6266,11 @@ function credsList(c, { root } = {}) {
 
 function credsText(c, { root } = {}) {
   const lines = ['host: ' + c.host, 'port: ' + c.port];
-  if (!root) lines.push('database: ' + c.database);
-  lines.push('user: ' + c.user, 'password: ' + c.password);
+  if (!root && c.database) lines.push('database: ' + c.database);
+  if (c.user) lines.push('user: ' + c.user);
+  lines.push('password: ' + c.password);
   if (c.jdbc) lines.push('jdbc: ' + c.jdbc);
+  if (c.url) lines.push('url: ' + c.url);
   return lines.join('\n');
 }
 
@@ -6236,7 +6295,9 @@ async function showCredentials(dbName, serverName) {
   const dlg = $('#dlg');
   $('#dlgTitle').textContent = serverName + ' on ' + dbName;
   $('#dlgText').hidden = false;
-  $('#dlgText').textContent = 'What a plugin config wants. Paste it into the plugin\'s storage section; the user can reach this one database and nothing else.';
+  $('#dlgText').textContent = c.kind === 'redis'
+    ? 'What a plugin config wants. ' + (c.note || '')
+    : 'What a plugin config wants. Paste it into the plugin\'s storage section; the user can reach this one database and nothing else.';
   $('#dlgChoice').hidden = true;
   $('#dlgTypeWrap').hidden = true;
   const list = credsList(c);
@@ -6330,7 +6391,10 @@ async function renderServerDatabases(row, body) {
     const sub = document.createElement('div');
     sub.className = 'hint';
     sub.style.margin = '0';
-    sub.textContent = (a.engine === 'mariadb' ? 'MariaDB ' : a.engine + ' ') + (a.version || '') + ' \u00b7 127.0.0.1:' + a.port + ' \u00b7 database ' + a.database + ' \u00b7 user ' + a.user;
+    const dbRow = state.dbs.find((d) => d.name === a.service);
+    sub.textContent = ((dbRow && dbRow.engineLabel) || a.engine) + ' ' + (a.version || '') + (a.external ? ' (elsewhere)' : '')
+      + ' \u00b7 ' + (a.host || '127.0.0.1') + ':' + a.port
+      + (a.database ? ' \u00b7 database ' + a.database + ' \u00b7 user ' + a.user : ' \u00b7 shared password');
     text.append(b, sub);
     const show = document.createElement('button');
     show.textContent = 'Show credentials';
@@ -6347,7 +6411,7 @@ async function renderServerDatabases(row, body) {
     const apply = document.createElement('button');
     apply.className = 'ghost';
     apply.textContent = 'Apply to a plugin\u2026';
-    apply.onclick = () => applyToPlugin(row, a, helpers);
+    apply.onclick = () => applyToPlugin(row, a, helpers.filter((h) => h.engine === (a.kind || 'mariadb')));
     const detach = document.createElement('button');
     detach.className = 'ghost';
     detach.textContent = 'Detach';
@@ -6394,7 +6458,9 @@ async function renderServerDatabases(row, body) {
     for (const d of free) {
       const o = document.createElement('option');
       o.value = d.name;
-      o.textContent = (d.label || d.name) + ' \u2014 ' + (d.engineLabel || d.engine) + ' ' + (d.version || '') + (d.status === 'running' ? '' : ' (stopped)');
+      o.textContent = (d.label || d.name) + ' \u2014 ' + (d.engineLabel || d.engine) + ' ' + (d.version || '')
+        + (d.external ? ' at ' + d.host + ':' + d.port : '')
+        + (d.status === 'running' || d.status === 'reachable' ? '' : d.status === 'unreachable' ? ' (unreachable)' : ' (stopped)');
       sel.append(o);
     }
     const go = document.createElement('button');
@@ -6439,7 +6505,9 @@ async function applyToPlugin(row, a, helpers) {
   if (!ready.length) {
     toast(waiting.length
       ? waiting.map((h) => h.label).join(', ') + ' installed but not started yet: start the server once so it writes its config, then apply.'
-      : 'None of the plugins this can configure (LuckPerms, CoreProtect, Plan, AuthMe) has a config here.', 'bad');
+      : (a.kind === 'redis'
+        ? 'No plugin here takes a Redis connection from this yet (LuckPerms messaging is the one).'
+        : 'None of the plugins this can configure (LuckPerms, CoreProtect, Plan, AuthMe) has a config here.'), 'bad');
     return;
   }
   const res = await ask({
@@ -6479,12 +6547,18 @@ async function renderDatabaseSettings(row) {
   const h = document.createElement('h3');
   h.textContent = 'Connection';
   const blurb = document.createElement('p');
-  blurb.textContent = 'Loopback only: nothing outside this machine can reach it. Servers get their own user and database; root is for you.';
+  blurb.textContent = row.external
+    ? 'Registered with its address and admin credentials; it is run and stopped where it lives. Servers are attached to it from their own Settings tab.'
+    : row.engineKind === 'redis'
+      ? 'Loopback only: nothing outside this machine can reach it. One password and one key space, shared by every server attached; plugins prefix their keys.'
+      : 'Loopback only: nothing outside this machine can reach it. Servers get their own user and database; root is for you.';
   head.append(mark, h, blurb);
   conn.append(head);
   const dl = document.createElement('dl');
   dl.className = 'creds';
-  for (const r of [['Engine', (row.engineLabel || row.engine) + ' ' + (row.version || '')], ['Host', '127.0.0.1'], ['Port', String(row.port)], ['Folder', row.dir || '—']]) {
+  const facts = [['Engine', (row.engineLabel || row.engine) + ' ' + (row.version || '') + (row.external ? ' (runs elsewhere)' : '')], ['Host', row.host || '127.0.0.1'], ['Port', String(row.port)]];
+  if (!row.external) facts.push(['Folder', row.dir || '—']);
+  for (const r of facts) {
     const div = document.createElement('div');
     const dt = document.createElement('dt');
     dt.textContent = r[0];
@@ -6498,7 +6572,7 @@ async function renderDatabaseSettings(row) {
   rootRow.className = 'row';
   rootRow.style.marginTop = '10px';
   const rootBtn = document.createElement('button');
-  rootBtn.textContent = 'Show root password';
+  rootBtn.textContent = row.engineKind === 'redis' ? 'Show password' : 'Show admin password';
   rootBtn.onclick = async () => {
     let c;
     try {
@@ -6549,7 +6623,7 @@ async function renderDatabaseSettings(row) {
     const sub = document.createElement('div');
     sub.className = 'hint';
     sub.style.margin = '0';
-    sub.textContent = 'database ' + a.database + ' \u00b7 user ' + a.user;
+    sub.textContent = a.database ? 'database ' + a.database + ' \u00b7 user ' + a.user : 'shared password \u00b7 key prefix ' + name + ':';
     text.append(b, sub);
     const show = document.createElement('button');
     show.textContent = 'Show credentials';
@@ -6619,7 +6693,7 @@ function selectTab(tab) {
   $('#formPack').hidden = tab !== 'pack';
   $('#formAdopt').hidden = tab !== 'adopt';
   $('#formDb').hidden = tab !== 'db';
-  if (tab === 'db') loadDbVersions();
+  if (tab === 'db') loadDbEngines().then(syncDbForm);
 }
 
 function openAdd(tab) {
@@ -6628,12 +6702,57 @@ function openAdd(tab) {
   setTimeout(() => $(tab === 'adopt' ? '#aDir' : tab === 'pack' ? '#pSearch' : tab === 'db' ? '#dName' : '#nName').focus(), 0);
 }
 
-let dbVersionsLoaded = false;
-async function loadDbVersions() {
-  if (dbVersionsLoaded) return;
-  const sel = $('#dVersion');
+let dbEnginesLoaded = false;
+const ENGINE_HINT = { mariadb: 'MySQL-compatible', garnet: 'Redis-compatible, by Microsoft' };
+async function loadDbEngines() {
+  if (dbEnginesLoaded) return;
   try {
-    const list = await api('/databases/versions?engine=' + encodeURIComponent($('#dEngine').value));
+    const list = await api('/databases/engines');
+    const sel = $('#dEngine');
+    sel.textContent = '';
+    for (const e of list) sel.append(new Option(e.label, e.id));
+    dbEnginesLoaded = true;
+  } catch { /* the one engine already in the select stands */ }
+}
+
+function dbMode() {
+  return (document.querySelector('input[name="dbMode"]:checked') || {}).value || 'run';
+}
+
+/** Show the fields the chosen mode and engine need, and say what the port default is. */
+function syncDbForm() {
+  const engine = $('#dEngine').value;
+  const connect = dbMode() === 'connect';
+  const redis = engine === 'garnet';
+  $('#dEngineHint').textContent = ENGINE_HINT[engine] || '';
+  $('#dVersionWrap').hidden = connect;
+  $('#dConnect').hidden = !connect;
+  $('#dUserWrap').hidden = redis;
+  $('#dToolsWrap').hidden = redis;
+  $('#dPasswordHint').textContent = redis ? 'Its requirepass, if it has one' : "XAMPP's root has none";
+  $('#dPortHint').textContent = connect
+    ? 'Blank means ' + (redis ? '6379' : '3306')
+    : 'Blank picks ' + (redis ? '6379' : '3306') + ' or the next free one';
+  $('#bDbCreate').textContent = connect ? 'Connect' : 'Add database';
+  $('#dbHint').textContent = connect
+    ? 'It is asked to answer before it is saved, so a wrong address or password is refused now.'
+    : 'Around 100 MB the first time for a version; every database on that version shares it.';
+  if (!connect) loadDbVersions();
+}
+for (const r of $$('input[name="dbMode"]')) r.onchange = syncDbForm;
+$('#dEngine').onchange = () => { dbVersionsFor = null; syncDbForm(); };
+
+let dbVersionsFor = null;
+async function loadDbVersions() {
+  const engine = $('#dEngine').value;
+  if (dbVersionsFor === engine) return;
+  dbVersionsFor = engine;
+  const sel = $('#dVersion');
+  sel.textContent = '';
+  sel.append(new Option('Loading versions…', ''));
+  try {
+    const list = await api('/databases/versions?engine=' + encodeURIComponent(engine));
+    if (dbVersionsFor !== engine) return;
     sel.textContent = '';
     for (const v of list) {
       const o = document.createElement('option');
@@ -6642,11 +6761,12 @@ async function loadDbVersions() {
       sel.append(o);
     }
     if (!list.length) sel.append(new Option('No stable release listed', ''));
-    dbVersionsLoaded = true;
   } catch (e) {
+    if (dbVersionsFor !== engine) return;
     sel.textContent = '';
     sel.append(new Option('Could not load versions', ''));
     $('#dVersionHint').textContent = e.message;
+    dbVersionsFor = null;
   }
 }
 
@@ -6707,6 +6827,31 @@ $('#aMem').oninput = () => checkMemory($('#aMem'), $('#aMemBad'));
 $('#formDb').onsubmit = async (e) => {
   e.preventDefault();
   if (!checkName($('#dName'), $('#dNameBad'))) { $('#dName').focus(); return; }
+  if (dbMode() === 'connect') {
+    $('#bDbCreate').disabled = true;
+    try {
+      const db = await post('/databases/external', {
+        label: $('#dName').value,
+        name: slugOf($('#dName')),
+        engine: $('#dEngine').value,
+        host: $('#dHost').value.trim() || '127.0.0.1',
+        port: $('#dPort').value || null,
+        user: $('#dUser').value.trim() || 'root',
+        password: $('#dPassword').value,
+        tools: $('#dTools').value.trim() || null,
+      });
+      $('#bDbCreate').disabled = false;
+      e.target.reset();
+      syncDbForm();
+      await refresh();
+      select(db.name);
+      toast('Connected to ' + db.name + ' at ' + db.host + ':' + db.port + '. Attach a server from its Settings tab.', 'good');
+    } catch (err) {
+      $('#bDbCreate').disabled = false;
+      toast(err.message, 'bad');
+    }
+    return;
+  }
   if (!$('#dVersion').value) { toast('Pick a version first.', 'bad'); return; }
 
   const jobId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'job-' + Date.now();
@@ -6743,6 +6888,8 @@ $('#formDb').onsubmit = async (e) => {
     $('#dbProg').hidden = true;
     $('#bDbCreate').disabled = false;
     e.target.reset();
+    dbVersionsFor = null;
+    syncDbForm();
     await refresh();
     select(db.name);
     toast('Added ' + db.name + ' on port ' + db.port + '. Start it, then attach a server from its Settings tab.', 'good');

@@ -88,6 +88,7 @@ async function ensureJava(inst, { force = false } = {}) {
 
 export async function start(name, { wait = true, timeout = 180000, sync = true, force = false } = {}) {
   let inst = getInstance(name)
+  if (inst.external) fail(`"${name}" is a database that runs elsewhere (${inst.host ?? '127.0.0.1'}:${inst.port}); it is not started or stopped from here`)
   assertInstanceDir(inst)
   // The EULA, Java and server.properties are Minecraft's; a database has an engine instead, and
   // its launch spec is what checks that the engine is there.

@@ -16,8 +16,15 @@ export const FAILED_RE = /(Failed to start the minecraft server|A fatal error ha
 export const MARIADB_READY_RE = /ready for connections/i
 export const MARIADB_FAILED_RE = /\[ERROR\] (?:Aborting|Can't start server|mariadbd: Can't|mysqld: Can't|InnoDB: Unable to lock|Fatal error)/i
 
+/** Garnet, and Redis itself: the line every Redis-speaking server prints once it listens. */
+export const GARNET_READY_RE = /ready to accept connections|listening on|server started/i
+export const GARNET_FAILED_RE = /address already in use|only one usage of each socket|unhandled exception|cannot bind/i
+
 /** The pair that fits an instance: a database's engine has its own lines. */
 export function patternsFor(inst) {
-  if (inst?.kind === 'database') return { ready: MARIADB_READY_RE, failed: MARIADB_FAILED_RE }
+  if (inst?.kind === 'database') {
+    if (inst.engine === 'garnet') return { ready: GARNET_READY_RE, failed: GARNET_FAILED_RE }
+    return { ready: MARIADB_READY_RE, failed: MARIADB_FAILED_RE }
+  }
   return { ready: READY_RE, failed: FAILED_RE }
 }

@@ -18,6 +18,7 @@ export const HELPERS = [
   {
     id: 'luckperms',
     label: 'LuckPerms',
+    engine: 'mariadb',
     plugin: /^luckperms$/i,
     file: 'plugins/LuckPerms/config.yml',
     edits: (c) => [
@@ -32,6 +33,7 @@ export const HELPERS = [
   {
     id: 'coreprotect',
     label: 'CoreProtect',
+    engine: 'mariadb',
     plugin: /^coreprotect$/i,
     file: 'plugins/CoreProtect/config.yml',
     edits: (c) => [
@@ -47,6 +49,7 @@ export const HELPERS = [
   {
     id: 'plan',
     label: 'Plan',
+    engine: 'mariadb',
     plugin: /^plan$/i,
     file: 'plugins/Plan/config.yml',
     edits: (c) => [
@@ -62,6 +65,7 @@ export const HELPERS = [
   {
     id: 'authme',
     label: 'AuthMe',
+    engine: 'mariadb',
     plugin: /^authme$/i,
     file: 'plugins/AuthMe/config.yml',
     edits: (c) => [
@@ -73,6 +77,20 @@ export const HELPERS = [
       { path: ['DataSource', 'mySQLDatabase'], value: c.database },
     ],
     note: 'DataSource.backend becomes MYSQL.',
+  },
+  {
+    id: 'luckperms-redis',
+    label: 'LuckPerms (messaging over Redis)',
+    engine: 'redis',
+    plugin: /^luckperms$/i,
+    file: 'plugins/LuckPerms/config.yml',
+    edits: (c) => [
+      { path: ['messaging-service'], value: 'redis' },
+      { path: ['redis', 'enabled'], value: true },
+      { path: ['redis', 'address'], value: `${c.host}:${c.port}` },
+      { path: ['redis', 'password'], value: c.password },
+    ],
+    note: 'messaging-service becomes redis, so several servers on one database see each other\'s changes at once.',
   },
 ]
 
@@ -99,6 +117,7 @@ export function detectHelpers(inst) {
     return {
       id: h.id,
       label: h.label,
+      engine: h.engine,
       file: h.file,
       pluginPresent: installed.some((n) => h.plugin.test(n)),
       configPresent: fs.existsSync(file),
@@ -108,8 +127,9 @@ export function detectHelpers(inst) {
 }
 
 /** Write one plugin's config. Returns what changed; the caller records it and says "restart". */
-export function applyHelper(inst, id, creds) {
+export function applyHelper(inst, id, creds, { kind = null } = {}) {
   const h = helperById(id)
+  if (kind && h.engine !== kind) fail(`${h.label} takes a ${h.engine} connection, and this database is ${kind}`)
   const file = path.join(inst.dir, h.file)
   if (!fs.existsSync(file)) {
     fail(`${h.label} has not written its config yet (${h.file}). Start the server once with the plugin installed, then apply.`)

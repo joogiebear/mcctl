@@ -7,21 +7,29 @@ import {
   usedPorts, assertPortUsable,
 } from './registry.mjs'
 import * as mariadb from './mariadb.mjs'
+import * as garnet from './garnet.mjs'
 import { detectHelpers, applyHelper } from './dbconfig.mjs'
 import { readState, clearState } from './control.mjs'
 import { fail, findFreePort, randomPassword, validateName, cleanLabel } from './util.mjs'
-import { readState as stateOf } from './control.mjs'
 
 /**
  * Databases: registered like servers, run by the same daemon, attached to servers with their
- * own credentials.
+ * own credentials - or, for one the person already runs, registered with its address and root
+ * credentials and attached to just the same, only never started or stopped from here.
  *
- * <p>One engine module for now. The shape here - engine, version, port, a root password, a map of
- * attachments keyed by server - is what a second engine would fill in the same way.
+ * <p>Two engines. Each module fills one interface: versions/fetchEngine/initData/launchSpec to
+ * run one here; probe/newRecord/provision/deprovision/credentialsFor to attach servers to one
+ * wherever it runs; dump/importSql where a dump is a thing the engine has.
  */
 
 export const ENGINES = {
-  [mariadb.ENGINE]: { label: mariadb.LABEL, defaultPort: mariadb.DEFAULT_PORT, module: mariadb },
+  [mariadb.ENGINE]: { label: mariadb.LABEL, kind: mariadb.KIND, defaultPort: mariadb.DEFAULT_PORT, module: mariadb },
+  [garnet.ENGINE]: { label: garnet.LABEL, kind: garnet.KIND, defaultPort: garnet.DEFAULT_PORT, module: garnet },
+}
+
+/** Whether the database is there to be talked to: running here, or external (assumed; the call says otherwise). */
+function isUp(db) {
+  return db.external ? true : readState(db.name).status === 'running'
 }
 
 function engineOf(inst) {
@@ -52,8 +60,10 @@ export function serverAttachments(serverName) {
       service: db.name,
       label: db.label ?? null,
       engine: db.engine,
-      version: db.version,
-      host: '127.0.0.1',
+      kind: ENGINES[db.engine]?.kind ?? db.engine,
+      external: Boolean(db.external),
+      version: db.version ?? null,
+      host: db.host ?? '127.0.0.1',
       port: db.port,
       database: a.database,
       user: a.user,
@@ -121,7 +131,7 @@ export function removeDatabase(name, { purge = false } = {}) {
   const { status } = readState(name)
   if (status === 'running' || status === 'stopping') fail(`"${name}" is running - stop it before deleting it`)
   const attached = Object.keys(inst.attachments ?? {})
-  if (purge) {
+  if (purge && inst.dir && !inst.external) {
     try {
       fs.rmSync(inst.dir, { recursive: true, force: true })
     } catch (err) {
@@ -142,15 +152,10 @@ export function removeDatabase(name, { purge = false } = {}) {
 export function attach(dbName, serverName) {
   const db = getDatabase(dbName)
   assertServer(serverName)
-  if (readState(dbName).status !== 'running') fail(`"${dbName}" is not running - start it first, then attach`)
-  const existing = db.attachments?.[serverName]
-  const record = existing ?? {
-    database: serverName,
-    user: serverName,
-    password: randomPassword(24),
-    createdAt: new Date().toISOString(),
-  }
-  engineOf(db).sql(db, engineOf(db).attachSql(record))
+  if (!isUp(db)) fail(`"${dbName}" is not running - start it first, then attach`)
+  const mod = engineOf(db)
+  const record = db.attachments?.[serverName] ?? mod.newRecord(serverName, db)
+  mod.provision(db, record)
   updateInstance(dbName, { attachments: { ...(db.attachments ?? {}), [serverName]: record } })
   return credentials(dbName, serverName)
 }
@@ -160,8 +165,8 @@ export function detach(dbName, serverName, { drop = false } = {}) {
   const db = getDatabase(dbName)
   const record = db.attachments?.[serverName]
   if (!record) fail(`"${serverName}" is not attached to "${dbName}"`)
-  if (readState(dbName).status === 'running') {
-    engineOf(db).sql(db, engineOf(db).detachSql({ database: record.database, user: record.user, drop }))
+  if (isUp(db)) {
+    engineOf(db).deprovision(db, record, { drop })
   } else if (drop) {
     fail(`"${dbName}" is not running, so its data cannot be dropped - start it first, or detach without --drop`)
   }
@@ -180,12 +185,58 @@ export function credentials(dbName, serverName) {
     service: dbName,
     server: serverName,
     engine: db.engine,
-    host: '127.0.0.1',
+    kind: ENGINES[db.engine]?.kind ?? db.engine,
+    host: db.host ?? '127.0.0.1',
     port: db.port,
     database: a.database,
     user: a.user,
     password: a.password,
-    jdbc: `jdbc:mysql://127.0.0.1:${db.port}/${a.database}`,
+    ...engineOf(db).credentialsFor(db, a),
+  }
+}
+
+// ---- one the person already runs --------------------------------------------------------------
+
+/**
+ * Register a database that runs elsewhere - XAMPP, a MariaDB install, a Redis on the LAN - so
+ * servers can be attached to it with credentials of their own. It is asked to answer before it
+ * is recorded: an address that is wrong is refused now, with the engine's own reason, rather
+ * than at the first attach.
+ */
+export async function registerExternal(name, { engine = mariadb.ENGINE, host = '127.0.0.1', port = null, user = 'root', password = '', tools = null, label = null } = {}) {
+  validateName(name)
+  if (hasInstance(name)) fail(`"${name}" already exists - servers and databases share one set of names`)
+  if (!ENGINES[engine]) fail(`unknown database engine "${engine}"`)
+  const chosenPort = Number(port ?? ENGINES[engine].defaultPort)
+  if (!Number.isInteger(chosenPort) || chosenPort < 1 || chosenPort > 65535) fail(`${port} is not a port number`)
+  const inst = {
+    kind: 'database',
+    engine,
+    external: true,
+    host: String(host || '127.0.0.1'),
+    port: chosenPort,
+    root: { user: String(user || 'root'), password: String(password ?? '') },
+    attachments: {},
+    createdAt: new Date().toISOString(),
+  }
+  if (tools) {
+    if (!ENGINES[engine].module.binary?.(String(tools), 'client')) fail(`${tools} holds no client tool this engine knows`)
+    inst.tools = { dir: String(tools) }
+  }
+  const clean = cleanLabel(label)
+  if (clean && clean !== name) inst.label = clean
+  await ENGINES[engine].module.probe({ name, ...inst })
+  putInstance(name, inst)
+  return { name, ...inst }
+}
+
+/** Reachability for an external database, for a list that has no daemon to ask. */
+export async function externalStatus(db) {
+  try {
+    await engineOf(db).probe(db)
+    return 'reachable'
+  } catch {
+    return 'unreachable'
   }
 }
 
@@ -208,7 +259,11 @@ export async function dumpAttachments(serverName, dir) {
   const skipped = []
   for (const a of serverAttachments(serverName)) {
     const db = getDatabase(a.service)
-    if (stateOf(db.name).status !== 'running') {
+    if (!engineOf(db).canDump) {
+      skipped.push({ service: db.name, database: a.database, reason: `${ENGINES[db.engine].label} keeps its own checkpoints; it is not dumped` })
+      continue
+    }
+    if (!isUp(db)) {
       skipped.push({ service: db.name, database: a.database, reason: 'the database is not running' })
       continue
     }
@@ -244,7 +299,7 @@ export async function importDumps(serverName, dumps, baseDir) {
       continue
     }
     const db = getDatabase(d.service)
-    if (stateOf(db.name).status !== 'running') {
+    if (!isUp(db)) {
       skipped.push({ ...d, reason: `"${d.service}" is not running; the dump is left at ${file}` })
       continue
     }
@@ -261,8 +316,9 @@ export async function importDumps(serverName, dumps, baseDir) {
 // ---- plugins that want the credentials ------------------------------------------------------
 
 /** The plugin config helpers this server can use, with whether each plugin and its config are there. */
-export function helpersFor(serverName) {
-  return detectHelpers(assertServer(serverName))
+export function helpersFor(serverName, { engine = null } = {}) {
+  const kind = engine ? (ENGINES[engine]?.kind ?? engine) : null
+  return detectHelpers(assertServer(serverName)).filter((h) => !kind || h.engine === kind)
 }
 
 /**
@@ -272,7 +328,7 @@ export function helpersFor(serverName) {
 export function applyToPlugin(dbName, serverName, helperId) {
   const server = assertServer(serverName)
   const creds = credentials(dbName, serverName)
-  const result = applyHelper(server, helperId, creds)
+  const result = applyHelper(server, helperId, creds, { kind: creds.kind })
   const db = getDatabase(dbName)
   const record = db.attachments[serverName]
   const applied = { ...(record.applied ?? {}), [result.plugin]: { file: result.file, at: new Date().toISOString() } }
