@@ -364,10 +364,10 @@ This is built for **localhost and LAN only**.
 
 ## The site
 
-The project site is [spawnloft.com](https://spawnloft.com), built from the
-[mcctl-site](https://github.com/joogiebear/mcctl-site) repository and deployed by Vercel. `site/`
-here is the old GitHub Pages address, kept only to send visitors on to the new one; `site/banner/`
-holds the banner artwork partner sites embed, as HTML plus the rendered PNGs.
+The project page and the docs live in their own repository,
+[joogiebear/mcctl-site](https://github.com/joogiebear/mcctl-site), served at
+[spawnloft.com](https://spawnloft.com): a VitePress site deployed by Vercel on every push. The
+banner artwork partner sites embed lives there too, under `public/banner/`.
 
 ## The panel
 
