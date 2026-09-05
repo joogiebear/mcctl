@@ -243,10 +243,6 @@ test('a database that dies during startup is reported as failed, with the engine
   // Auto-restart is on for a database by default; off here, or the daemon would spend the next
   // half minute retrying a start that is scripted to fail.
   updateInstance(DB, { autoRestart: false })
-  // Auto-restart off for this one: with it on, the daemon would keep relaunching the failing
-  // engine through its restart delays, and the next test would find it still "stopping".
-  const { updateInstance } = await import('../src/registry.mjs')
-  updateInstance(DB, { autoRestart: false })
   process.env.FAKE_MARIADB_FAIL = 'start'
   try {
     const res = await sup.start(DB, { timeout: 15000 })
