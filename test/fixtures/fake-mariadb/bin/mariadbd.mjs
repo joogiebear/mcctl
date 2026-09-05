@@ -5,6 +5,7 @@
  *
  *   shutdown          exit 0 after saying so
  *   sql <base64>      append the statements to <datadir>/sql.log, answer "ok"
+ *   dump <base64 db>  answer "ok <base64 dump text>" and close, the way a dump streams
  *
  * FAKE_MARIADB_FAIL=start makes it die during startup the way a taken port does.
  */
@@ -41,6 +42,10 @@ const server = net.createServer((socket) => {
         const sql = Buffer.from(line.slice(4), 'base64').toString('utf8')
         fs.appendFileSync(path.join(datadir, 'sql.log'), sql + '\n')
         socket.write('ok\n')
+      } else if (line.startsWith('dump ')) {
+        const db = Buffer.from(line.slice(5), 'base64').toString('utf8')
+        const text = `-- MariaDB dump (fake) of ${db}\nCREATE DATABASE IF NOT EXISTS \`${db}\`;\nUSE \`${db}\`;\n-- dumped at ${Date.now()}\n`
+        socket.end(`ok ${Buffer.from(text).toString('base64')}\n`)
       } else {
         socket.write('error unknown\n')
       }

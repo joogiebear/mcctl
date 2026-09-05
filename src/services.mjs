@@ -9,6 +9,7 @@ import {
 import * as mariadb from './mariadb.mjs'
 import { readState, clearState } from './control.mjs'
 import { fail, findFreePort, randomPassword, validateName, cleanLabel } from './util.mjs'
+import { readState as stateOf } from './control.mjs'
 
 /**
  * Databases: registered like servers, run by the same daemon, attached to servers with their
@@ -184,4 +185,73 @@ export function credentials(dbName, serverName) {
     password: a.password,
     jdbc: `jdbc:mysql://127.0.0.1:${db.port}/${a.database}`,
   }
+}
+
+// ---- backups ------------------------------------------------------------------------------------
+
+/** The file a dump takes inside a snapshot: databases/<service>__<database>.sql */
+export function dumpFileFor(service, database) {
+  return path.join('databases', `${service}__${database}.sql`)
+}
+
+/**
+ * Dump every database a server is attached to, into `<dir>/databases/`.
+ *
+ * <p>Returns what was dumped, ready to go in a manifest, and what could not be: a database that
+ * is not running has nothing to answer a dump with. That is reported, not thrown - the rest of
+ * the snapshot is still worth taking, and the manifest says what it lacks.
+ */
+export async function dumpAttachments(serverName, dir) {
+  const dumped = []
+  const skipped = []
+  for (const a of serverAttachments(serverName)) {
+    const db = getDatabase(a.service)
+    if (stateOf(db.name).status !== 'running') {
+      skipped.push({ service: db.name, database: a.database, reason: 'the database is not running' })
+      continue
+    }
+    const rel = dumpFileFor(db.name, a.database)
+    try {
+      const { bytes } = await engineOf(db).dump(db, a.database, path.join(dir, rel))
+      dumped.push({ service: db.name, engine: db.engine, version: db.version, database: a.database, user: a.user, file: rel.replace(/\\/g, '/'), bytes })
+    } catch (err) {
+      skipped.push({ service: db.name, database: a.database, reason: err.message })
+    }
+  }
+  return { dumped, skipped }
+}
+
+/**
+ * Import the dumps a snapshot carried, each into the database it came from.
+ *
+ * <p>The dump names its own database, so the file goes in as root and lands where it was taken
+ * from. A database that is gone from the registry, or not running, keeps its dump on disk and is
+ * named as skipped: a restore must not lose a file it could not use.
+ */
+export async function importDumps(serverName, dumps, baseDir) {
+  const imported = []
+  const skipped = []
+  for (const d of dumps) {
+    const file = path.join(baseDir, d.file)
+    if (!fs.existsSync(file)) {
+      skipped.push({ ...d, reason: 'the dump is missing from the archive' })
+      continue
+    }
+    if (!hasInstance(d.service) || !isDatabase(getInstance(d.service))) {
+      skipped.push({ ...d, reason: `"${d.service}" is no longer here; the dump is left at ${file}` })
+      continue
+    }
+    const db = getDatabase(d.service)
+    if (stateOf(db.name).status !== 'running') {
+      skipped.push({ ...d, reason: `"${d.service}" is not running; the dump is left at ${file}` })
+      continue
+    }
+    try {
+      await engineOf(db).importSql(db, file)
+      imported.push(d)
+    } catch (err) {
+      skipped.push({ ...d, reason: `${err.message}; the dump is left at ${file}` })
+    }
+  }
+  return { imported, skipped }
 }

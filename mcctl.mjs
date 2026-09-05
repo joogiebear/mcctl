@@ -648,6 +648,8 @@ async function cmdBackup(positional, flags) {
   const res = await backup.createSnapshot(inst, { scope, label: flags.label ?? null, running, flush })
   out(`Wrote ${res.file} (${humanBytes(res.size)})`)
   out(`  included: ${res.members.join(', ')}`)
+  for (const d of res.databases ?? []) out(`  database: ${d.database} on ${d.service} (${humanBytes(d.bytes)})`)
+  for (const d of res.databasesSkipped ?? []) out(`  WARNING: database ${d.database} on ${d.service} not included: ${d.reason}`)
   if (res.flushWarning) out(`  WARNING: ${res.flushWarning}`)
   if (res.mirrored) out(`  mirrored: ${res.mirrored}`)
   if (res.mirrorError) out(`  WARNING: ${res.mirrorError}`)
@@ -685,6 +687,7 @@ async function cmdRestore(positional, flags) {
     out(`About to restore into ${inst.dir}:`)
     out(`  snapshot: ${snap.name} (${snap.sizeHuman}, scope ${snap.scope})`)
     out(`  overwrites: ${snap.members.join(', ') || '(see manifest)'}`)
+    for (const d of snap.databases ?? []) out(`  imports:    database ${d.database} on ${d.service} (needs "${d.service}" running)`)
     out('')
     out('This overwrites existing files in place. Re-run with --yes to proceed.')
     process.exitCode = 1
@@ -692,6 +695,9 @@ async function cmdRestore(positional, flags) {
   }
   const res = await backup.restoreSnapshot(inst, snap)
   out(`Restored ${res.restored} into ${res.into}`)
+  for (const d of res.databases?.imported ?? []) out(`  imported database ${d.database} into ${d.service}`)
+  for (const d of res.databases?.skipped ?? []) out(`  WARNING: database ${d.database} not imported: ${d.reason}`)
+  if (res.databases?.skipped?.length) process.exitCode = 1
 }
 
 function cmdPrune(positional, flags) {

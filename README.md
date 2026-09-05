@@ -619,7 +619,9 @@ MariaDB comes from its own mirror as the portable Windows zip, hash-checked and 
 `tar` Windows ships, into `engines/` beside the jars; every database on that version shares it.
 Each database keeps its data under `services/<name>/`, listens on 127.0.0.1 only, and is stopped
 through `mariadb-admin` over TCP, since a database takes no console input. The user a server gets
-can reach its one database and nothing else. In the panel, databases sit under the servers in the
+can reach its one database and nothing else. A snapshot of an attached server carries a dump of
+its database as a `databases/` member; verify checks for it, and restore imports it back into the
+database it came from, which has to be running. In the panel, databases sit under the servers in the
 sidebar, a server's Settings tab has a Databases card with the credentials one click away, and
 *Add a server → A database* creates one. The plan, with what comes next (backups of attached
 databases, config helpers for the common plugins, Redis by way of Garnet), is in

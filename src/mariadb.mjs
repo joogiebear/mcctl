@@ -1,13 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 import { ENGINES_DIR } from './paths.mjs'
-import { runTar } from './backup.mjs'
-import { fail, humanBytes } from './util.mjs'
+import { runTar } from './tar.mjs'
+import { fail, humanBytes, UserError } from './util.mjs'
 import { MARIADB_READY_RE, MARIADB_FAILED_RE } from './ready.mjs'
 
 /**
@@ -338,4 +338,62 @@ export function detachSql({ database, user, drop = false }) {
   if (drop) lines.push(`DROP DATABASE IF EXISTS ${quoteIdent(database)};`)
   lines.push('FLUSH PRIVILEGES;')
   return lines.join('\n')
+}
+
+// ---- dumps ------------------------------------------------------------------------------------
+
+function runToFile(cmd, args, env, { stdout = null, stdin = null, label }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { env, windowsHide: true, stdio: [stdin ? 'pipe' : 'ignore', stdout ? 'pipe' : 'ignore', 'pipe'] })
+    let stderr = ''
+    child.stderr.on('data', (c) => {
+      stderr += c.toString()
+    })
+    if (stdout) child.stdout.pipe(stdout, { end: false })
+    if (stdin) stdin.pipe(child.stdin)
+    child.on('error', (err) => reject(new UserError(`could not run the MariaDB ${label}: ${err.message}`)))
+    child.on('exit', (code) => {
+      if (code === 0) resolve()
+      else reject(new UserError(`MariaDB ${label} exited ${code}: ${stderr.trim().split(/\r?\n/)[0] || 'no reason given'}`))
+    })
+  })
+}
+
+/**
+ * Dump one database to a file, consistently.
+ *
+ * <p>--single-transaction reads the tables as of one moment without locking them, which is what
+ * makes a hot backup of a live server honest. --databases puts the CREATE DATABASE and USE at the
+ * top, so the file imports as root without anyone having to pick a database first.
+ */
+export async function dump(inst, database, file) {
+  const dir = engineDir(inst.version)
+  const tool = binary(dir, 'dump')
+  if (!tool) fail(`MariaDB ${inst.version} has no dump tool under ${dir}`)
+  const { cmd, args, env } = runnable(tool,
+    ['--protocol=TCP', '--host=127.0.0.1', `--port=${inst.port}`, '--user=root', '--single-transaction', '--routines', '--triggers', '--events', '--databases', database],
+    { ...process.env, MYSQL_PWD: inst.root?.password ?? '' })
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const out = fs.createWriteStream(file)
+  try {
+    await runToFile(cmd, args, env, { stdout: out, label: 'dump tool' })
+  } catch (err) {
+    out.destroy()
+    fs.rmSync(file, { force: true })
+    throw err
+  }
+  await new Promise((resolve) => out.end(resolve))
+  return { file, bytes: fs.statSync(file).size }
+}
+
+/** Feed a dump back through the client as root. */
+export async function importSql(inst, file) {
+  const dir = engineDir(inst.version)
+  const client = binary(dir, 'client')
+  if (!client) fail(`MariaDB ${inst.version} has no client tool under ${dir}`)
+  const { cmd, args, env } = runnable(client,
+    ['--protocol=TCP', '--host=127.0.0.1', `--port=${inst.port}`, '--user=root'],
+    { ...process.env, MYSQL_PWD: inst.root?.password ?? '' })
+  await runToFile(cmd, args, env, { stdin: fs.createReadStream(file), label: 'client' })
+  return { file }
 }

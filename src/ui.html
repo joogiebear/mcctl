@@ -5351,7 +5351,10 @@ async function renderBackups(opts) {
       size.textContent = snap.sizeHuman;
       const tag = document.createElement('div');
       tag.className = 'tag';
-      tag.textContent = snap.scope;
+      tag.textContent = snap.scope + (snap.databases && snap.databases.length ? ' + ' + snap.databases.length + ' db' : '');
+      if (snap.databases && snap.databases.length) {
+        tag.title = 'Includes a dump of ' + snap.databases.map((d) => d.database + ' on ' + d.service).join(', ');
+      }
       const actions = document.createElement('div');
       actions.className = 'snap-actions';
       const restore = iconButton('restore', 'Restore');
@@ -5366,11 +5369,16 @@ async function renderBackups(opts) {
 
       restore.onclick = async () => {
         const covers = describeMembers(snap.members);
+        const dbs = snap.databases && snap.databases.length
+          ? ' The database dump' + (snap.databases.length > 1 ? 's' : '') + ' it holds ('
+            + snap.databases.map((d) => d.database + ' on ' + d.service).join(', ')
+            + ') are imported too, which needs that database running.'
+          : '';
         const ok = await ask({
           title: 'Restore into ' + row.name + '?',
           text: 'This puts back ' + covers + ' as they were on '
             + new Date(snap.mtime).toLocaleString() + '. Anything changed since then is overwritten, and '
-            + 'restoring is not itself undoable - take a backup first if you are unsure.',
+            + 'restoring is not itself undoable - take a backup first if you are unsure.' + dbs,
           confirmLabel: 'Restore',
           danger: true,
           typeToConfirm: row.name,
@@ -5378,9 +5386,12 @@ async function renderBackups(opts) {
         if (!ok) return;
         const note = toast('Restoring ' + snap.name + '.');
         try {
-          await post(base + '/restore', { snapshot: snap.name });
+          const out = await post(base + '/restore', { snapshot: snap.name });
           note.remove();
-          toast('Restored ' + snap.name + '.', 'good');
+          const imported = (out.databases && out.databases.imported) || [];
+          const skipped = (out.databases && out.databases.skipped) || [];
+          toast('Restored ' + snap.name + (imported.length ? ', with ' + imported.length + ' database' + (imported.length > 1 ? 's' : '') + ' imported' : '') + '.', 'good');
+          for (const d of skipped) toast('Database ' + d.database + ' not imported: ' + d.reason, 'bad');
         } catch (e) {
           note.remove();
           toast(e.message, 'bad');

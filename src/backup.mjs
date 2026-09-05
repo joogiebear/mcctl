@@ -1,7 +1,10 @@
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { BACKUPS_DIR } from './paths.mjs'
+import { runTar, tarBinary } from './tar.mjs'
+import * as services from './services.mjs'
 import { readProps, worldDirs } from './props.mjs'
 import * as settings from './settings.mjs'
 import { rconExec } from './rcon.mjs'
@@ -118,50 +121,7 @@ function membersFor(inst, scope) {
   }
 }
 
-/**
- * Which tar to run.
- *
- * <p>Windows ships bsdtar at System32\tar.exe, and this code has always assumed that is the one it
- * gets. It is not: `tar` resolves through PATH, and any machine with Git for Windows, MSYS or a
- * similar toolchain installed finds GNU tar first. GNU tar reads `C:\backups\x.tar.gz` as
- * host `C:` plus a path and tries to open a network connection to it, so every snapshot on such a
- * machine failed with "Cannot connect to C: resolve failed" - which meant rebuild and delete-with-
- * files were unusable, because both take a snapshot first and both correctly refuse to continue
- * without one.
- *
- * <p>Naming the binary rather than trusting PATH is the fix. bsdtar has no --force-local and does
- * not need one.
- */
-function tarBinary() {
-  if (process.platform !== 'win32') return 'tar'
-  const system32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
-  return fs.existsSync(system32) ? system32 : 'tar'
-}
-
-export function runTar(args, cwd) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(tarBinary(), args, { cwd, windowsHide: true })
-    let stderr = ''
-    child.stderr.on('data', (c) => {
-      stderr += c.toString()
-    })
-    child.on('error', (err) =>
-      reject(
-        new UserError(
-          err.code === 'ENOENT'
-            ? 'tar was not found on PATH (Windows 10/11 ships tar.exe in System32)'
-            : `tar failed: ${err.message}`,
-        ),
-      ),
-    )
-    child.on('exit', (code) => {
-      // bsdtar exits 1 on warnings such as "file changed as we read it",
-      // which is expected when snapshotting a running server.
-      if (code === 0 || code === 1) resolve({ code, stderr })
-      else reject(new UserError(`tar exited ${code}: ${stderr.trim() || 'unknown error'}`))
-    })
-  })
-}
+export { runTar, tarBinary } from './tar.mjs'
 
 /**
  * Take a snapshot.
@@ -183,6 +143,29 @@ export async function createSnapshot(inst, { scope = 'standard', label = null, r
   const base = `${slug}${scope}_${stamp()}`
   const file = path.join(backupDir(inst.name), `${base}.tar.gz`)
 
+  /*
+    The databases this server is attached to go in too, as a `databases/` member holding one SQL
+    dump per database. Dumped into a scratch folder and added from there with -C, so the server's
+    own folder never holds a copy of its database. Only for the scopes that mean "the data":
+    plugins, worlds and config each name one kind of file, and a dump is none of them.
+
+    A database that is not running cannot be dumped. That is a warning in the manifest, not a
+    failed backup: the worlds are still worth taking, and the warning says what is missing.
+  */
+  let dumps = { dumped: [], skipped: [] }
+  let dumpDir = null
+  if (scope === 'standard' || scope === 'full') {
+    dumpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcctl-dump-'))
+    try {
+      dumps = await services.dumpAttachments(inst.name, dumpDir)
+    } catch (err) {
+      fs.rmSync(dumpDir, { recursive: true, force: true })
+      throw err
+    }
+  }
+  const dumpArgs = dumps.dumped.length ? ['-C', dumpDir, 'databases'] : []
+  const archived = dumps.dumped.length ? [...members, 'databases'] : members
+
   let flushed = false
   let flushWarning = null
   if (running && flush) {
@@ -195,7 +178,7 @@ export async function createSnapshot(inst, { scope = 'standard', label = null, r
   }
   let stderr
   try {
-    ;({ stderr } = await runTar(['-czf', file, ...EXCLUDE_ARGS, ...members], inst.dir))
+    ;({ stderr } = await runTar(['-czf', file, ...EXCLUDE_ARGS, ...members, ...dumpArgs], inst.dir))
   } finally {
     // save-on whether or not tar succeeded: leaving a live server with saving off is worse than
     // any failed backup.
@@ -206,6 +189,7 @@ export async function createSnapshot(inst, { scope = 'standard', label = null, r
         /* the server may have stopped mid-backup; nothing is left to turn back on */
       }
     }
+    if (dumpDir) fs.rmSync(dumpDir, { recursive: true, force: true })
   }
 
   const size = fs.statSync(file).size
@@ -228,7 +212,10 @@ export async function createSnapshot(inst, { scope = 'standard', label = null, r
     // Which scheduled task produced this, so its retention limit governs its own snapshots
     // and nobody else's. Null for anything a person asked for directly.
     taskId,
-    members,
+    members: archived,
+    // The dumps, by file inside the archive, so a restore knows what to import and verify knows
+    // what to look for. Empty when the server is attached to nothing.
+    databases: dumps.dumped,
     sourceDir: inst.dir,
     createdAt: new Date().toISOString(),
     size,
@@ -238,6 +225,7 @@ export async function createSnapshot(inst, { scope = 'standard', label = null, r
     // skips a file the running server has locked. That carries no signal.
     warnings: [
       ...(flushWarning ? [flushWarning] : []),
+      ...dumps.skipped.map((d) => `database ${d.database} on ${d.service} not included: ${d.reason}`),
       ...stderr
         .trim()
         .split(/\r?\n/)
@@ -246,7 +234,7 @@ export async function createSnapshot(inst, { scope = 'standard', label = null, r
   }
   writeJson(path.join(backupDir(inst.name), `${base}.json`), manifest)
   const { mirrored, mirrorError } = mirrorCopy(inst.name, file)
-  return { file, size, members, manifest, mirrored, mirrorError, flushed, flushWarning }
+  return { file, size, members: archived, databases: dumps.dumped, databasesSkipped: dumps.skipped, manifest, mirrored, mirrorError, flushed, flushWarning }
 }
 
 export function listSnapshots(name) {
@@ -268,6 +256,7 @@ export function listSnapshots(name) {
         label: manifest.label ?? '',
         taskId: manifest.taskId ?? null,
         members: manifest.members ?? [],
+        databases: manifest.databases ?? [],
       }
     })
     .sort((a, b) => b.mtime - a.mtime)
@@ -290,7 +279,24 @@ export function resolveSnapshot(name, ref) {
 export async function restoreSnapshot(inst, snapshot) {
   if (!fs.existsSync(inst.dir)) fail(`instance directory is missing: ${inst.dir}`)
   await runTar(['-xzf', snapshot.path], inst.dir)
-  return { restored: snapshot.name, into: inst.dir, members: snapshot.members }
+
+  // The dumps came out with everything else, under databases/ in the server folder. Imported
+  // into the databases they came from, then removed from the folder; a dump that cannot be
+  // imported - its database gone, or stopped - is left where it is and named, so it can be
+  // imported by hand rather than lost.
+  let databases = { imported: [], skipped: [] }
+  const dumps = snapshot.databases ?? []
+  if (dumps.length) {
+    databases = await services.importDumps(inst.name, dumps, inst.dir)
+    for (const d of databases.imported) fs.rmSync(path.join(inst.dir, d.file), { force: true })
+    const folder = path.join(inst.dir, 'databases')
+    try {
+      if (fs.existsSync(folder) && fs.readdirSync(folder).length === 0) fs.rmdirSync(folder)
+    } catch {
+      /* a folder that will not go is not worth failing a restore that already happened */
+    }
+  }
+  return { restored: snapshot.name, into: inst.dir, members: snapshot.members, databases }
 }
 
 /**
@@ -308,7 +314,7 @@ export async function restoreSnapshot(inst, snapshot) {
  * <p>Unlike creation, a non-zero exit here is always a failure. runTar tolerates exit 1 because
  * bsdtar uses it for hot-snapshot warnings; on a read, exit 1 is how corruption reports itself.
  */
-export async function verifyArchive(file, expectedMembers = []) {
+export async function verifyArchive(file, expectedMembers = [], expectedFiles = []) {
   const problems = []
   let size = 0
   try {
@@ -322,11 +328,15 @@ export async function verifyArchive(file, expectedMembers = []) {
 
   let entries = 0
   const roots = new Set()
+  // Every entry, kept only when a caller asked about specific files: the database dumps have to
+  // be there by name, not merely under a folder that exists.
+  const files = expectedFiles.length ? new Set() : null
   const sawEntry = (line) => {
     const entry = line.trim().replace(/\\/g, '/')
     if (!entry) return
     entries++
     roots.add(entry.split('/')[0])
+    if (files) files.add(entry.replace(/\/$/, ''))
   }
   try {
     await new Promise((resolve, reject) => {
@@ -364,13 +374,20 @@ export async function verifyArchive(file, expectedMembers = []) {
     for (const member of missing) {
       problems.push(`the manifest lists "${member}" but the archive does not contain it`)
     }
+    for (const f of expectedFiles) {
+      const want = String(f).replace(/\\/g, '/')
+      if (!files.has(want)) {
+        missing.push(want)
+        problems.push(`the manifest lists the database dump "${want}" but the archive does not contain it`)
+      }
+    }
   }
   return { ok: problems.length === 0, size, entries, missing, problems }
 }
 
 export async function verifySnapshot(name, ref) {
   const snap = resolveSnapshot(name, ref)
-  const result = await verifyArchive(snap.path, snap.members)
+  const result = await verifyArchive(snap.path, snap.members, (snap.databases ?? []).map((d) => d.file))
   // No manifest means the member check was vacuous, not that it passed. Said, so an "ok" on a
   // manifest-less archive is read at its actual strength.
   const hasManifest = fs.existsSync(snap.path.replace(/\.tar\.gz$/, '.json'))

@@ -1,11 +1,11 @@
 # Plan: databases for servers
 
-Status: **phase 1 built; awaiting its first run against real MariaDB on Windows.** The
+Status: **phases 1 and 2 built; awaiting their first run against real MariaDB on Windows.** The
 engine module, the daemon generalisation, attach/detach, the CLI group and the panel are in,
 covered by a lifecycle test against a fake MariaDB (`test/fixtures/fake-mariadb`). What that
 fake cannot prove, and the first Windows run has to: the download API's file list, the init
-tool's flags, `--console` logging, and `mariadb-admin shutdown` against the real binaries.
-Backups, config helpers and Redis follow.
+tool's flags, `--console` logging, `mariadb-admin shutdown`, and `mariadb-dump` against the
+real binaries. Config helpers and Redis follow.
 
 ## The goal
 
@@ -71,11 +71,18 @@ Paper download pattern exactly, and Windows's own `tar` unpacks zips.
 - **Uninstall.** Databases stop with the servers; `--data` deletes their folders and the
   engine store.
 
-## Phase 2 - backups
+## Phase 2 - backups (built)
 
-A snapshot of a server with attachments runs `mariadb-dump` of each attached database
-into the snapshot before the tar, so the backup stays hot and verify has a file to
-check; restore imports it. The scheduler needs nothing new.
+A snapshot of a server with attachments runs `mariadb-dump --single-transaction` of each
+attached database into a scratch folder and adds it to the archive as a `databases/`
+member, so the server's own folder never holds a copy of its database. The manifest
+lists each dump by file; verify looks for those files by name, the way it looks for a
+world; restore imports each dump into the database it came from and removes the
+extracted copy, and a dump it cannot import - the database gone, or stopped - stays on
+disk and is named. A database that is not running when the snapshot is taken is a
+warning in the manifest, not a failed backup. Only the standard and full scopes carry
+dumps: plugins, worlds and config each name one kind of file. The scheduler needed
+nothing new.
 
 ## Phase 3 - config helpers
 

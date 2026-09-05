@@ -26,6 +26,7 @@ const { readState } = await import('../src/control.mjs')
 const { ENGINES_DIR, INSTANCES_DIR } = await import('../src/paths.mjs')
 const { UserError, findFreePort } = await import('../src/util.mjs')
 const ui = await import('../src/ui.mjs')
+const backup = await import('../src/backup.mjs')
 
 const VERSION = '0.0.0-fake'
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-mariadb')
@@ -43,7 +44,8 @@ after(async () => {
 test('the fake engine is found through the same lookup the real one uses', () => {
   assert.ok(mariadb.hasEngine(VERSION))
   assert.equal(mariadb.binary(mariadb.engineDir(VERSION), 'server').script, true)
-  assert.equal(mariadb.binary(mariadb.engineDir(VERSION), 'dump'), null)
+  assert.equal(mariadb.binary(mariadb.engineDir(VERSION), 'dump').script, true)
+  assert.equal(mariadb.binary(mariadb.engineDir(VERSION), 'init').script, true)
 })
 
 test('creating a database lays out its folder, picks a free port, and registers it apart from the servers', async () => {
@@ -138,11 +140,74 @@ test('the panel lists databases apart from servers and never sends a password', 
   }
 })
 
+test('a snapshot of an attached server carries a dump of its database, and verify checks for it', { timeout: 30000 }, async () => {
+  const srv = { name: SRV, dir: path.join(INSTANCES_DIR, SRV) }
+  fs.writeFileSync(path.join(srv.dir, 'server.properties'), 'level-name=world\n')
+  fs.mkdirSync(path.join(srv.dir, 'world'), { recursive: true })
+  fs.writeFileSync(path.join(srv.dir, 'world', 'level.dat'), 'nbt')
+
+  const res = await backup.createSnapshot(srv, { scope: 'standard', label: 'with-db', running: false })
+  assert.equal(res.databases.length, 1, JSON.stringify(res.databasesSkipped))
+  const d = res.databases[0]
+  assert.equal(d.service, DB)
+  assert.equal(d.database, SRV)
+  assert.equal(d.file, `databases/${DB}__${SRV}.sql`)
+  assert.ok(d.bytes > 0)
+  assert.ok(res.members.includes('databases'))
+  assert.ok(!fs.existsSync(path.join(srv.dir, 'databases')), 'the server folder must not hold the dump')
+
+  const check = await backup.verifySnapshot(SRV, 'with-db')
+  assert.equal(check.ok, true, check.problems.join('; '))
+  assert.ok(check.snapshot.databases.length === 1)
+
+  // A dump the manifest promises but the archive lacks is named, like a missing world is.
+  const lie = await backup.verifyArchive(check.snapshot.path, ['world'], ['databases/nope__x.sql'])
+  assert.equal(lie.ok, false)
+  assert.match(lie.problems.join('\n'), /database dump "databases\/nope__x.sql"/)
+
+  // Only the scopes that mean "the data" carry dumps.
+  const plugins = await backup.createSnapshot({ ...srv }, { scope: 'worlds', label: 'worlds-only', running: false })
+  assert.equal(plugins.databases.length, 0)
+  assert.ok(!plugins.members.includes('databases'))
+})
+
+test('restore imports the dump into the database it came from, and leaves nothing behind', { timeout: 30000 }, async () => {
+  const srv = { name: SRV, dir: path.join(INSTANCES_DIR, SRV) }
+  const snap = backup.resolveSnapshot(SRV, 'with-db')
+  const log = () => fs.readFileSync(path.join(mariadb.dataDir(services.getDatabase(DB)), 'sql.log'), 'utf8')
+  const before = log()
+  const res = await backup.restoreSnapshot(srv, snap)
+  assert.equal(res.databases.imported.length, 1, JSON.stringify(res.databases))
+  assert.deepEqual(res.databases.skipped, [])
+  const after = log().slice(before.length)
+  assert.match(after, new RegExp(`-- MariaDB dump \\(fake\\) of ${SRV}`))
+  assert.match(after, new RegExp(`USE \`${SRV}\``))
+  assert.ok(!fs.existsSync(path.join(srv.dir, 'databases')), 'the extracted dump folder must be cleaned up')
+  assert.ok(fs.existsSync(path.join(srv.dir, 'world', 'level.dat')))
+})
+
 test('stop goes through the admin tool over TCP and is clean, not forced', { timeout: 30000 }, async () => {
   const res = await sup.stop(DB, { timeout: 10000 })
   assert.equal(res.forced, undefined, JSON.stringify(res))
   assert.equal(res.code, 0)
   assert.equal(readState(DB).status, 'stopped')
+})
+
+test('with the database stopped, a snapshot still succeeds and says what it lacks; restore leaves the dump in place', { timeout: 30000 }, async () => {
+  const srv = { name: SRV, dir: path.join(INSTANCES_DIR, SRV) }
+  const res = await backup.createSnapshot(srv, { scope: 'standard', label: 'db-down', running: false })
+  assert.equal(res.databases.length, 0)
+  assert.equal(res.databasesSkipped.length, 1)
+  assert.match(res.manifest.warnings.join('\n'), new RegExp(`database ${SRV} on ${DB} not included: the database is not running`))
+
+  const snap = backup.resolveSnapshot(SRV, 'with-db')
+  const out = await backup.restoreSnapshot(srv, snap)
+  assert.equal(out.databases.imported.length, 0)
+  assert.equal(out.databases.skipped.length, 1)
+  assert.match(out.databases.skipped[0].reason, /not running/)
+  const left = path.join(srv.dir, `databases/${DB}__${SRV}.sql`)
+  assert.ok(fs.existsSync(left), 'a dump that could not be imported must stay on disk')
+  fs.rmSync(path.join(srv.dir, 'databases'), { recursive: true, force: true })
 })
 
 test('detach while stopped keeps the record consistent, and dropping needs the database up', () => {
