@@ -118,7 +118,7 @@ test('sharing posts the console and hands back the link to open', async () => {
   assert.equal(call.url, 'https://api.mclo.gs/1/log')
   assert.equal(call.init.method, 'POST')
   assert.equal(call.init.headers['Content-Type'], 'application/json')
-  assert.match(call.init.headers['User-Agent'], /mcctl/)
+  assert.match(call.init.headers['User-Agent'], /spawnloft/i)
   const sent = JSON.parse(call.init.body)
   assert.equal(sent.content, '[12:00:00] [Server thread/INFO]: Done\n')
   assert.equal(sent.source, 'mcctl')

@@ -430,8 +430,8 @@ not — editing a file under a live server is reverted the next time it saves.
 **Feedback**, in the header, is three doors. *Something broke* opens a GitHub bug report with the
 version, Java, server status and panel log already in it, and puts the full diagnostics on the
 clipboard for pasting under it. *A question* opens a new post in the project's
-[Q&A](https://github.com/joogiebear/mcctl/discussions/categories/q-a), and *An idea* one in
-[Ideas](https://github.com/joogiebear/mcctl/discussions/categories/ideas). Nothing is
+[Q&A](https://github.com/joogiebear/spawnloft/discussions/categories/q-a), and *An idea* one in
+[Ideas](https://github.com/joogiebear/spawnloft/discussions/categories/ideas). Nothing is
 sent from SpawnLoft on its own; the browser hop is the consent. A crash notice under a server's vitals
 has a **Report** link that does the same, named for the crash.
 

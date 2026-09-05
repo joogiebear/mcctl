@@ -456,7 +456,7 @@ async function modrinth(pathname, init) {
       ...init,
       headers: {
         // Modrinth asks every client to say who it is.
-        'user-agent': 'joogiebear/mcctl (github.com/joogiebear/mcctl)',
+        'user-agent': 'joogiebear/spawnloft (github.com/joogiebear/spawnloft)',
         ...(init?.body ? { 'content-type': 'application/json' } : {}),
         ...init?.headers,
       },
@@ -550,7 +550,7 @@ async function hangar(pathname) {
   let res
   try {
     res = await fetch(`${HANGAR}${pathname}`, {
-      headers: { 'user-agent': 'joogiebear/mcctl (github.com/joogiebear/mcctl)' },
+      headers: { 'user-agent': 'joogiebear/spawnloft (github.com/joogiebear/spawnloft)' },
       signal: AbortSignal.timeout(15000),
     })
   } catch (err) {

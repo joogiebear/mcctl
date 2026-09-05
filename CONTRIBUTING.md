@@ -27,7 +27,7 @@ cannot be merged.
 ## Working on it
 
 ```
-git clone https://github.com/joogiebear/mcctl
+git clone https://github.com/joogiebear/spawnloft
 cd mcctl
 npm test                 # node:test, no dependencies, ~a second
 node mcctl.mjs ui --no-open --port 8771    # the panel, from source
@@ -48,11 +48,11 @@ visible.
 
 ## Where things go
 
-- A bug: [an issue](https://github.com/joogiebear/mcctl/issues/new?template=bug_report.md),
+- A bug: [an issue](https://github.com/joogiebear/spawnloft/issues/new?template=bug_report.md),
   ideally through the app's **Feedback → Something broke**, which fills in the diagnostics.
-- A question: [Q&A](https://github.com/joogiebear/mcctl/discussions/categories/q-a) in
+- A question: [Q&A](https://github.com/joogiebear/spawnloft/discussions/categories/q-a) in
   Discussions, so the answer stays findable.
-- An idea: [Ideas](https://github.com/joogiebear/mcctl/discussions/categories/ideas). Say what
+- An idea: [Ideas](https://github.com/joogiebear/spawnloft/discussions/categories/ideas). Say what
   you were trying to do, not only what to add.
 
 ## Branches

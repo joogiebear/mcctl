@@ -2,7 +2,7 @@
   "name": "mcctl",
   "version": "0.12.0",
   "private": true,
-  "repository": "github:joogiebear/mcctl",
+  "repository": "github:joogiebear/spawnloft",
   "description": "SpawnLoft core: the mcctl command line and panel - a multi-instance Minecraft server supervisor with console capture, RCON, and snapshots",
   "type": "module",
   "scripts": {
