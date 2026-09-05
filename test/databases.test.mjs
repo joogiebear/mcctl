@@ -115,6 +115,25 @@ test('attach creates the database and user for the server, and the credentials c
   assert.equal(fromServer[0].password, undefined, 'the server-side list must not carry the password')
 })
 
+test('apply writes the credentials into a plugin config and records it on the attachment', () => {
+  const srvDir = path.join(INSTANCES_DIR, SRV)
+  fs.mkdirSync(path.join(srvDir, 'plugins', 'LuckPerms'), { recursive: true })
+  fs.writeFileSync(path.join(srvDir, 'plugins', 'LuckPerms', 'config.yml'), 'storage-method: h2\ndata:\n  address: localhost\n  database: minecraft\n  username: root\n  password: \'\'\n')
+  const helpers = services.helpersFor(SRV)
+  assert.equal(helpers.find((h) => h.id === 'luckperms').configPresent, true)
+
+  const res = services.applyToPlugin(DB, SRV, 'luckperms')
+  assert.equal(res.restartNeeded, true)
+  assert.deepEqual(res.written, ['storage-method', 'data.address', 'data.database', 'data.username', 'data.password'])
+  const creds = services.credentials(DB, SRV)
+  const text = fs.readFileSync(path.join(srvDir, 'plugins', 'LuckPerms', 'config.yml'), 'utf8')
+  assert.match(text, /^storage-method: 'mariadb'$/m)
+  assert.match(text, new RegExp(`^  address: '127\\.0\\.0\\.1:${creds.port}'$`, 'm'))
+  assert.match(text, new RegExp(`^  password: '${creds.password}'$`, 'm'))
+  assert.ok(services.serverAttachments(SRV)[0].applied.luckperms, 'the attachment must remember the plugin it was written to')
+  assert.throws(() => services.applyToPlugin(DB, SRV, 'coreprotect'), /has not written its config yet/)
+})
+
 test('the panel lists databases apart from servers and never sends a password', async () => {
   const { server, url } = await ui.serve({ port: 0, open: false })
   try {
@@ -132,6 +151,8 @@ test('the panel lists databases apart from servers and never sends a password', 
     const mine = await (await fetch(`${url}api/instances/${SRV}/databases`)).json()
     assert.equal(mine[0].service, DB)
     assert.equal(mine[0].password, undefined)
+    const helpers = await (await fetch(`${url}api/instances/${SRV}/databases/helpers`)).json()
+    assert.equal(helpers.find((h) => h.id === 'luckperms').configPresent, true)
 
     const creds = await (await fetch(`${url}api/databases/${DB}/credentials?server=${SRV}`)).json()
     assert.equal(creds.password, services.credentials(DB, SRV).password)

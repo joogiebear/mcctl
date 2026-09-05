@@ -6305,8 +6305,12 @@ async function renderServerDatabases(row, body) {
   card.append(list);
 
   let mine = [];
+  let helpers = [];
   try {
-    mine = await api('/instances/' + encodeURIComponent(row.name) + '/databases');
+    [mine, helpers] = await Promise.all([
+      api('/instances/' + encodeURIComponent(row.name) + '/databases'),
+      api('/instances/' + encodeURIComponent(row.name) + '/databases/helpers'),
+    ]);
   } catch (e) {
     const bad = document.createElement('div');
     bad.className = 'bad';
@@ -6331,6 +6335,19 @@ async function renderServerDatabases(row, body) {
     const show = document.createElement('button');
     show.textContent = 'Show credentials';
     show.onclick = () => showCredentials(a.service, row.name);
+    // Which plugins have been pointed at this database, and a way to point another.
+    const appliedTo = Object.keys(a.applied || {});
+    if (appliedTo.length) {
+      const done = document.createElement('div');
+      done.className = 'hint';
+      done.style.margin = '0';
+      done.textContent = 'Written to ' + appliedTo.map((id) => (helpers.find((h) => h.id === id) || { label: id }).label).join(', ') + '.';
+      text.append(done);
+    }
+    const apply = document.createElement('button');
+    apply.className = 'ghost';
+    apply.textContent = 'Apply to a plugin\u2026';
+    apply.onclick = () => applyToPlugin(row, a, helpers);
     const detach = document.createElement('button');
     detach.className = 'ghost';
     detach.textContent = 'Detach';
@@ -6355,7 +6372,7 @@ async function renderServerDatabases(row, body) {
         toast(e.message, 'bad');
       }
     };
-    line.append(text, show, detach);
+    line.append(text, show, apply, detach);
     list.append(line);
   }
 
@@ -6409,6 +6426,38 @@ async function renderServerDatabases(row, body) {
     attachRow.append(hint);
   }
   list.append(attachRow);
+}
+
+/**
+ * Write the credentials into one plugin's config. Only plugins whose config exists are offered;
+ * one that is installed but has never run is named with the reason, since a config written now
+ * would be replaced by the plugin's defaults on its first start.
+ */
+async function applyToPlugin(row, a, helpers) {
+  const ready = helpers.filter((h) => h.configPresent);
+  const waiting = helpers.filter((h) => h.pluginPresent && !h.configPresent);
+  if (!ready.length) {
+    toast(waiting.length
+      ? waiting.map((h) => h.label).join(', ') + ' installed but not started yet: start the server once so it writes its config, then apply.'
+      : 'None of the plugins this can configure (LuckPerms, CoreProtect, Plan, AuthMe) has a config here.', 'bad');
+    return;
+  }
+  const res = await ask({
+    title: 'Write the connection into a plugin config',
+    text: 'Sets that plugin\'s storage to this database, in place, with its comments kept. Takes effect when the server restarts.'
+      + (waiting.length ? ' Not yet startable: ' + waiting.map((h) => h.label).join(', ') + ' (no config written yet).' : ''),
+    confirmLabel: 'Write it',
+    choices: ready.map((h) => ({ value: h.id, label: h.label, hint: h.file + (a.applied && a.applied[h.id] ? ' \u00b7 written before' : '') })),
+  });
+  if (!res) return;
+  try {
+    const out = await post('/databases/' + encodeURIComponent(a.service) + '/apply', { server: row.name, plugin: res.choice });
+    toast('Wrote ' + out.file + '. ' + out.note + ' Restart ' + row.name + ' for it to take effect.', 'good');
+    $('#settingsBody').dataset.for = '';
+    renderServerSettings();
+  } catch (e) {
+    toast(e.message, 'bad');
+  }
 }
 
 /** A database's Settings tab: how to reach it as root, and who is attached. */

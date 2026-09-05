@@ -7,6 +7,7 @@ import {
   usedPorts, assertPortUsable,
 } from './registry.mjs'
 import * as mariadb from './mariadb.mjs'
+import { detectHelpers, applyHelper } from './dbconfig.mjs'
 import { readState, clearState } from './control.mjs'
 import { fail, findFreePort, randomPassword, validateName, cleanLabel } from './util.mjs'
 import { readState as stateOf } from './control.mjs'
@@ -57,6 +58,7 @@ export function serverAttachments(serverName) {
       database: a.database,
       user: a.user,
       createdAt: a.createdAt ?? null,
+      applied: a.applied ?? {},
     })
   }
   return out
@@ -254,4 +256,26 @@ export async function importDumps(serverName, dumps, baseDir) {
     }
   }
   return { imported, skipped }
+}
+
+// ---- plugins that want the credentials ------------------------------------------------------
+
+/** The plugin config helpers this server can use, with whether each plugin and its config are there. */
+export function helpersFor(serverName) {
+  return detectHelpers(assertServer(serverName))
+}
+
+/**
+ * Write a server's credentials on one database into one plugin's config, and remember that it
+ * was done, so the panel can show which plugins point at which database.
+ */
+export function applyToPlugin(dbName, serverName, helperId) {
+  const server = assertServer(serverName)
+  const creds = credentials(dbName, serverName)
+  const result = applyHelper(server, helperId, creds)
+  const db = getDatabase(dbName)
+  const record = db.attachments[serverName]
+  const applied = { ...(record.applied ?? {}), [result.plugin]: { file: result.file, at: new Date().toISOString() } }
+  updateInstance(dbName, { attachments: { ...db.attachments, [serverName]: { ...record, applied } } })
+  return { ...result, service: dbName, server: serverName, restartNeeded: true }
 }

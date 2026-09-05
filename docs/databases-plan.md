@@ -1,11 +1,11 @@
 # Plan: databases for servers
 
-Status: **phases 1 and 2 built; awaiting their first run against real MariaDB on Windows.** The
+Status: **phases 1 to 3 built; awaiting their first run against real MariaDB on Windows.** The
 engine module, the daemon generalisation, attach/detach, the CLI group and the panel are in,
 covered by a lifecycle test against a fake MariaDB (`test/fixtures/fake-mariadb`). What that
 fake cannot prove, and the first Windows run has to: the download API's file list, the init
 tool's flags, `--console` logging, `mariadb-admin shutdown`, and `mariadb-dump` against the
-real binaries. Config helpers and Redis follow.
+real binaries. Redis follows.
 
 ## The goal
 
@@ -84,11 +84,18 @@ warning in the manifest, not a failed backup. Only the standard and full scopes 
 dumps: plugins, worlds and config each name one kind of file. The scheduler needed
 nothing new.
 
-## Phase 3 - config helpers
+## Phase 3 - config helpers (built)
 
-"Apply to LuckPerms" and "Apply to CoreProtect": write the connection block into the
-plugin's config with the comment-preserving editor props.mjs already is. Only ever on a
-click, only for a plugin whose file is present, and the block it wrote is shown.
+"Apply to a plugin": LuckPerms, CoreProtect, Plan and AuthMe, each a row in one table
+(`src/dbconfig.mjs`) naming the config file, the keys that carry the connection and the
+storage mode the plugin calls it. The keys are set in place by a comment-preserving YAML
+line editor (`src/yamlpath.mjs`): it walks the document by indentation, changes only the
+value on the line it wants, keeps a trailing comment, and adds a key that is missing under
+its parent at the parent's own child indent. Only ever on a click, only when the config
+exists - a plugin installed but never started is named with the reason, since a config
+written before its first start would be replaced by its defaults - and what was written
+is recorded on the attachment so the panel can say which plugins point at which database.
+The server has to restart for the plugin to read it, and every surface says so.
 
 ## Phase 4 - Redis, and connecting to what you already run
 

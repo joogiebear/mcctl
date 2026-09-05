@@ -1481,6 +1481,31 @@ async function cmdDb(positional, flags) {
     return
   }
 
+  if (sub === 'plugins') {
+    const serverName = positional[1]
+    if (!serverName) fail('usage: mcctl db plugins <server>')
+    const rows = [['PLUGIN', 'INSTALLED', 'CONFIG', 'FILE']]
+    for (const h of services.helpersFor(serverName)) {
+      rows.push([h.label, h.pluginPresent ? 'yes' : 'no', h.configPresent ? 'present' : 'not written yet', h.file])
+    }
+    out(table(rows))
+    out('')
+    out('Apply with: mcctl db apply <database> <server> <plugin>   (luckperms, coreprotect, plan, authme)')
+    return
+  }
+
+  if (sub === 'apply') {
+    const [, dbName, serverName, plugin] = positional
+    if (!dbName || !serverName || !plugin) fail('usage: mcctl db apply <database> <server> <plugin>')
+    const res = services.applyToPlugin(dbName, serverName, plugin.toLowerCase())
+    out(`Wrote ${res.file}`)
+    if (res.written.length) out(`  set:   ${res.written.join(', ')}`)
+    if (res.inserted.length) out(`  added: ${res.inserted.join(', ')}`)
+    out(`  ${res.note}`)
+    out(`Restart "${serverName}" for ${res.label} to pick it up.`)
+    return
+  }
+
   if (sub === 'root') {
     const dbName = positional[1]
     if (!dbName) fail('usage: mcctl db root <database>')
@@ -1498,7 +1523,7 @@ async function cmdDb(positional, flags) {
     return
   }
 
-  fail('usage: mcctl db [list|versions|add|attach|detach|creds|root|remove]')
+  fail('usage: mcctl db [list|versions|add|attach|detach|creds|plugins|apply|root|remove]')
 }
 
 function printCredentials(c) {
@@ -1690,6 +1715,8 @@ DATABASES
   mcctl db attach <db> <server>      Give a server its own database and user; prints the credentials
   mcctl db detach <db> <server>      Take the user away [--drop deletes the data too]
   mcctl db creds <db> <server>       Show a server's credentials again
+  mcctl db plugins <server>          Which plugins here can take those credentials
+  mcctl db apply <db> <server> <plugin>  Write them into that plugin's config (luckperms, coreprotect, plan, authme)
   mcctl db remove <db> [--purge]     Forget a stopped database [and delete its files]
   start, stop, restart, logs and status take a database's name like a server's.
 
