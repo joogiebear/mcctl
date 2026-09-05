@@ -29,6 +29,8 @@ export const TEMPLATES_DIR = roots.templatesDir
 export const JARS_DIR = roots.jarsDir
 export const BACKUPS_DIR = roots.backupsDir
 export const RUN_DIR = roots.runDir
+export const ENGINES_DIR = roots.enginesDir
+export const SERVICES_DIR = roots.servicesDir
 
 /** The resolved layout, for `mcctl config` and the panel's settings screen. */
 export const LAYOUT = roots
@@ -60,7 +62,7 @@ export function controlPath(name) {
 }
 
 export function ensureDirs() {
-  for (const d of [INSTANCES_DIR, TEMPLATES_DIR, JARS_DIR, BACKUPS_DIR, RUN_DIR]) {
+  for (const d of [INSTANCES_DIR, TEMPLATES_DIR, JARS_DIR, BACKUPS_DIR, RUN_DIR, ENGINES_DIR, SERVICES_DIR]) {
     fs.mkdirSync(d, { recursive: true })
   }
 }

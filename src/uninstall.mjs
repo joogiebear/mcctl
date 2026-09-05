@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { LAYOUT } from './paths.mjs'
-import { listInstances } from './registry.mjs'
+import { listAll } from './registry.mjs'
 import * as supervisor from './supervisor.mjs'
 import * as schedule from './schedule.mjs'
 import { settingsFile } from './settings.mjs'
@@ -37,13 +37,14 @@ export function purgeTargets({ instances, layout, settings, desktopDirs = [] }) 
     layout.backupsDir,
     layout.templatesDir,
     layout.runDir,
+    layout.enginesDir,
     path.join(layout.dataRoot, 'tasks'),
     layout.registryFile,
     settings,
     ...desktopDirs,
   )
-  const removeIfEmpty = [layout.instancesDir, layout.dataRoot, path.dirname(settings)]
-  return { remove: [...new Set(remove)], removeIfEmpty: [...new Set(removeIfEmpty)] }
+  const removeIfEmpty = [layout.instancesDir, layout.servicesDir, layout.dataRoot, path.dirname(settings)]
+  return { remove: [...new Set(remove.filter(Boolean))], removeIfEmpty: [...new Set(removeIfEmpty.filter(Boolean))] }
 }
 
 /**
@@ -72,7 +73,7 @@ export async function run({ data = false, log = () => {} } = {}) {
   const result = { stopped: [], tasks: false, removed: [], failed: [] }
 
   // Servers first: a daemon that outlives the program is a Java process nobody can stop from here.
-  for (const inst of listInstances()) {
+  for (const inst of listAll()) {
     if (!supervisor.isRunning(inst.name)) continue
     log(`stopping ${inst.name}`)
     try {
@@ -98,7 +99,7 @@ export async function run({ data = false, log = () => {} } = {}) {
   if (!data) return result
 
   const targets = purgeTargets({
-    instances: listInstances(),
+    instances: listAll(),
     layout: LAYOUT,
     settings: settingsFile(),
     desktopDirs: desktopDataDirs(),

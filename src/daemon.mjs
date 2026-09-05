@@ -15,14 +15,15 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
-import { getInstance, serverJarPath, jvmFlagsFor } from './registry.mjs'
+import { getInstance, serverJarPath, jvmFlagsFor, isDatabase, kindOf } from './registry.mjs'
 import { runDir, stateFile, consoleLog, daemonLog, controlPath } from './paths.mjs'
 import { writeJson } from './util.mjs'
 import { startSampler, metricsFile } from './metrics.mjs'
 import { crashVerdict, CRASH_LIMIT, CRASH_WINDOW_MS } from './crashguard.mjs'
 import { notifyInstance } from './notify.mjs'
 import { diagnose } from './diagnose.mjs'
-import { READY_RE } from './ready.mjs'
+import { patternsFor } from './ready.mjs'
+import * as mariadb from './mariadb.mjs'
 
 const name = process.argv[2]
 if (!name) {
@@ -116,19 +117,35 @@ function javaCommand(inst, args) {
   return { cmd: bin, args, env: process.env }
 }
 
-function launch({ first }) {
-  // Re-read the registry on every launch, not just the first: memory edits, an auto-restart
-  // toggle or a new webhook should apply at the next respawn without a manual cycle.
-  inst = getInstance(name)
+/**
+ * What this instance runs: the command, where, and how it is asked to stop.
+ *
+ * <p>A Minecraft server is Java with the jar, stopped by writing `stop` to its console. A database
+ * is its engine's server binary, stopped by the engine's admin tool over TCP because it takes no
+ * console input. Everything after this point - capture, state, crash handling - is the same.
+ */
+let program = null
+
+function programFor(inst) {
+  if (isDatabase(inst)) return mariadb.launchSpec(inst)
   const jar = serverJarPath(inst)
   const flags = inst.jvmFlags?.length ? inst.jvmFlags : jvmFlagsFor(inst.memory)
   const jvmArgs = [`-Xms${inst.memory}`, `-Xmx${inst.memory}`, ...flags, '-jar', path.basename(jar), '--nogui']
   const { cmd, args, env } = javaCommand(inst, jvmArgs)
+  return { cmd, args, env, cwd: inst.dir, stop: { stdin: 'stop\n' } }
+}
 
-  log(`starting ${cmd} ${args.join(' ')} (cwd=${inst.dir})${first ? '' : ' [auto-restart]'}`)
+function launch({ first }) {
+  // Re-read the registry on every launch, not just the first: memory edits, an auto-restart
+  // toggle or a new webhook should apply at the next respawn without a manual cycle.
+  inst = getInstance(name)
+  program = programFor(inst)
+  const { cmd, args, env, cwd } = program
+
+  log(`starting ${cmd} ${args.join(' ')} (cwd=${cwd})${first ? '' : ' [auto-restart]'}`)
 
   child = spawn(cmd, args, {
-    cwd: inst.dir,
+    cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
     env,
@@ -152,30 +169,36 @@ function launch({ first }) {
   if (!first) {
     let tail = ''
     let seen = false
+    const { ready } = patternsFor(inst)
+    // Both streams: a database with --console reports ready on stderr.
     const watch = (chunk) => {
       if (seen) return
       tail = (tail + chunk.toString('utf8')).slice(-4096)
-      if (READY_RE.test(tail)) {
+      if (ready.test(tail)) {
         seen = true
         child.stdout.removeListener('data', watch)
-        log('recovered: server reports ready')
+        child.stderr.removeListener('data', watch)
+        log('recovered: reports ready')
         tell(`back up after a crash — restart ${crashes.length} of ${CRASH_LIMIT} allowed per ${CRASH_WINDOW_MS / 60000} minutes.`)
       }
     }
     child.stdout.on('data', watch)
+    child.stderr.on('data', watch)
   }
 
   state = {
     name,
+    kind: kindOf(inst),
     daemonPid: process.pid,
+    // "java" by history: the pid and executable of the child, whatever it runs.
     javaPid: child.pid,
     // The executables behind the pids, so a status read can tell a reused pid from a live one.
     daemonExe: path.basename(process.execPath),
     javaExe: path.basename(cmd),
     startedAt: Date.now(),
     dir: inst.dir,
-    jar: inst.jar,
-    memory: inst.memory,
+    jar: inst.jar ?? null,
+    memory: inst.memory ?? null,
     port: inst.port,
     rconPort: inst.rcon?.port ?? null,
     control: controlPath(name),
@@ -183,7 +206,7 @@ function launch({ first }) {
     restarts: crashes.length,
   }
   writeJson(stateFile(name), state)
-  log(`java pid ${child.pid}`)
+  log(`child pid ${child.pid}`)
 
   // Performance history starts empty every run. The old file describes a process that no longer
   // exists, and a graph that silently splices two runs together is worse than one that starts blank.
@@ -243,7 +266,9 @@ function onExit(code, signal) {
   // the webhook - a person woken by "crashed" should not have to open a log to learn "out of
   // memory" when the daemon already knows.
   let cause = ''
-  if (crashed && !stopping) {
+  // The diagnoses are Minecraft's failure shapes; a database's log has its own, and running
+  // Minecraft's over it would name causes that are not there.
+  if (crashed && !stopping && !isDatabase(inst)) {
     const finding = diagnose(recent.split(/\r?\n/), { port: inst.port, memory: inst.memory, dir: inst.dir })[0]
     if (finding) {
       cause = ` Likely cause: ${finding.title.toLowerCase()}.`
@@ -344,11 +369,26 @@ async function handleStop(timeoutMs) {
   if (child.exitCode !== null) return { ok: true, code: child.exitCode, already: true }
   if (!stopSent) {
     stopSent = true
-    log('sending stop to console')
-    try {
-      child.stdin.write('stop\n')
-    } catch (err) {
-      log(`stdin write failed: ${err.message}`)
+    if (program?.stop?.stdin) {
+      log('sending stop to console')
+      try {
+        child.stdin.write(program.stop.stdin)
+      } catch (err) {
+        log(`stdin write failed: ${err.message}`)
+      }
+    } else if (program?.stop?.cmd) {
+      // A database is asked over TCP by its own admin tool. Its outcome is not awaited: the
+      // process exiting, or not, is what the wait below is watching.
+      log(`asking for shutdown: ${program.stop.cmd} ${program.stop.args.join(' ')}`)
+      try {
+        const ask = spawn(program.stop.cmd, program.stop.args, { env: program.stop.env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+        ask.stderr.on('data', (c) => log(`shutdown tool: ${c.toString().trim()}`))
+        ask.on('error', (err) => log(`shutdown tool failed to run: ${err.message}`))
+      } catch (err) {
+        log(`shutdown tool failed to run: ${err.message}`)
+      }
+    } else {
+      log('no graceful stop for this program; waiting, then killing')
     }
   }
   const code = await waitForExit(timeoutMs)
@@ -405,6 +445,7 @@ async function handle(req) {
     case 'ping':
       return { ok: true, javaPid: child?.pid ?? null, startedAt: state.startedAt, alive: Boolean(child) && child.exitCode === null }
     case 'send':
+      if (isDatabase(inst)) return { ok: false, error: 'a database has no console input - use its client, or the panel' }
       if (!child || child.exitCode !== null) return { ok: false, error: 'server process is not running' }
       if (typeof req.line !== 'string') return { ok: false, error: 'send requires a line' }
       child.stdin.write(`${req.line.replace(/\r?\n$/, '')}\n`)

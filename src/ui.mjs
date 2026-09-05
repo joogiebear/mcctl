@@ -22,6 +22,7 @@ import * as plugins from './plugins.mjs'
 import * as upgrade from './upgrade.mjs'
 import * as sources from './sources.mjs'
 import { repairAfterMove } from './relocate.mjs'
+import * as services from './services.mjs'
 import * as software from './software.mjs'
 import * as mrpack from './mrpack.mjs'
 import * as neoforge from './neoforge.mjs'
@@ -931,6 +932,19 @@ function labelled(name, raw) {
   return supervisor.statusOf(name)
 }
 
+/**
+ * A database for the page. The root password and every attachment's password are stripped: the
+ * page asks for one set of credentials when someone clicks, and never holds them otherwise.
+ */
+function safeDatabase(row) {
+  const { root, attachments, ...safe } = row
+  const shown = {}
+  for (const [server, a] of Object.entries(attachments ?? {})) {
+    shown[server] = { database: a.database, user: a.user, createdAt: a.createdAt ?? null }
+  }
+  return { ...safe, engineLabel: services.ENGINES[row.engine]?.label ?? row.engine, attachments: shown }
+}
+
 function safeInstance(row) {
   const { rcon, ...safe } = row
   // Whether anyone can join as any name is a property of the server, not of the registry, so it is
@@ -1150,6 +1164,86 @@ async function route(req, res) {
     return json(res, 200, { results: q ? await plugins.searchModpacks(q) : [] })
   }
 
+  // ---- databases -----------------------------------------------------------
+  // Listed apart from the servers: the page draws them under their own heading, and nothing that
+  // iterates servers should ever see one.
+  if (seg[1] === 'databases' && seg.length === 2 && req.method === 'GET') {
+    const rows = registry.listServices().map((i) => {
+      let row
+      try {
+        row = supervisor.statusOf(i.name)
+      } catch {
+        row = { ...i, status: 'unknown' }
+      }
+      return safeDatabase(row)
+    })
+    return json(res, 200, rows)
+  }
+  if (seg[1] === 'databases' && seg[2] === 'engines' && req.method === 'GET') {
+    return json(res, 200, Object.entries(services.ENGINES).map(([id, e]) => ({ id, label: e.label, defaultPort: e.defaultPort })))
+  }
+  if (seg[1] === 'databases' && seg[2] === 'versions' && req.method === 'GET') {
+    const engine = String(url.searchParams.get('engine') || 'mariadb')
+    return json(res, 200, await services.versionsFor(engine))
+  }
+  if (seg[1] === 'databases' && seg.length === 2 && req.method === 'POST') {
+    const body = await readBody(req)
+    if (!body.name && body.label) body.name = registry.freeName(slugFor(String(body.label)))
+    if (!body.name) return json(res, 400, { error: 'name is required' })
+    if (!body.version) return json(res, 400, { error: 'a version is required' })
+    const jobId = body.jobId ? String(body.jobId) : null
+    try {
+      const db = await services.createDatabase(String(body.name), {
+        engine: body.engine ? String(body.engine) : 'mariadb',
+        version: String(body.version),
+        port: body.port ? Number(body.port) : null,
+        label: body.label ?? null,
+        onProgress: (p) => {
+          if (p.cached) return jobUpdate(jobId, { stage: 'cached', percent: 100, message: p.message })
+          jobUpdate(jobId, {
+            stage: p.total ? 'download' : 'setup',
+            percent: p.total ? Math.min(100, Math.round((p.received / p.total) * 100)) : null,
+            message: p.message ?? 'Working',
+          })
+        },
+      })
+      jobUpdate(jobId, { stage: 'done', percent: 100, message: `Created ${db.name}`, done: true })
+      return json(res, 200, safeDatabase(supervisor.statusOf(db.name)))
+    } catch (err) {
+      jobUpdate(jobId, { stage: 'error', message: err?.message ?? String(err), done: true })
+      throw err
+    }
+  }
+  if (seg[1] === 'databases' && seg[2] && registry.hasInstance(seg[2])) {
+    const db = seg[2]
+    if (!registry.isDatabase(registry.getInstance(db))) return json(res, 404, { error: 'no such database' })
+    if (seg[3] === 'credentials' && req.method === 'GET') {
+      const server = String(url.searchParams.get('server') || '')
+      if (!server) return json(res, 400, { error: 'server is required' })
+      return json(res, 200, services.credentials(db, server))
+    }
+    // Root, for the person: shown on a click under the database's Settings, never in the list.
+    if (seg[3] === 'root' && req.method === 'GET') {
+      const inst = services.getDatabase(db)
+      return json(res, 200, { host: '127.0.0.1', port: inst.port, user: 'root', password: inst.root?.password ?? '' })
+    }
+    if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+    const body = await readBody(req)
+    if (seg[3] === 'attach') {
+      if (!body.server) return json(res, 400, { error: 'server is required' })
+      return json(res, 200, services.attach(db, String(body.server)))
+    }
+    if (seg[3] === 'detach') {
+      if (!body.server) return json(res, 400, { error: 'server is required' })
+      return json(res, 200, services.detach(db, String(body.server), { drop: body.drop === true }))
+    }
+    if (seg[3] === 'delete') {
+      return json(res, 200, services.removeDatabase(db, { purge: body.purge === true }))
+    }
+    return json(res, 404, { error: 'not found' })
+  }
+  if (seg[1] === 'databases' && seg[2]) return json(res, 404, { error: 'no such database' })
+
   // ---- instances -----------------------------------------------------------
   if (seg[1] === 'instances' && seg.length === 2 && req.method === 'GET') {
     const rows = registry.listInstances().map((i) => {
@@ -1340,6 +1434,10 @@ async function route(req, res) {
     })
   }
   if (seg[3] === 'metrics') return handleMetrics(req, res, name, url)
+  // The databases this server is attached to, without passwords; those are one click further.
+  if (seg[3] === 'databases' && req.method === 'GET') {
+    return json(res, 200, services.serverAttachments(name))
+  }
 
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
 

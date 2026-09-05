@@ -400,6 +400,14 @@
   body.rail .newbtn span { display: none; }
   body.rail .newbtn .ico { width: 1.15em; height: 1.15em; }
   .side-empty { padding: var(--s-4); color: var(--ink-3); font-size: var(--t-3); }
+  /* The databases sit under the servers in the same list, behind a small heading of their own. */
+  .side-sub { padding: 10px 10px 2px; color: var(--ink-3); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+  .card[data-kind="database"] .nm::after { content: 'DB'; margin-left: 7px; padding: 1px 5px; border-radius: 4px; background: var(--lapis-wash); color: var(--lapis); font-size: 10px; font-weight: 700; letter-spacing: .04em; vertical-align: 1px; }
+  body.rail .card[data-kind="database"] .nm::after { display: none; }
+  .creds { display: grid; gap: 4px; margin: 0; font-family: var(--mono); font-size: 12.5px; }
+  .creds div { display: grid; grid-template-columns: 90px 1fr; gap: 10px; }
+  .creds dt { color: var(--ink-3); }
+  .creds dd { margin: 0; color: var(--ink); word-break: break-all; }
 
   /* ---- stage ------------------------------------------------------------ */
 
@@ -1702,6 +1710,7 @@
         <button role="tab" data-tab="new" aria-selected="true">Create a new one</button>
         <button role="tab" data-tab="pack" aria-selected="false">From a modpack</button>
         <button role="tab" data-tab="adopt" aria-selected="false">Add one I already have</button>
+        <button role="tab" data-tab="db" aria-selected="false">A database</button>
       </div>
 
       <form class="sheet-body" id="formNew">
@@ -1833,6 +1842,45 @@
           <span class="hint">Nothing is moved. Its port and RCON password are read from its own server.properties.</span>
         </div>
       </form>
+
+      <form class="sheet-body" id="formDb" hidden>
+        <p class="hint" style="margin:0 0 4px">
+          A database server for plugins that want one — LuckPerms, CoreProtect, Plan and the rest.
+          Downloaded once from MariaDB's own mirror, run on this machine under the same supervision
+          as a server, and reachable only from this machine. Nothing to install.
+        </p>
+        <div class="row" style="align-items:flex-start">
+          <div class="field" style="flex:2">
+            <label for="dName">Name</label>
+            <input id="dName" name="name" required autocomplete="off" placeholder="Database" maxlength="48">
+            <div class="hint">The commands use <code id="dNameSlug">—</code></div>
+            <div class="bad" id="dNameBad"></div>
+          </div>
+          <div class="field" style="flex:1;min-width:150px">
+            <label for="dEngine">Engine</label>
+            <select id="dEngine" name="engine"><option value="mariadb" selected>MariaDB</option></select>
+            <div class="hint">MySQL-compatible</div>
+          </div>
+          <div class="field" style="flex:2">
+            <label for="dVersion">Version</label>
+            <select id="dVersion" name="version"><option value="">Loading versions…</option></select>
+            <div class="hint" id="dVersionHint">Newest stable release first.</div>
+          </div>
+          <div class="field" style="flex:1">
+            <label for="dPort">Port</label>
+            <input id="dPort" name="port" type="number" placeholder="auto" class="mono" autocomplete="off">
+            <div class="hint">Blank picks 3306 or the next free one</div>
+          </div>
+        </div>
+        <div class="prog" id="dbProg" hidden>
+          <div class="track"><div class="bar" id="dbBar"></div></div>
+          <div class="msg" id="dbMsg"></div>
+        </div>
+        <div class="row">
+          <button type="submit" class="primary" id="bDbCreate">Add database</button>
+          <span class="hint" id="dbHint">Around 100 MB the first time for a version; every database on that version shares it.</span>
+        </div>
+      </form>
     </div>
 
     <!-- ============ feedback ============================================= -->
@@ -1935,6 +1983,8 @@ const desktop = window.mcctlDesktop;
 
 const state = {
   rows: [],
+  // Databases, listed apart from the servers so nothing that iterates servers sees one.
+  dbs: [],
   current: null,
   view: 'empty',
   stream: null,
@@ -1957,6 +2007,12 @@ const state = {
   // comparing the same setting on two servers should not have to re-open the tab each time.
   pane: 'console',
 };
+
+/** The selected thing, whichever list it is in. */
+function rowOf(name) {
+  return state.rows.find((r) => r.name === name) || state.dbs.find((r) => r.name === name) || null;
+}
+const isDb = (row) => Boolean(row && row.kind === 'database');
 
 // ------------------------------------------------------------------ api ----
 
@@ -2219,10 +2275,10 @@ function openSheet(view, prepare) {
 function back() {
   const opener = sheetOpener;
   sheetOpener = null;
-  if (!state.current) { show('empty'); renderEmptyFor(state.rows); }
+  if (!state.current) { show('empty'); renderEmptyFor(state.rows.concat(state.dbs)); }
   else if (state.streamName === state.current) {
     show('server');
-    renderServer(state.rows.find((r) => r.name === state.current));
+    renderServer(rowOf(state.current));
   } else {
     select(state.current);
   }
@@ -2283,6 +2339,7 @@ function buildCard(row) {
   el.type = 'button';
   el.className = 'card';
   el.dataset.name = row.name;
+  if (isDb(row)) el.dataset.kind = 'database';
   el.setAttribute('role', 'listitem');
   const lamp = document.createElement('span');
   lamp.className = 'lamp';
@@ -2302,7 +2359,9 @@ function updateCard(el, row) {
 
   const vitals = el.querySelector('.vitals');
   vitals.textContent = '';
-  const tail = ' \u00b7 :' + (row.port || '?') + ' \u00b7 ' + (row.memory || '?');
+  const tail = isDb(row)
+    ? ' \u00b7 ' + (row.engineLabel || row.engine) + ' ' + (row.version || '') + ' \u00b7 :' + (row.port || '?')
+    : ' \u00b7 :' + (row.port || '?') + ' \u00b7 ' + (row.memory || '?');
   if (row.status === 'running' && row.startedAt) {
     const up = document.createElement('span');
     up.className = 'on';
@@ -2323,12 +2382,13 @@ function updateCard(el, row) {
  * The old panel rebuilt innerHTML every four seconds, which threw away focus, text selection and
  * scroll position on a timer. Keyed updates leave whatever is being touched alone.
  */
-function renderList(rows) {
+function renderList(rows, dbs) {
+  dbs = dbs || [];
   const list = $('#list');
   $('#count').textContent = rows.length ? String(rows.length) : '';
-  document.body.classList.toggle('bare', rows.length === 0);
+  document.body.classList.toggle('bare', rows.length === 0 && dbs.length === 0);
 
-  if (!rows.length) {
+  if (!rows.length && !dbs.length) {
     if (!list.querySelector('.side-empty')) {
       list.textContent = '';
       const p = document.createElement('div');
@@ -2341,16 +2401,31 @@ function renderList(rows) {
   const placeholder = list.querySelector('.side-empty');
   if (placeholder) placeholder.remove();
 
+  // Servers, then a small heading, then the databases: one list, keyed by name, so the same
+  // reconciliation keeps focus and scroll while the databases sit under their own label.
   const seen = new Set();
-  rows.forEach((row, i) => {
-    seen.add(row.name);
-    let el = list.querySelector('[data-name="' + CSS.escape(row.name) + '"]');
-    if (!el) el = buildCard(row);
-    updateCard(el, row);
+  const order = [...rows];
+  if (dbs.length) order.push({ divider: 'Databases' }, ...dbs);
+  order.forEach((row, i) => {
+    let el;
+    if (row.divider) {
+      el = list.querySelector('.side-sub');
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'side-sub';
+        el.textContent = row.divider;
+      }
+    } else {
+      seen.add(row.name);
+      el = list.querySelector('[data-name="' + CSS.escape(row.name) + '"]');
+      if (!el) el = buildCard(row);
+      updateCard(el, row);
+    }
     if (list.children[i] !== el) list.insertBefore(el, list.children[i] || null);
   });
   for (const el of Array.from(list.children)) {
     if (el.dataset.name && !seen.has(el.dataset.name)) el.remove();
+    if (el.classList.contains('side-sub') && !dbs.length) el.remove();
   }
 }
 
@@ -2378,16 +2453,27 @@ function renderServer(row) {
     st.textContent = STATE_TEXT[row.status] ?? row.status;
   }
 
+  // A database has three of the eight sections: no plugins, worlds, backups, players or tasks
+  // of its own. The tabs that do not apply are hidden rather than left to show a blank pane.
+  const db = isDb(row);
+  for (const id of ['tabPlugins', 'tabWorlds', 'tabBackups', 'tabPlayers', 'tabScheduler']) $('#' + id).hidden = db;
+
   const vitals = $('#srvVitals');
   vitals.textContent = '';
-  const pairs = [
+  const attached = db ? Object.keys(row.attachments || {}) : [];
+  const pairs = db ? [
+    ['Port', ':' + (row.port || '?')],
+    ['Engine', (row.engineLabel || row.engine) + ' ' + (row.version || '')],
+    ['Host', '127.0.0.1'],
+    ['Attached', attached.length ? attached.join(', ') : 'nothing yet'],
+  ] : [
     ['Port', ':' + (row.port || '?')],
     ['Memory', row.memory || '?'],
     ['World', row.levelName || '—'],
     ['Server jar', row.jar || '—'],
     ['RCON', row.rconPort ? ':' + row.rconPort : '—'],
   ];
-  if (row.status === 'running' && row.javaPid) pairs.push(['Java PID', String(row.javaPid)]);
+  if (row.status === 'running' && row.javaPid) pairs.push([db ? 'PID' : 'Java PID', String(row.javaPid)]);
   if (row.status === 'stopped' && row.exitCode != null) pairs.push(['Last exit', 'code ' + row.exitCode]);
   for (const pair of pairs) {
     const wrap = document.createElement('div');
@@ -2425,11 +2511,14 @@ function renderServer(row) {
   $('#bStop').disabled = state.busy || !live;
   $('#bRestart').disabled = state.busy || row.status === 'stopping';
   $('#bManage').disabled = state.busy;
-  $('#cmd').disabled = !live;
-  $('#bSend').disabled = !live;
-  $('#cmd').placeholder = live ? 'Send a server command — try list' : 'Start the server to send commands';
+  $('#cmd').disabled = !live || db;
+  $('#bSend').disabled = !live || db;
+  $('#cmd').placeholder = db
+    ? 'A database takes no console commands — use its client, or the credentials under Settings'
+    : live ? 'Send a server command — try list' : 'Start the server to send commands';
 
-  loadDiagnosis(row);
+  // The diagnoses are Minecraft's failure shapes; a database's console has its own.
+  if (db) { $('#srvDiag').textContent = ''; diagKey = ''; } else loadDiagnosis(row);
 }
 
 // ------------------------------------------------------------- diagnosis ----
@@ -2633,8 +2722,9 @@ async function refresh() {
   if (refreshing) return;
   refreshing = true;
   let rows;
+  let dbs;
   try {
-    rows = await api('/instances');
+    [rows, dbs] = await Promise.all([api('/instances'), api('/databases')]);
   } catch {
     if (++missedPolls === 3) lostContact(true);
     refreshing = false;
@@ -2644,20 +2734,21 @@ async function refresh() {
   if (missedPolls >= 3) lostContact(false);
   missedPolls = 0;
   state.rows = rows;
+  state.dbs = dbs;
 
-  if (state.current && !rows.some((r) => r.name === state.current)) {
+  if (state.current && !rowOf(state.current)) {
     // Removed underneath us, by this panel or another one.
     stopStream();
     state.current = null;
     if (state.view === 'server') show('empty');
   }
-  renderList(rows);
+  renderList(rows, dbs);
 
   if (!state.current) {
-    if (state.view === 'empty') renderEmptyFor(rows);
+    if (state.view === 'empty') renderEmptyFor(rows.concat(dbs));
     return;
   }
-  if (state.view === 'server') renderServer(rows.find((r) => r.name === state.current));
+  if (state.view === 'server') renderServer(rowOf(state.current));
 }
 
 // Uptime ticks on its own second rather than waiting for the four-second poll, so a running server
@@ -2859,10 +2950,12 @@ function select(name) {
   $('#performanceBody').dataset.for = '';
   $('#srvDiag').textContent = '';
   diagKey = '';
-  renderServer(state.rows.find((r) => r.name === name));
+  const chosen = rowOf(name);
+  if (isDb(chosen) && !['console', 'performance', 'settings'].includes(state.pane)) state.pane = 'console';
+  renderServer(chosen);
   showPane(state.pane);
   renderLog();
-  renderList(state.rows);
+  renderList(state.rows, state.dbs);
 
   // Server-Sent Events rather than polling: the console is a stream by nature, and the browser
   // reconnects on its own if the panel is left open while a server restarts.
@@ -3093,7 +3186,7 @@ const act = (what) => async () => {
   const name = state.current;
   if (!name || state.busy) return;
   state.busy = true;
-  renderServer(state.rows.find((r) => r.name === name));
+  renderServer(rowOf(name));
   const note = toast(ACTION_ING[what] + ' ' + name + '…');
   try {
     await post('/instances/' + encodeURIComponent(name) + '/' + what);
@@ -3326,7 +3419,7 @@ function memoryCeilingMb(text) {
  */
 async function renderPerformance(opts) {
   const force = Boolean(opts && opts.force);
-  const row = state.rows.find((r) => r.name === state.current);
+  const row = rowOf(state.current);
   const body = $('#performanceBody');
   if (!row) { body.textContent = ''; stopPerfPolling(); return; }
   // Not the usual cache guard. Leaving this tab stops the timer, so returning has to start it
@@ -3489,7 +3582,7 @@ const playerView = { filter: 'all', search: '' };
  */
 async function renderPlayers(opts) {
   const force = Boolean(opts && opts.force);
-  const row = state.rows.find((r) => r.name === state.current);
+  const row = rowOf(state.current);
   const body = $('#playersBody');
   if (!row) { body.textContent = ''; clearPaneHead(body); return; }
   if (!force && body.dataset.for === row.name && body.childElementCount) return;
@@ -3771,7 +3864,7 @@ const pluginView = { updates: null, for: null };
  */
 async function renderPlugins(opts) {
   const force = Boolean(opts && opts.force);
-  const row = state.rows.find((r) => r.name === state.current);
+  const row = rowOf(state.current);
   const body = $('#pluginsBody');
   if (!row) { body.textContent = ''; clearPaneHead(body); return; }
   if (!force && body.dataset.for === row.name && body.childElementCount) return;
@@ -4220,7 +4313,7 @@ async function renderPlugins(opts) {
  */
 async function renderWorlds(opts) {
   const force = Boolean(opts && opts.force);
-  const row = state.rows.find((r) => r.name === state.current);
+  const row = rowOf(state.current);
   const body = $('#worldsBody');
   if (!row) { body.textContent = ''; clearPaneHead(body); return; }
   if (!force && body.dataset.for === row.name && body.childElementCount) return;
@@ -4643,7 +4736,7 @@ function taskForm({ actions, kinds, days, task, onCancel, onSubmit }) {
  */
 async function renderScheduler(opts) {
   const force = Boolean(opts && opts.force);
-  const row = state.rows.find((r) => r.name === state.current);
+  const row = rowOf(state.current);
   const body = $('#schedulerBody');
   if (!row) { body.textContent = ''; clearPaneHead(body); return; }
   if (!force && body.dataset.for === row.name && body.childElementCount) return;
@@ -5018,7 +5111,7 @@ async function changeBackupsLocation(current) {
  */
 async function renderBackups(opts) {
   const force = Boolean(opts && opts.force);
-  const row = state.rows.find((r) => r.name === state.current);
+  const row = rowOf(state.current);
   const body = $('#backupsBody');
   if (!row) { body.textContent = ''; clearPaneHead(body); return; }
   if (!force && body.dataset.for === row.name && body.childElementCount) return;
@@ -5327,9 +5420,10 @@ async function renderBackups(opts) {
  * and the core cannot drift about what exists or what a field will accept.
  */
 async function renderServerSettings() {
-  const row = state.rows.find((r) => r.name === state.current);
+  const row = rowOf(state.current);
   const body = $('#settingsBody');
   if (!row) { body.textContent = ''; clearPaneHead(body); return; }
+  if (isDb(row)) return renderDatabaseSettings(row);
 
   // Re-rendering under someone mid-edit would silently discard what they had typed.
   if (body.dataset.for === row.name && body.childElementCount) return;
@@ -5829,6 +5923,9 @@ async function renderServerSettings() {
       dirty();
     }
   };
+
+  // Last, after the file-backed sections: the databases this server is attached to.
+  if (body.dataset.for === row.name) await renderServerDatabases(row, body);
 }
 
 $('#bFolder').onclick = () => { if (state.current) openFolder(state.current); };
@@ -5836,8 +5933,9 @@ $('#bFolder').onclick = () => { if (state.current) openFolder(state.current); };
 // --------------------------------------------------------------- manage ----
 
 $('#bManage').onclick = async () => {
-  const row = state.rows.find((r) => r.name === state.current);
+  const row = rowOf(state.current);
   if (!row) return;
+  if (isDb(row)) return manageDatabase(row);
   const live = row.status === 'running';
   const res = await ask({
     title: 'Manage ' + row.name,
@@ -6026,6 +6124,382 @@ async function deleteServer(row) {
   }
 }
 
+// ------------------------------------------------------------ databases ----
+
+async function manageDatabase(row) {
+  const live = row.status === 'running';
+  const res = await ask({
+    title: 'Manage ' + row.name,
+    text: live
+      ? 'This database is running. Stop it first to delete it. Servers attach to it from their own Settings tab.'
+      : 'Choose what to do with this database.',
+    confirmLabel: 'Continue',
+    choices: live
+      ? [{ value: 'folder', label: 'Open its folder', hint: 'Shows the data folder in Explorer.' }]
+      : [
+          { value: 'folder', label: 'Open its folder', hint: 'Shows the data folder in Explorer.' },
+          { value: 'delete', label: 'Delete this database', hint: 'Removes it from SpawnLoft, and optionally its data.' },
+        ],
+  });
+  if (!res) return;
+  if (res.choice === 'folder') return openFolder(row.name);
+  if (res.choice === 'delete') return deleteDatabase(row);
+}
+
+async function deleteDatabase(row) {
+  const attached = Object.keys(row.attachments || {});
+  const res = await ask({
+    title: 'Delete ' + row.name + '?',
+    text: attached.length ? 'Attached: ' + attached.join(', ') + '. Their plugin configs will still name this database.' : '',
+    confirmLabel: 'Delete database',
+    danger: true,
+    typeToConfirm: row.name,
+    choices: [
+      { value: 'keep', label: 'Remove from SpawnLoft, keep the data', hint: 'The folder stays where it is.' },
+      { value: 'purge', label: 'Delete the data as well', hint: 'Every database and table on it goes. There is no snapshot of a database yet.' },
+    ],
+  });
+  if (!res) return;
+  const note = toast('Deleting ' + row.name + '…');
+  try {
+    const out = await post('/databases/' + encodeURIComponent(row.name) + '/delete', { purge: res.choice === 'purge' });
+    note.remove();
+    stopStream();
+    state.current = null;
+    clearLines();
+    show('empty');
+    await refresh();
+    toast(out.purged ? 'Deleted, data and all.' : 'Removed from SpawnLoft. The data is still in its folder.', 'good');
+  } catch (e) {
+    note.remove();
+    toast(e.message, 'bad');
+  }
+}
+
+/** A <dl> of connection details, monospace, for a dialog or a card. */
+function credsList(c, { root } = {}) {
+  const dl = document.createElement('dl');
+  dl.className = 'creds';
+  const rows = [['Host', c.host], ['Port', String(c.port)]];
+  if (!root) rows.push(['Database', c.database]);
+  rows.push(['User', c.user], ['Password', c.password]);
+  if (c.jdbc) rows.push(['JDBC', c.jdbc]);
+  for (const r of rows) {
+    const div = document.createElement('div');
+    const dt = document.createElement('dt');
+    dt.textContent = r[0];
+    const dd = document.createElement('dd');
+    dd.textContent = r[1];
+    div.append(dt, dd);
+    dl.append(div);
+  }
+  return dl;
+}
+
+function credsText(c, { root } = {}) {
+  const lines = ['host: ' + c.host, 'port: ' + c.port];
+  if (!root) lines.push('database: ' + c.database);
+  lines.push('user: ' + c.user, 'password: ' + c.password);
+  if (c.jdbc) lines.push('jdbc: ' + c.jdbc);
+  return lines.join('\n');
+}
+
+async function copyText(text, what) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Copied ' + what + '.', 'good');
+  } catch {
+    toast('The clipboard refused; select and copy by hand.', 'bad');
+  }
+}
+
+/** Fetch one set of credentials and show them, with a Copy button. Never cached on the page. */
+async function showCredentials(dbName, serverName) {
+  let c;
+  try {
+    c = await api('/databases/' + encodeURIComponent(dbName) + '/credentials?server=' + encodeURIComponent(serverName));
+  } catch (e) {
+    toast(e.message, 'bad');
+    return;
+  }
+  const dlg = $('#dlg');
+  $('#dlgTitle').textContent = serverName + ' on ' + dbName;
+  $('#dlgText').hidden = false;
+  $('#dlgText').textContent = 'What a plugin config wants. Paste it into the plugin\'s storage section; the user can reach this one database and nothing else.';
+  $('#dlgChoice').hidden = true;
+  $('#dlgTypeWrap').hidden = true;
+  const list = credsList(c);
+  $('#dlgBody').append(list);
+  const ok = $('#dlgOk');
+  ok.textContent = 'Copy';
+  ok.className = 'primary';
+  ok.disabled = false;
+  $('#dlgCancel').hidden = false;
+  $('#dlgCancel').textContent = 'Close';
+
+  // The same settle-once wiring as the edit dialog: 'cancel' is what Escape fires, 'close' is
+  // the net, and a stale close from the dialog this one replaced is told apart by askSeq.
+  const mine = ++askSeq;
+  const copied = await new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      dlg.removeEventListener('cancel', onCancel);
+      dlg.removeEventListener('close', onClose);
+      ok.onclick = null;
+      $('#dlgCancel').onclick = null;
+      $('#dlgCancel').textContent = 'Cancel';
+      if (dlg.open) dlg.close();
+      list.remove();
+      resolve(v);
+    };
+    const onCancel = () => { if (mine === askSeq) done(false); };
+    const onClose = () => { if (mine === askSeq && !dlg.open) done(false); };
+    dlg.addEventListener('cancel', onCancel);
+    dlg.addEventListener('close', onClose);
+    ok.onclick = () => done(true);
+    $('#dlgCancel').onclick = () => done(false);
+    dlg.showModal();
+    ok.focus();
+  });
+  if (copied) copyText(credsText(c), 'the connection details');
+}
+
+/**
+ * The Databases card on a server's Settings tab: what it is attached to, with credentials one
+ * click away, and a way to attach it to another.
+ */
+async function renderServerDatabases(row, body) {
+  const card = document.createElement('div');
+  card.className = 'section set-group';
+  // With the other sections, above the Save bar: it is one of them, not a footnote to them.
+  const foot = body.querySelector(':scope > .pane-foot');
+  const head = document.createElement('div');
+  head.className = 'set-head';
+  const mark = document.createElement('span');
+  mark.className = 'mark';
+  mark.append(icon('server'));
+  const h = document.createElement('h3');
+  h.textContent = 'Databases';
+  const blurb = document.createElement('p');
+  blurb.textContent = 'A MySQL database of this server\'s own, for plugins that want one. Attaching creates the database and a user that can reach it and nothing else.';
+  head.append(mark, h, blurb);
+  card.append(head);
+  if (foot) body.insertBefore(card, foot); else body.append(card);
+
+  const list = document.createElement('div');
+  list.style.display = 'grid';
+  list.style.gap = '10px';
+  card.append(list);
+
+  let mine = [];
+  try {
+    mine = await api('/instances/' + encodeURIComponent(row.name) + '/databases');
+  } catch (e) {
+    const bad = document.createElement('div');
+    bad.className = 'bad';
+    bad.textContent = e.message;
+    list.append(bad);
+  }
+  if (body.dataset.for !== row.name) return;
+
+  for (const a of mine) {
+    const line = document.createElement('div');
+    line.className = 'row';
+    line.style.alignItems = 'center';
+    const text = document.createElement('div');
+    text.style.flex = '1';
+    const b = document.createElement('b');
+    b.textContent = a.label || a.service;
+    const sub = document.createElement('div');
+    sub.className = 'hint';
+    sub.style.margin = '0';
+    sub.textContent = (a.engine === 'mariadb' ? 'MariaDB ' : a.engine + ' ') + (a.version || '') + ' \u00b7 127.0.0.1:' + a.port + ' \u00b7 database ' + a.database + ' \u00b7 user ' + a.user;
+    text.append(b, sub);
+    const show = document.createElement('button');
+    show.textContent = 'Show credentials';
+    show.onclick = () => showCredentials(a.service, row.name);
+    const detach = document.createElement('button');
+    detach.className = 'ghost';
+    detach.textContent = 'Detach';
+    detach.onclick = async () => {
+      const res = await ask({
+        title: 'Detach ' + row.name + ' from ' + (a.label || a.service) + '?',
+        text: 'The user goes away. Whether the data goes with it is up to you.',
+        confirmLabel: 'Detach',
+        danger: true,
+        choices: [
+          { value: 'keep', label: 'Keep the data', hint: 'Attaching again later gives the same database back, with a new password.' },
+          { value: 'drop', label: 'Drop the database too', hint: 'Every table this server had on it goes. The database must be running for this.' },
+        ],
+      });
+      if (!res) return;
+      try {
+        await post('/databases/' + encodeURIComponent(a.service) + '/detach', { server: row.name, drop: res.choice === 'drop' });
+        toast('Detached.', 'good');
+        body.dataset.for = '';
+        renderServerSettings();
+      } catch (e) {
+        toast(e.message, 'bad');
+      }
+    };
+    line.append(text, show, detach);
+    list.append(line);
+  }
+
+  const attachedTo = new Set(mine.map((a) => a.service));
+  const free = state.dbs.filter((d) => !attachedTo.has(d.name));
+  const attachRow = document.createElement('div');
+  attachRow.className = 'row';
+  attachRow.style.alignItems = 'center';
+  if (!state.dbs.length) {
+    const hint = document.createElement('span');
+    hint.className = 'hint';
+    hint.textContent = mine.length ? '' : 'No database yet. ';
+    const add = document.createElement('button');
+    add.textContent = 'Add a database';
+    add.onclick = () => openAdd('db');
+    attachRow.append(hint, add);
+  } else if (free.length) {
+    const sel = document.createElement('select');
+    for (const d of free) {
+      const o = document.createElement('option');
+      o.value = d.name;
+      o.textContent = (d.label || d.name) + ' \u2014 ' + (d.engineLabel || d.engine) + ' ' + (d.version || '') + (d.status === 'running' ? '' : ' (stopped)');
+      sel.append(o);
+    }
+    const go = document.createElement('button');
+    go.className = 'primary';
+    go.textContent = 'Attach';
+    go.onclick = async () => {
+      const target = sel.value;
+      go.disabled = true;
+      try {
+        await post('/databases/' + encodeURIComponent(target) + '/attach', { server: row.name });
+        toast('Attached ' + row.name + ' to ' + target + '.', 'good');
+        body.dataset.for = '';
+        await refresh();
+        renderServerSettings();
+        showCredentials(target, row.name);
+      } catch (e) {
+        go.disabled = false;
+        toast(e.message, 'bad');
+      }
+    };
+    const hint = document.createElement('span');
+    hint.className = 'hint';
+    hint.textContent = 'The database has to be running to attach.';
+    attachRow.append(sel, go, hint);
+  } else if (mine.length) {
+    const hint = document.createElement('span');
+    hint.className = 'hint';
+    hint.textContent = 'Attached to every database here.';
+    attachRow.append(hint);
+  }
+  list.append(attachRow);
+}
+
+/** A database's Settings tab: how to reach it as root, and who is attached. */
+async function renderDatabaseSettings(row) {
+  const body = $('#settingsBody');
+  if (body.dataset.for === row.name && body.childElementCount) return;
+  body.dataset.for = row.name;
+  body.textContent = '';
+  paneHead(body, 'sliders', 'Database settings',
+    'Where it listens, how to reach it as root, and which servers have a database on it.');
+
+  const conn = document.createElement('div');
+  conn.className = 'section set-group';
+  const head = document.createElement('div');
+  head.className = 'set-head';
+  const mark = document.createElement('span');
+  mark.className = 'mark';
+  mark.append(icon('server'));
+  const h = document.createElement('h3');
+  h.textContent = 'Connection';
+  const blurb = document.createElement('p');
+  blurb.textContent = 'Loopback only: nothing outside this machine can reach it. Servers get their own user and database; root is for you.';
+  head.append(mark, h, blurb);
+  conn.append(head);
+  const dl = document.createElement('dl');
+  dl.className = 'creds';
+  for (const r of [['Engine', (row.engineLabel || row.engine) + ' ' + (row.version || '')], ['Host', '127.0.0.1'], ['Port', String(row.port)], ['Folder', row.dir || '—']]) {
+    const div = document.createElement('div');
+    const dt = document.createElement('dt');
+    dt.textContent = r[0];
+    const dd = document.createElement('dd');
+    dd.textContent = r[1];
+    div.append(dt, dd);
+    dl.append(div);
+  }
+  conn.append(dl);
+  const rootRow = document.createElement('div');
+  rootRow.className = 'row';
+  rootRow.style.marginTop = '10px';
+  const rootBtn = document.createElement('button');
+  rootBtn.textContent = 'Show root password';
+  rootBtn.onclick = async () => {
+    let c;
+    try {
+      c = await api('/databases/' + encodeURIComponent(row.name) + '/root');
+    } catch (e) {
+      toast(e.message, 'bad');
+      return;
+    }
+    rootBtn.replaceWith(credsList(c, { root: true }));
+    const copy = document.createElement('button');
+    copy.textContent = 'Copy';
+    copy.onclick = () => copyText(credsText(c, { root: true }), 'the root connection details');
+    rootRow.append(copy);
+  };
+  rootRow.append(rootBtn);
+  conn.append(rootRow);
+  body.append(conn);
+
+  const att = document.createElement('div');
+  att.className = 'section set-group';
+  const head2 = document.createElement('div');
+  head2.className = 'set-head';
+  const mark2 = document.createElement('span');
+  mark2.className = 'mark';
+  mark2.append(icon('plug'));
+  const h2 = document.createElement('h3');
+  h2.textContent = 'Attached servers';
+  const blurb2 = document.createElement('p');
+  blurb2.textContent = 'Each has a database and a user named after it. Attach a server from its own Settings tab.';
+  head2.append(mark2, h2, blurb2);
+  att.append(head2);
+  const names = Object.keys(row.attachments || {});
+  if (!names.length) {
+    const hint = document.createElement('div');
+    hint.className = 'hint';
+    hint.textContent = 'Nothing attached yet.';
+    att.append(hint);
+  }
+  for (const name of names) {
+    const a = row.attachments[name];
+    const line = document.createElement('div');
+    line.className = 'row';
+    line.style.alignItems = 'center';
+    const text = document.createElement('div');
+    text.style.flex = '1';
+    const b = document.createElement('b');
+    b.textContent = name;
+    const sub = document.createElement('div');
+    sub.className = 'hint';
+    sub.style.margin = '0';
+    sub.textContent = 'database ' + a.database + ' \u00b7 user ' + a.user;
+    text.append(b, sub);
+    const show = document.createElement('button');
+    show.textContent = 'Show credentials';
+    show.onclick = () => showCredentials(row.name, name);
+    line.append(text, show);
+    att.append(line);
+  }
+  body.append(att);
+}
+
 // -------------------------------------------------------------- command ----
 
 async function send() {
@@ -6084,12 +6558,36 @@ function selectTab(tab) {
   $('#formNew').hidden = tab !== 'new';
   $('#formPack').hidden = tab !== 'pack';
   $('#formAdopt').hidden = tab !== 'adopt';
+  $('#formDb').hidden = tab !== 'db';
+  if (tab === 'db') loadDbVersions();
 }
 
 function openAdd(tab) {
   openSheet('add');
   selectTab(tab);
-  setTimeout(() => $(tab === 'adopt' ? '#aDir' : tab === 'pack' ? '#pSearch' : '#nName').focus(), 0);
+  setTimeout(() => $(tab === 'adopt' ? '#aDir' : tab === 'pack' ? '#pSearch' : tab === 'db' ? '#dName' : '#nName').focus(), 0);
+}
+
+let dbVersionsLoaded = false;
+async function loadDbVersions() {
+  if (dbVersionsLoaded) return;
+  const sel = $('#dVersion');
+  try {
+    const list = await api('/databases/versions?engine=' + encodeURIComponent($('#dEngine').value));
+    sel.textContent = '';
+    for (const v of list) {
+      const o = document.createElement('option');
+      o.value = v.version;
+      o.textContent = v.version + (v.support && /long/i.test(v.support) ? ' (LTS)' : '');
+      sel.append(o);
+    }
+    if (!list.length) sel.append(new Option('No stable release listed', ''));
+    dbVersionsLoaded = true;
+  } catch (e) {
+    sel.textContent = '';
+    sel.append(new Option('Could not load versions', ''));
+    $('#dVersionHint').textContent = e.message;
+  }
 }
 
 for (const b of $$('.tabs [data-tab]')) b.onclick = () => selectTab(b.dataset.tab);
@@ -6115,7 +6613,7 @@ function slugFor(label) {
   return slug || 'server';
 }
 function freeSlug(base) {
-  const taken = (n) => state.rows.some((r) => r.name.toLowerCase() === n.toLowerCase());
+  const taken = (n) => state.rows.concat(state.dbs).some((r) => r.name.toLowerCase() === n.toLowerCase());
   let name = base;
   for (let i = 2; taken(name); i++) {
     const suffix = '-' + i;
@@ -6140,10 +6638,62 @@ function checkName(input, out) {
 }
 
 $('#nName').oninput = () => checkName($('#nName'), $('#nNameBad'));
+$('#dName').oninput = () => checkName($('#dName'), $('#dNameBad'));
 $('#aName').oninput = () => checkName($('#aName'), $('#aNameBad'));
 $('#pName').oninput = () => checkName($('#pName'), $('#pNameBad'));
 $('#nMem').oninput = () => checkMemory($('#nMem'), $('#nMemBad'));
 $('#aMem').oninput = () => checkMemory($('#aMem'), $('#aMemBad'));
+
+$('#formDb').onsubmit = async (e) => {
+  e.preventDefault();
+  if (!checkName($('#dName'), $('#dNameBad'))) { $('#dName').focus(); return; }
+  if (!$('#dVersion').value) { toast('Pick a version first.', 'bad'); return; }
+
+  const jobId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'job-' + Date.now();
+  const bar = $('#dbBar');
+  const msg = $('#dbMsg');
+  $('#dbProg').hidden = false;
+  bar.style.width = '0';
+  bar.classList.add('indet');
+  msg.textContent = 'Starting…';
+  $('#bDbCreate').disabled = true;
+
+  const jobs = new EventSource('/api/jobs/' + jobId + '/stream');
+  jobs.onmessage = (ev) => {
+    let job;
+    try { job = JSON.parse(ev.data); } catch { return; }
+    if (job.message) msg.textContent = job.message;
+    if (typeof job.percent === 'number') {
+      bar.classList.remove('indet');
+      bar.style.width = job.percent + '%';
+    } else {
+      bar.classList.add('indet');
+    }
+  };
+  try {
+    const db = await post('/databases', {
+      label: $('#dName').value,
+      name: slugOf($('#dName')),
+      engine: $('#dEngine').value,
+      version: $('#dVersion').value,
+      port: $('#dPort').value || null,
+      jobId: jobId,
+    });
+    jobs.close();
+    $('#dbProg').hidden = true;
+    $('#bDbCreate').disabled = false;
+    e.target.reset();
+    await refresh();
+    select(db.name);
+    toast('Added ' + db.name + ' on port ' + db.port + '. Start it, then attach a server from its Settings tab.', 'good');
+  } catch (err) {
+    jobs.close();
+    bar.classList.remove('indet');
+    bar.style.width = '0';
+    msg.textContent = err.message;
+    $('#bDbCreate').disabled = false;
+  }
+};
 
 // Set for one submit after "Create anyway" on a Java refusal, then cleared.
 let forceJava = false;

@@ -2,14 +2,14 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getInstance, assertInstanceDir, updateInstance } from './registry.mjs'
+import { getInstance, assertInstanceDir, updateInstance, isDatabase } from './registry.mjs'
 import * as java from './java.mjs'
 import { mcVersionOf } from './plugins.mjs'
 import { readState, clearState, controlRequest } from './control.mjs'
 import { consoleLog, daemonLog, runDir, stateFile } from './paths.mjs'
 import { readProps, writeProps } from './props.mjs'
 import { fail, sleep, pidAlive, UserError } from './util.mjs'
-import { READY_RE, FAILED_RE } from './ready.mjs'
+import { patternsFor } from './ready.mjs'
 
 const DAEMON = path.join(path.dirname(fileURLToPath(import.meta.url)), 'daemon.mjs')
 
@@ -89,8 +89,13 @@ async function ensureJava(inst, { force = false } = {}) {
 export async function start(name, { wait = true, timeout = 180000, sync = true, force = false } = {}) {
   let inst = getInstance(name)
   assertInstanceDir(inst)
-  assertEula(inst)
-  inst = await ensureJava(inst, { force })
+  // The EULA, Java and server.properties are Minecraft's; a database has an engine instead, and
+  // its launch spec is what checks that the engine is there.
+  const database = isDatabase(inst)
+  if (!database) {
+    assertEula(inst)
+    inst = await ensureJava(inst, { force })
+  }
 
   const { status, state } = readState(name)
   if (status === 'running') fail(`instance "${name}" is already running (java pid ${state.javaPid})`)
@@ -106,7 +111,7 @@ export async function start(name, { wait = true, timeout = 180000, sync = true, 
   // a server that had one bad start could never be started again without deleting a file by hand.
   if (state?.error) clearState(name)
 
-  if (sync) syncProps(inst)
+  if (sync && !database) syncProps(inst)
   fs.mkdirSync(runDir(name), { recursive: true })
 
   const child = spawn(process.execPath, [DAEMON, name], {
@@ -157,6 +162,13 @@ export async function waitForReady(name, timeout = 180000) {
   const file = consoleLog(name)
   const deadline = Date.now() + timeout
   let offset = 0
+  let patterns
+  try {
+    patterns = patternsFor(getInstance(name))
+  } catch {
+    patterns = patternsFor(null)
+  }
+  const { ready: READY_RE, failed: FAILED_RE } = patterns
 
   while (Date.now() < deadline) {
     let text = ''

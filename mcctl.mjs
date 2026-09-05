@@ -22,6 +22,8 @@ import * as neoforge from './src/neoforge.mjs'
 import * as worlds from './src/worlds.mjs'
 import { diagnose, crashReports } from './src/diagnose.mjs'
 import { readState, clearState } from './src/control.mjs'
+import * as services from './src/services.mjs'
+import { listServices, isDatabase } from './src/registry.mjs'
 import * as sup from './src/supervisor.mjs'
 import { rconExec, stripColors } from './src/rcon.mjs'
 import * as backup from './src/backup.mjs'
@@ -78,12 +80,55 @@ function cmdList() {
     ])
   }
   out(table(rows))
+  const dbs = listServices()
+  if (dbs.length) {
+    out('')
+    out(table(databaseRows(dbs)))
+  }
+}
+
+function databaseRows(dbs) {
+  const rows = [['DATABASE', 'STATUS', 'ENGINE', 'PORT', 'ATTACHED', 'UPTIME', 'DIR']]
+  for (const db of dbs) {
+    const { status, state } = readState(db.name)
+    rows.push([
+      db.name,
+      STATUS_LABEL[status] ?? status,
+      `${services.ENGINES[db.engine]?.label ?? db.engine} ${db.version}`,
+      db.port,
+      Object.keys(db.attachments ?? {}).join(', ') || '-',
+      status === 'running' && state?.startedAt ? humanDuration(Date.now() - state.startedAt) : '-',
+      db.dir,
+    ])
+  }
+  return rows
+}
+
+function databaseStatus(st) {
+  const rows = [
+    ['database', st.name],
+    ['label', st.label ?? '(none)'],
+    ['status', STATUS_LABEL[st.status] ?? st.status],
+    ['engine', `${services.ENGINES[st.engine]?.label ?? st.engine} ${st.version}`],
+    ['directory', st.dir],
+    ['host', '127.0.0.1'],
+    ['port', String(st.port)],
+    ['attached', Object.keys(st.attachments ?? {}).join(', ') || '(none)'],
+  ]
+  if (st.status === 'running' || st.status === 'stopping') {
+    rows.push(['engine pid', String(st.javaPid)], ['daemon pid', String(st.daemonPid)], ['uptime', humanDuration(st.uptimeMs)])
+  } else if (st.exitCode !== null && st.exitCode !== undefined) {
+    rows.push(['last exit code', String(st.exitCode)])
+  }
+  rows.push(['console log', st.consoleLog])
+  out(table(rows.map(([k, v]) => [`${k}:`, v])))
 }
 
 function cmdStatus(positional) {
   if (!positional[0]) return cmdList()
   const name = positional[0]
   const st = sup.statusOf(name)
+  if (isDatabase(st)) return databaseStatus(st)
   const props = readProps(path.join(st.dir, 'server.properties'))
   const rows = [
     ['instance', st.name],
@@ -1342,6 +1387,125 @@ async function runTask(id) {
   out(`done in ${Math.round((Date.now() - started) / 1000)}s`)
 }
 
+// ------------------------------------------------------------------------ db
+
+/**
+ * Databases: MariaDB run under the same supervision as a server, attached to servers with
+ * credentials of their own. start/stop/restart/logs/status take a database's name like a
+ * server's; this group is what is specific to them.
+ */
+async function cmdDb(positional, flags) {
+  const sub = positional[0] ?? 'list'
+
+  if (sub === 'list') {
+    const dbs = listServices()
+    if (!dbs.length) {
+      out('No databases.')
+      out('')
+      out('  Add one with: mcctl db add <name> --version <mariadb-version>')
+      out('  See versions: mcctl db versions')
+      return
+    }
+    out(table(databaseRows(dbs)))
+    return
+  }
+
+  if (sub === 'versions') {
+    const engine = String(flags.engine ?? 'mariadb')
+    const list = await services.versionsFor(engine)
+    if (!list.length) fail(`${engine} publishes no stable releases right now`)
+    out(table([['VERSION', 'STATUS', 'SUPPORT', 'RELEASED'], ...list.slice(0, 20).map((v) => [v.version, v.status, v.support ?? '-', v.date ?? '-'])]))
+    if (list.length > 20) out(`  ...and ${list.length - 20} older.`)
+    return
+  }
+
+  if (sub === 'add') {
+    const name = positional[1]
+    if (!name) fail('usage: mcctl db add <name> --version <version> [--port <n>] [--label "..."]')
+    const engine = String(flags.engine ?? 'mariadb')
+    let version = flags.version ? String(flags.version) : null
+    if (!version) {
+      const newest = (await services.versionsFor(engine))[0]
+      if (!newest) fail(`${engine} publishes no stable release to pick from - name one with --version`)
+      version = newest.version
+      out(`Using ${services.ENGINES[engine]?.label ?? engine} ${version}, the newest stable release.`)
+    }
+    let lastPercent = -1
+    const db = await services.createDatabase(name, {
+      engine,
+      version,
+      port: flags.port ? Number(flags.port) : null,
+      label: flags.label ?? null,
+      onProgress: (p) => {
+        if (p.total && p.received != null) {
+          const pct = Math.floor((p.received / p.total) * 10) * 10
+          if (pct !== lastPercent) {
+            lastPercent = pct
+            out(`  ${p.message} ${pct}%`)
+          }
+        } else if (p.message) out(`  ${p.message}`)
+      },
+    })
+    out('')
+    out(`Created database "${db.name}" (${services.ENGINES[db.engine]?.label ?? db.engine} ${db.version}) on 127.0.0.1:${db.port}`)
+    out(`Start it with: mcctl start ${db.name}`)
+    out(`Then attach a server: mcctl db attach ${db.name} <server>`)
+    return
+  }
+
+  if (sub === 'attach' || sub === 'detach') {
+    const [, dbName, serverName] = positional
+    if (!dbName || !serverName) fail(`usage: mcctl db ${sub} <database> <server>${sub === 'detach' ? ' [--drop]' : ''}`)
+    if (sub === 'attach') {
+      const creds = services.attach(dbName, serverName)
+      out(`"${serverName}" is attached to "${dbName}".`)
+      out('')
+      printCredentials(creds)
+      return
+    }
+    const res = services.detach(dbName, serverName, { drop: Boolean(flags.drop) })
+    out(`"${serverName}" is detached from "${dbName}"${res.dropped ? `; database ${res.database} dropped` : `; database ${res.database} kept`}.`)
+    return
+  }
+
+  if (sub === 'creds' || sub === 'credentials') {
+    const [, dbName, serverName] = positional
+    if (!dbName || !serverName) fail('usage: mcctl db creds <database> <server>')
+    printCredentials(services.credentials(dbName, serverName))
+    return
+  }
+
+  if (sub === 'root') {
+    const dbName = positional[1]
+    if (!dbName) fail('usage: mcctl db root <database>')
+    const db = services.getDatabase(dbName)
+    out(table([['host:', '127.0.0.1'], ['port:', String(db.port)], ['user:', 'root'], ['password:', db.root.password]]))
+    return
+  }
+
+  if (sub === 'remove' || sub === 'rm') {
+    const dbName = positional[1]
+    if (!dbName) fail('usage: mcctl db remove <database> [--purge]')
+    const res = services.removeDatabase(dbName, { purge: Boolean(flags.purge) })
+    out(`Removed database "${res.name}"${res.purged ? ' and its files' : ' (files kept)'}.`)
+    if (res.detached.length) out(`Servers that were attached: ${res.detached.join(', ')} - their plugin configs still name it.`)
+    return
+  }
+
+  fail('usage: mcctl db [list|versions|add|attach|detach|creds|root|remove]')
+}
+
+function printCredentials(c) {
+  out(table([
+    ['host:', c.host],
+    ['port:', String(c.port)],
+    ['database:', c.database],
+    ['user:', c.user],
+    ['password:', c.password],
+    ['jdbc:', c.jdbc],
+  ]))
+}
+
 // ----------------------------------------------------------------- uninstall
 
 /**
@@ -1512,6 +1676,17 @@ OTHER
   mcctl jars                         List stored server jars
   mcctl jars import <path> [--as x]  Add a server jar to the store
   mcctl why <name>                   Say what is wrong with a server, from its own console
+
+DATABASES
+  mcctl db                           List databases
+  mcctl db versions                  MariaDB releases that can be run
+  mcctl db add <name> [--version v]  Download MariaDB and set up a database on a free port
+  mcctl db attach <db> <server>      Give a server its own database and user; prints the credentials
+  mcctl db detach <db> <server>      Take the user away [--drop deletes the data too]
+  mcctl db creds <db> <server>       Show a server's credentials again
+  mcctl db remove <db> [--purge]     Forget a stopped database [and delete its files]
+  start, stop, restart, logs and status take a database's name like a server's.
+
   mcctl doctor                       Check environment, ports, EULA, disk, stale state
   mcctl uninstall --yes [--data]     Stop servers, remove scheduled tasks; --data deletes what mcctl made
 `)
@@ -1567,6 +1742,7 @@ const COMMANDS = {
   panel: cmdUi,
   task: cmdTask,
   doctor: cmdDoctor,
+  db: cmdDb,
   uninstall: cmdUninstall,
   help: cmdHelp,
 }

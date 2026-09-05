@@ -15,11 +15,42 @@ export function saveRegistry(data) {
   writeJson(REGISTRY_FILE, data)
 }
 
-export function listInstances() {
+/**
+ * What an entry in the registry is: a Minecraft server, or a database that serves them.
+ *
+ * <p>Absent means server: every entry made before databases existed is one, and defaulting here
+ * migrates them all without a write. Servers and databases share one namespace on purpose - a
+ * name is a folder under run/, a control pipe and a command-line argument, and two things called
+ * "survival" would fight over all three.
+ */
+export function kindOf(inst) {
+  return inst?.kind === 'database' ? 'database' : 'server'
+}
+
+export function isDatabase(inst) {
+  return kindOf(inst) === 'database'
+}
+
+/** Every registry entry, whatever it is, sorted by name. */
+export function listAll() {
   const reg = loadRegistry()
   return Object.entries(reg.instances)
     .map(([name, cfg]) => ({ name, ...cfg }))
     .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/**
+ * The servers. Databases are left out deliberately: everything that iterates "the servers" -
+ * launchers, backups, the panel's list, a scheduled task's instance picker - was written before
+ * databases existed and would treat one as a server with no jar.
+ */
+export function listInstances() {
+  return listAll().filter((i) => !isDatabase(i))
+}
+
+/** The databases. */
+export function listServices() {
+  return listAll().filter(isDatabase)
 }
 
 export function getInstance(name) {
@@ -81,7 +112,7 @@ export function removeInstance(name) {
 /** Ports already claimed in the registry, so allocation never double-books. */
 export function usedPorts() {
   const taken = new Set()
-  for (const inst of listInstances()) {
+  for (const inst of listAll()) {
     if (inst.port) taken.add(inst.port)
     if (inst.rcon?.port) taken.add(inst.rcon.port)
   }
@@ -99,7 +130,7 @@ export function assertPortUsable(name, port, label = 'port') {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     fail(`${port} is not a ${label} number - use 1 to 65535`)
   }
-  const clash = listInstances().find(
+  const clash = listAll().find(
     (i) => i.name !== name && (i.port === port || i.rcon?.port === port),
   )
   if (clash) fail(`port ${port} is already used by "${clash.name}"`)
@@ -116,6 +147,8 @@ export function serverJarPath(inst) {
 
 export function assertInstanceDir(inst) {
   if (!fs.existsSync(inst.dir)) fail(`instance "${inst.name}" directory is missing: ${inst.dir}`)
+  // A database has no jar; what it needs to run is checked by its engine at launch.
+  if (isDatabase(inst)) return
   const jar = serverJarPath(inst)
   if (!fs.existsSync(jar)) fail(`server jar not found for "${inst.name}": ${jar}`)
 }

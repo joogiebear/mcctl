@@ -1,0 +1,113 @@
+# Plan: databases for servers
+
+Status: **phase 1 built; awaiting its first run against real MariaDB on Windows.** The
+engine module, the daemon generalisation, attach/detach, the CLI group and the panel are in,
+covered by a lifecycle test against a fake MariaDB (`test/fixtures/fake-mariadb`). What that
+fake cannot prove, and the first Windows run has to: the download API's file list, the init
+tool's flags, `--console` logging, and `mariadb-admin shutdown` against the real binaries.
+Backups, config helpers and Redis follow.
+
+## The goal
+
+`Add a server → A database`: pick MariaDB, pick a version, and get a database server
+running on this machine under the same supervision a Minecraft server gets - a card
+with a lamp, a console, start/stop/restart, crash recovery - with nothing to install.
+Then `Attach` it to a server: a database and a user are created for that server, and
+its connection details are one click away for whichever plugin wants them.
+
+## Who this is for
+
+Plugin testing, mostly. LuckPerms, CoreProtect, Plan, AuthMe, Jobs and mcMMO all have a
+MySQL mode that authors want bugs reproduced against, and a Velocity network needs a
+shared store. Redis is the narrower case, cross-server messaging, so it comes last.
+
+## Why it fits
+
+The daemon already does the hard part - detached launch, stdout captured to a console
+log, a control pipe, restart on crash, ready detection - and the only Java-specific
+step in its launch is one routing function. A database is another process with a
+ready line and a way to be told to stop. So a database is another entry in the
+registry, run by the same daemon, shown by the same panel.
+
+Nothing to install, the way nobody installs Paper: MariaDB publishes a portable zip for
+Windows with `mariadbd`, `mariadb-install-db`, `mariadb-admin`, the `mariadb` client and
+`mariadb-dump` inside, and a REST API that lists releases with checksums. That is the
+Paper download pattern exactly, and Windows's own `tar` unpacks zips.
+
+## Phase 1 - MariaDB as a service (this phase)
+
+- **Registry.** A database is an instance with `kind: "database"`, `engine: "mariadb"`,
+  `version`, `dir` (under `<data>/services/<name>`), `port`, a generated root password,
+  and `attachments`: one entry per server, holding that server's database name, user and
+  password. Servers have no `kind`; every existing instance is a server, the whole
+  migration. `listInstances()` keeps answering servers only, so nothing that iterates
+  servers - launchers, backups, the panel's list - sees a database by accident;
+  `listServices()` answers databases; ports are checked across both.
+- **Engine store.** `<data>/engines/mariadb-<version>/`, downloaded once per version
+  from the official mirror, hash-checked, unpacked with tar. Shared by every database on
+  that version. Deleted with `--data` at uninstall.
+- **Init and launch.** `mariadb-install-db` makes the data folder with the root password;
+  a `my.ini` written by us pins the port, `bind-address=127.0.0.1`, `skip-name-resolve`
+  and utf8mb4; `mariadbd --defaults-file=... --console` runs in the foreground with its
+  log on stderr, which the daemon already captures. Ready is `ready for connections`;
+  stop is `mariadb-admin shutdown` over TCP with the password in the environment, since
+  a database takes no stdin. Kill is what it already is.
+- **Daemon.** `launch` asks a `programFor(inst)` for the command, the ready pattern and
+  the stop method instead of assuming Java. The lifecycle tests keep their fake JVM; a
+  fake MariaDB engine (four scripts in `test/fixtures/fake-mariadb/bin`) drives the same
+  daemon through init, ready, attach and shutdown. Crash diagnosis is skipped for a
+  database - the patterns are Minecraft's.
+- **Attach.** `mcctl db attach <db> <server>` / the panel's Databases card on a server:
+  creates ``<server>`` and `'<server>'@'localhost'` + `'<server>'@'127.0.0.1'` with a
+  random password, grants that database only, records it on the database instance.
+  Detach drops the user and keeps the data unless told to drop it. Credentials are shown
+  on request and copied as a block, never sent in the list payload.
+- **Loopback only.** Same stance as the panel. Exposing it is a decision a person makes.
+- **Panel.** Databases listed under the servers in the sidebar; a database's page has
+  Console (no input), Performance and Settings (root and attachments); a server's
+  Settings gains a Databases card; the Add sheet gains "A database".
+- **CLI.** `mcctl db versions | list | add | attach | detach | creds | remove`; `start`,
+  `stop`, `restart`, `logs`, `status` work on a database as on a server.
+- **Uninstall.** Databases stop with the servers; `--data` deletes their folders and the
+  engine store.
+
+## Phase 2 - backups
+
+A snapshot of a server with attachments runs `mariadb-dump` of each attached database
+into the snapshot before the tar, so the backup stays hot and verify has a file to
+check; restore imports it. The scheduler needs nothing new.
+
+## Phase 3 - config helpers
+
+"Apply to LuckPerms" and "Apply to CoreProtect": write the connection block into the
+plugin's config with the comment-preserving editor props.mjs already is. Only ever on a
+click, only for a plugin whose file is present, and the block it wrote is shown.
+
+## Phase 4 - Redis, and connecting to what you already run
+
+Redis itself ships no Windows binary. Microsoft's Garnet speaks the Redis protocol, is
+MIT licensed and runs natively on Windows as a self-contained build; it becomes the
+second engine. Alongside it, "connect to an existing database" for both engines, for
+people who already run XAMPP or MariaDB and want SpawnLoft to hand out credentials on
+it rather than run a second copy.
+
+## Decisions already taken
+
+- MariaDB first, Garnet later; each phase shippable alone.
+- One shared engine, many databases: a server attaches to a database instance, and one
+  database instance serves as many servers as you like. Lighter than one engine per
+  server, and how people already use MySQL locally.
+- Managed engines are Windows-only, like the desktop app. The CLI on other platforms
+  can still register and attach to a database someone runs themselves (phase 4).
+- Engines are downloaded from their official mirrors at runtime, not bundled, exactly as
+  Paper is; nothing is redistributed.
+- The database name and user are the server's name. Predictable beats clever, and the
+  name is already validated to be safe in an identifier.
+
+## Open questions
+
+- Whether a server's Start should start the database it is attached to first. Probably
+  yes, with the order recorded rather than guessed; not in phase 1.
+- Whether a stopped database should warn when a running server is attached to it.
+- MariaDB's zip is 80-100 MB; whether to offer the smaller "minimal" builds if the
+  mirror carries them for the chosen version.

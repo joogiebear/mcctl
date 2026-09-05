@@ -1,0 +1,183 @@
+/**
+ * A database, end to end, against the real daemon and a fake MariaDB.
+ *
+ * <p>The engine store gets test/fixtures/fake-mariadb as version 0.0.0-fake, so nothing is
+ * downloaded: the four scripts stand in for mariadb-install-db, mariadbd, mariadb-admin and the
+ * client, and everything else - the registry entry, my.ini, the daemon, the console log, the
+ * control pipe, ready detection, the TCP shutdown, attach and detach - is the real thing.
+ *
+ * <p>Isolated by MCCTL_DATA_ROOT the way lifecycle.test.mjs is.
+ */
+import { test, after } from 'node:test'
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mcctl-databases-'))
+process.env.MCCTL_DATA_ROOT = scratch
+
+const { putInstance, updateInstance, listInstances, listServices, listAll, isDatabase, usedPorts } = await import('../src/registry.mjs')
+const services = await import('../src/services.mjs')
+const mariadb = await import('../src/mariadb.mjs')
+const sup = await import('../src/supervisor.mjs')
+const { readState } = await import('../src/control.mjs')
+const { ENGINES_DIR, INSTANCES_DIR } = await import('../src/paths.mjs')
+const { UserError, findFreePort } = await import('../src/util.mjs')
+const ui = await import('../src/ui.mjs')
+
+const VERSION = '0.0.0-fake'
+const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-mariadb')
+fs.mkdirSync(path.join(ENGINES_DIR, `mariadb-${VERSION}`), { recursive: true })
+fs.cpSync(FIXTURE, path.join(ENGINES_DIR, `mariadb-${VERSION}`), { recursive: true })
+
+const DB = `dbt-${process.pid}`
+const SRV = `srv-${process.pid}`
+
+after(async () => {
+  try { await sup.kill(DB) } catch { /* down */ }
+  fs.rmSync(scratch, { recursive: true, force: true })
+})
+
+test('the fake engine is found through the same lookup the real one uses', () => {
+  assert.ok(mariadb.hasEngine(VERSION))
+  assert.equal(mariadb.binary(mariadb.engineDir(VERSION), 'server').script, true)
+  assert.equal(mariadb.binary(mariadb.engineDir(VERSION), 'dump'), null)
+})
+
+test('creating a database lays out its folder, picks a free port, and registers it apart from the servers', async () => {
+  const port = await findFreePort(43000 + Math.floor(Math.random() * 10000))
+  const db = await services.createDatabase(DB, { version: VERSION, port, label: 'Test DB' })
+  assert.equal(db.kind, 'database')
+  assert.equal(db.engine, 'mariadb')
+  assert.equal(db.port, port)
+  assert.equal(db.label, 'Test DB')
+  assert.ok(db.root.password.length >= 20)
+
+  const ini = fs.readFileSync(mariadb.iniFile(db), 'utf8')
+  assert.match(ini, new RegExp(`^port=${port}$`, 'm'))
+  assert.match(ini, /^bind-address=127\.0\.0\.1$/m)
+  assert.equal(fs.readFileSync(path.join(mariadb.dataDir(db), 'root.txt'), 'utf8'), db.root.password)
+
+  assert.ok(!listInstances().some((i) => i.name === DB), 'a database must not be listed as a server')
+  assert.ok(listServices().some((i) => i.name === DB))
+  assert.ok(listAll().some((i) => i.name === DB))
+  assert.ok(usedPorts().has(port), 'its port must count as taken')
+})
+
+test('a second create with the same name, or on the server side, is refused', async () => {
+  await assert.rejects(services.createDatabase(DB, { version: VERSION }), UserError)
+  fs.mkdirSync(path.join(INSTANCES_DIR, SRV), { recursive: true })
+  putInstance(SRV, { dir: path.join(INSTANCES_DIR, SRV), jar: 'paper.jar', memory: '4G', port: 25565 })
+  assert.throws(() => services.getDatabase(SRV), UserError)
+  assert.throws(() => services.assertServer(DB), UserError)
+  assert.ok(isDatabase(services.getDatabase(DB)))
+})
+
+test('attach before the database runs is refused with the way out', () => {
+  assert.throws(() => services.attach(DB, SRV), /start it first/)
+})
+
+test('start waits for the engine to report ready, over stderr, without a jar, EULA or Java', { timeout: 30000 }, async () => {
+  const res = await sup.start(DB, { timeout: 15000 })
+  assert.equal(res.ready, true, JSON.stringify(res))
+  assert.match(res.readyLine, /ready for connections/)
+  const { status, state } = readState(DB)
+  assert.equal(status, 'running')
+  assert.equal(state.kind, 'database')
+  assert.ok(state.javaPid > 0)
+  await assert.rejects(sup.sendConsole(DB, 'hello'), /no console input/)
+})
+
+test('attach creates the database and user for the server, and the credentials come back', () => {
+  const creds = services.attach(DB, SRV)
+  assert.equal(creds.database, SRV)
+  assert.equal(creds.user, SRV)
+  assert.equal(creds.host, '127.0.0.1')
+  assert.ok(creds.password.length >= 20)
+  assert.match(creds.jdbc, new RegExp(`^jdbc:mysql://127\\.0\\.0\\.1:\\d+/${SRV}$`))
+
+  const log = fs.readFileSync(path.join(mariadb.dataDir(services.getDatabase(DB)), 'sql.log'), 'utf8')
+  assert.ok(log.includes(`CREATE DATABASE IF NOT EXISTS \`${SRV}\``), log)
+  assert.ok(log.includes(`GRANT ALL PRIVILEGES ON \`${SRV}\`.* TO '${SRV}'@'localhost', '${SRV}'@'127.0.0.1'`), log)
+  assert.ok(log.includes(`IDENTIFIED BY '${creds.password}'`))
+
+  // Again: the same credentials, not new ones.
+  assert.deepEqual(services.attach(DB, SRV), creds)
+  assert.deepEqual(services.credentials(DB, SRV), creds)
+
+  const fromServer = services.serverAttachments(SRV)
+  assert.equal(fromServer.length, 1)
+  assert.equal(fromServer[0].service, DB)
+  assert.equal(fromServer[0].password, undefined, 'the server-side list must not carry the password')
+})
+
+test('the panel lists databases apart from servers and never sends a password', async () => {
+  const { server, url } = await ui.serve({ port: 0, open: false })
+  try {
+    const dbs = await (await fetch(`${url}api/databases`)).json()
+    const row = dbs.find((r) => r.name === DB)
+    assert.ok(row, 'the database is missing from /api/databases')
+    assert.equal(row.status, 'running')
+    assert.equal(row.root, undefined)
+    assert.equal(row.attachments[SRV].password, undefined)
+    assert.equal(row.attachments[SRV].user, SRV)
+
+    const servers = await (await fetch(`${url}api/instances`)).json()
+    assert.ok(!servers.some((r) => r.name === DB), 'a database must not appear in /api/instances')
+
+    const mine = await (await fetch(`${url}api/instances/${SRV}/databases`)).json()
+    assert.equal(mine[0].service, DB)
+    assert.equal(mine[0].password, undefined)
+
+    const creds = await (await fetch(`${url}api/databases/${DB}/credentials?server=${SRV}`)).json()
+    assert.equal(creds.password, services.credentials(DB, SRV).password)
+  } finally {
+    server.close()
+  }
+})
+
+test('stop goes through the admin tool over TCP and is clean, not forced', { timeout: 30000 }, async () => {
+  const res = await sup.stop(DB, { timeout: 10000 })
+  assert.equal(res.forced, undefined, JSON.stringify(res))
+  assert.equal(res.code, 0)
+  assert.equal(readState(DB).status, 'stopped')
+})
+
+test('detach while stopped keeps the record consistent, and dropping needs the database up', () => {
+  assert.throws(() => services.detach(DB, SRV, { drop: true }), /not running/)
+  const res = services.detach(DB, SRV)
+  assert.equal(res.dropped, false)
+  assert.deepEqual(services.serverAttachments(SRV), [])
+  assert.throws(() => services.credentials(DB, SRV), /not attached/)
+})
+
+test('a database that dies during startup is reported as failed, with the engine\'s reason', { timeout: 30000 }, async () => {
+  // Auto-restart is on for a database by default; off here, or the daemon would spend the next
+  // half minute retrying a start that is scripted to fail.
+  updateInstance(DB, { autoRestart: false })
+  process.env.FAKE_MARIADB_FAIL = 'start'
+  try {
+    const res = await sup.start(DB, { timeout: 15000 })
+    assert.equal(res.ready, false)
+    assert.equal(res.failed, true)
+    assert.match(res.reason, /Can't start server|exited/)
+  } finally {
+    delete process.env.FAKE_MARIADB_FAIL
+    updateInstance(DB, { autoRestart: true })
+  }
+})
+
+test('remove refuses a running database, then deletes a stopped one with its folder', { timeout: 30000 }, async () => {
+  // The daemon from the failed start above lingers a few seconds to flush; wait it out.
+  const deadline = Date.now() + 10000
+  while (readState(DB).status !== 'stopped' && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100))
+  await sup.start(DB, { timeout: 15000 })
+  assert.throws(() => services.removeDatabase(DB), /stop it/)
+  await sup.stop(DB, { timeout: 10000 })
+  const dir = services.getDatabase(DB).dir
+  services.removeDatabase(DB, { purge: true })
+  assert.ok(!fs.existsSync(dir))
+  assert.ok(!listServices().some((i) => i.name === DB))
+})

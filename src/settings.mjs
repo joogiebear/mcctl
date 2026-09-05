@@ -89,6 +89,9 @@ export function resolveRoots(overrides = {}) {
     // exists - the panel says so rather than letting history appear to vanish.
     backupsDir: s.backupsDir ? path.resolve(s.backupsDir) : path.join(dataRoot, 'backups'),
     runDir: path.join(dataRoot, 'run'),
+    // Database engines (one folder per engine version, shared) and the databases that run on them.
+    enginesDir: path.join(dataRoot, 'engines'),
+    servicesDir: path.join(dataRoot, 'services'),
     usingLegacyLayout: legacy && !s.dataRoot,
     settingsFile: settingsFile(),
   }

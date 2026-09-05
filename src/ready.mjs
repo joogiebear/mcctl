@@ -11,3 +11,13 @@ export const READY_RE = /Done \([\d.,]+s\)!/
 
 /** The shapes of a start that is not going to succeed, so waiting for ready can stop early. */
 export const FAILED_RE = /(Failed to start the minecraft server|A fatal error has occurred|Could not (?:reserve|create).*heap|Unable to access jarfile)/i
+
+/** MariaDB, with --console: the note it prints once it listens, and the shapes of a start that died. */
+export const MARIADB_READY_RE = /ready for connections/i
+export const MARIADB_FAILED_RE = /\[ERROR\] (?:Aborting|Can't start server|mariadbd: Can't|mysqld: Can't|InnoDB: Unable to lock|Fatal error)/i
+
+/** The pair that fits an instance: a database's engine has its own lines. */
+export function patternsFor(inst) {
+  if (inst?.kind === 'database') return { ready: MARIADB_READY_RE, failed: MARIADB_FAILED_RE }
+  return { ready: READY_RE, failed: FAILED_RE }
+}

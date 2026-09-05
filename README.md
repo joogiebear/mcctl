@@ -599,3 +599,28 @@ Saying yes deletes only what this program created. A server you added from a fol
 had stays where it is, and a data folder you pointed at a drive with other things on it loses only
 SpawnLoft's own folders. The same command is available from a terminal as
 `mcctl uninstall --yes [--data]`.
+
+## Databases
+
+Plugins that want MySQL — LuckPerms, CoreProtect, Plan, AuthMe, Jobs, mcMMO — can have one
+here, with nothing to install. A database is another entry in the registry, run by the same
+daemon as a server: a card with a lamp, a console, start, stop and restart, crash recovery.
+
+```bash
+mcctl db versions                    # MariaDB releases that can be run
+mcctl db add maria                   # downloads the newest stable MariaDB, once, and sets one up on a free port
+mcctl start maria
+mcctl db attach maria survival       # a database and a user for that server; prints the credentials
+mcctl db creds maria survival        # shows them again
+mcctl db detach maria survival       # takes the user away; --drop deletes the data too
+```
+
+MariaDB comes from its own mirror as the portable Windows zip, hash-checked and unpacked with the
+`tar` Windows ships, into `engines/` beside the jars; every database on that version shares it.
+Each database keeps its data under `services/<name>/`, listens on 127.0.0.1 only, and is stopped
+through `mariadb-admin` over TCP, since a database takes no console input. The user a server gets
+can reach its one database and nothing else. In the panel, databases sit under the servers in the
+sidebar, a server's Settings tab has a Databases card with the credentials one click away, and
+*Add a server → A database* creates one. The plan, with what comes next (backups of attached
+databases, config helpers for the common plugins, Redis by way of Garnet), is in
+`docs/databases-plan.md`.
