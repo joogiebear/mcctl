@@ -20,7 +20,7 @@ import { JARS_DIR } from './paths.mjs'
 import { fail, humanBytes } from './util.mjs'
 
 const API = 'https://meta.fabricmc.net/v2'
-const HEADERS = { 'User-Agent': 'SpawnLoft (github.com/joogiebear/mcctl)', Accept: 'application/json' }
+const HEADERS = { 'User-Agent': 'SpawnLoft (github.com/joogiebear/spawnloft)', Accept: 'application/json' }
 
 async function api(url) {
   let res

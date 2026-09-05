@@ -19,7 +19,7 @@ import { fail, humanBytes } from './util.mjs'
 const projectApi = (project) => `https://fill.papermc.io/v3/projects/${project}`
 
 // The API asks for a descriptive agent so they can contact operators of misbehaving clients.
-const HEADERS = { 'User-Agent': 'SpawnLoft (github.com/joogiebear/mcctl)', Accept: 'application/json' }
+const HEADERS = { 'User-Agent': 'SpawnLoft (github.com/joogiebear/spawnloft)', Accept: 'application/json' }
 
 async function api(url) {
   let res
