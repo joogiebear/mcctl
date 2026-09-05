@@ -365,7 +365,7 @@ This is built for **localhost and LAN only**.
 ## The site
 
 The project page and the docs live in their own repository,
-[joogiebear/mcctl-site](https://github.com/joogiebear/mcctl-site), served at
+[joogiebear/spawnloft](https://github.com/joogiebear/spawnloft), served at
 [spawnloft.com](https://spawnloft.com): a VitePress site deployed by Vercel on every push. The
 banner artwork partner sites embed lives there too, under `public/banner/`.
 
